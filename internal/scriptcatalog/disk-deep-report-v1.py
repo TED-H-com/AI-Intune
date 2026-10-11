@@ -108,7 +108,11 @@ def normalized_protections(policy):
     return dict(policy, _protection_paths=paths, _protection_specs=specs, _protection_state={'failed': False})
 
 def stamp(ns):
-    return datetime.datetime.fromtimestamp(ns / 1e9, datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+    # Match Go's canonical RFC3339Nano: exact nanoseconds, no trailing zeros.
+    seconds, nanos = divmod(ns, 1000000000)
+    base = datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+    fraction = ('.' + str(nanos).zfill(9).rstrip('0')) if nanos else ''
+    return base + fraction + 'Z'
 
 def noatime_notice(result, error, label):
     if result is not None and getattr(error, 'errno', None) == errno.EPERM:

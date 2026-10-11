@@ -9,10 +9,20 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (h *hub) handleDiskReportUpload(w http.ResponseWriter, r *http.Request, machine string) {
 	w.Header().Set("Cache-Control", "no-store")
+	// The caller already authenticated the machine bearer. IPs and job IDs
+	// cannot mint new allowances; both upload endpoints share this admission.
+	release, retry := h.diskUploadLimiter.acquire(machine, time.Now())
+	if release == nil {
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
+		writeErr(w, http.StatusTooManyRequests, "RATE_LIMITED", "disk report upload limit reached")
+		return
+	}
+	defer release()
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" || r.URL.RawQuery != "" {
 		writeErr(w, 400, "BAD_REQUEST", "JSON body required")

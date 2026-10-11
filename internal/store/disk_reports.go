@@ -27,7 +27,7 @@ type DiskReportPage struct {
 	NextCursor string            `json:"next_cursor,omitempty"`
 }
 
-func reportJob(tx dbTx, machine, job string, now time.Time) (scriptcatalog.Spec, error) {
+func reportJob(tx interface{ QueryRow(string, ...any) *sql.Row }, machine, job string, now time.Time) (scriptcatalog.Spec, error) {
 	var spec, state, expiry string
 	err := tx.QueryRow(`SELECT d.spec,j.state,COALESCE(j.lease_expires_at,'') FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=? AND d.resource_id='disk-deep-report-v1' AND d.resource_kind='script_v1'`, job, machine).Scan(&spec, &state, &expiry)
 	if err == sql.ErrNoRows {
@@ -51,6 +51,11 @@ func (s *Store) DiskReportChunk(machine, job string, chunk diskreport.Chunk) (di
 	out := diskreport.Receipt{ID: "report-" + job}
 	if len(chunk.Data) == 0 || len(chunk.Data) > diskreport.MaxChunk || chunk.Sequence < 0 || chunk.Sequence >= 512 || chunk.Digest != diskreport.Digest(chunk.Data) {
 		return out, operatorError("BAD_REQUEST", "invalid chunk bounds or digest")
+	}
+	// Reject unrelated or inactive job IDs using the query-only pool before
+	// competing for SQLite's writer. The transaction repeats this authority check.
+	if _, err := reportJob(s.rdb, machine, job, s.now().UTC()); err != nil {
+		return out, err
 	}
 	tx, err := s.beginWrite(context.Background(), "disk_report_chunk")
 	if err != nil {
@@ -91,6 +96,9 @@ func (s *Store) DiskReportChunk(machine, job string, chunk diskreport.Chunk) (di
 }
 func (s *Store) DiskReportComplete(machine, job string, req diskreport.Complete) (diskreport.Receipt, error) {
 	out := diskreport.Receipt{ID: "report-" + job, Digest: req.Digest}
+	if _, err := reportJob(s.rdb, machine, job, s.now().UTC()); err != nil {
+		return out, err
+	}
 	tx, err := s.beginWrite(context.Background(), "disk_report_complete")
 	if err != nil {
 		return out, err
@@ -174,12 +182,7 @@ func (s *Store) DiskReportComplete(machine, job string, req diskreport.Complete)
 	if _, err = tx.Exec(`UPDATE disk_report_chunks SET data=X'' WHERE report_id=?`, out.ID); err != nil {
 		return out, err
 	}
-	for n, notice := range report.Notices {
-		report.Notices[n] = diskreport.ScrubDisplay(notice)
-	}
-	for n, root := range report.InaccessibleRoots {
-		report.InaccessibleRoots[n] = diskreport.ScrubDisplay(root)
-	}
+	report = diskreport.StoredReport(report)
 	report.Items = []diskreport.Item{}
 	_, err = tx.Exec(`UPDATE disk_reports SET completed_at=?,digest=?,metadata=?,item_count=? WHERE id=?`, fmtTime(s.now().UTC()), req.Digest, string(mustScriptJSON(report)), req.ItemCount, out.ID)
 	if err != nil {
@@ -232,6 +235,7 @@ func (s *Store) DiskReport(id, cursor string, limit int, private bool) (DiskRepo
 	if err = json.Unmarshal([]byte(meta), &out.Report); err != nil {
 		return out, err
 	}
+	out.Report = diskreport.StoredReport(out.Report)
 	if !private {
 		out.Report = diskreport.PublicReport(out.Report)
 	}
@@ -254,6 +258,8 @@ func (s *Store) DiskReport(id, cursor string, limit int, private bool) (DiskRepo
 		if err = json.Unmarshal([]byte(body), &item); err != nil {
 			return out, err
 		}
+		item.PrivatePath = path
+		item = diskreport.StoredItem(item)
 		item.PrivatePath = diskreport.ScrubDisplay(path)
 		if !private {
 			item = diskreport.PublicItem(item)

@@ -6,6 +6,10 @@ spec = importlib.util.spec_from_file_location('deep', pathlib.Path(__file__).res
 deep = importlib.util.module_from_spec(spec); spec.loader.exec_module(deep)
 POLICY = {'protect_paths': [], 'scan_budgets': {'max_items':500, 'max_entries':200000, 'max_seconds':600}}
 class DeepTests(unittest.TestCase):
+    def test_timestamp_canonical_exact_nanoseconds(self):
+        self.assertEqual(deep.stamp(1000000000000000000), '2001-09-09T01:46:40Z')
+        self.assertEqual(deep.stamp(1000000000120000000), '2001-09-09T01:46:40.12Z')
+        self.assertEqual(deep.stamp(1000000000123456789), '2001-09-09T01:46:40.123456789Z')
     def test_categories_protection_identity_no_writes(self):
         with tempfile.TemporaryDirectory() as root:
             files = ['app.bak', 'clawctl-agent-backup-old', '.cache/big', 'releases/old/binary', '.codex/sessions/old.json', 'model.gguf', 'first.tar.gz', 'second.tar.gz', 'secret.bak', 'rollback.old', 'repo/.git/config', 'repo/old.bak', '.codex/generated_images/private.old']

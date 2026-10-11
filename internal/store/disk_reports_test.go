@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/diskreport"
@@ -418,5 +419,78 @@ func TestDiskReportStoresOnlyRawPrivateBindingAndScrubsDisplays(t *testing.T) {
 		if strings.Contains(p.Items[0].PrivatePath+p.Items[0].DisplayPath, "\u202e") || strings.Contains(p.Items[0].PrivatePath+p.Items[0].DisplayPath, "\u200b") {
 			t.Fatal("unsafe path projection")
 		}
+	}
+}
+
+func TestDiskReportUnauthorizedAndInactiveIDsDoNotAcquireWriter(t *testing.T) {
+	s, req, now := deepFixture(t)
+	job := deepJob(t, s, req, now)
+	s.SetWriterWait(30 * time.Millisecond)
+	chunk := diskreport.Chunk{Data: []byte("{}")}
+	chunk.Digest = diskreport.Digest(chunk.Data)
+	// With a held writer, each of these requests must still return its authority
+	// error from the query-only pool, rather than queueing or returning writer busy.
+	held, err := s.beginWrite(context.Background(), "hold_report_writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback()
+	for _, tc := range []struct{ machine, job string }{{req.Targets[0], "arbitrary-job"}, {"other-machine", job}} {
+		if _, err = s.DiskReportChunk(tc.machine, tc.job, chunk); err == nil || IsBusy(err) {
+			t.Fatalf("chunk precheck: %v", err)
+		}
+		if _, err = s.DiskReportComplete(tc.machine, tc.job, diskreport.Complete{}); err == nil || IsBusy(err) {
+			t.Fatalf("complete precheck: %v", err)
+		}
+	}
+	held.Rollback()
+	if _, err = s.DB().Exec(`UPDATE jobs SET lease_expires_at=? WHERE job_id=?`, fmtTime(now.Add(-time.Hour)), job); err != nil {
+		t.Fatal(err)
+	}
+	held, err = s.beginWrite(context.Background(), "hold_inactive_report_writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback()
+	if _, err = s.DiskReportChunk(req.Targets[0], job, chunk); err == nil || IsBusy(err) {
+		t.Fatalf("inactive chunk precheck: %v", err)
+	}
+	if _, err = s.DiskReportComplete(req.Targets[0], job, diskreport.Complete{}); err == nil || IsBusy(err) {
+		t.Fatalf("inactive completion precheck: %v", err)
+	}
+}
+
+func TestDiskReportUploadRechecksAuthorityInsideWriter(t *testing.T) {
+	s, req, now := deepFixture(t)
+	job := deepJob(t, s, req, now)
+	chunk := diskreport.Chunk{Data: []byte("{}")}
+	chunk.Digest = diskreport.Digest(chunk.Data)
+	// nowFn's second call happens only after the writer is acquired; expiry valid
+	// during the reader check must then be rejected by the transaction check.
+	originalNow := s.nowFn
+	defer func() { s.nowFn = originalNow }()
+	for _, complete := range []bool{false, true} {
+		calls := 0
+		s.nowFn = func() time.Time {
+			calls++
+			if calls == 1 {
+				return now
+			}
+			return now.Add(2 * time.Hour)
+		}
+		var err error
+		if complete {
+			_, err = s.DiskReportComplete(req.Targets[0], job, diskreport.Complete{})
+		} else {
+			_, err = s.DiskReportChunk(req.Targets[0], job, chunk)
+		}
+		if err == nil || calls < 2 {
+			t.Fatal("transaction authority was not rechecked", err, calls)
+		}
+	}
+	s.nowFn = originalNow
+	var count int
+	if err := s.rdb.QueryRow(`SELECT COUNT(*) FROM disk_reports`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("failed recheck mutated report", count, err)
 	}
 }

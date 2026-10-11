@@ -81,6 +81,23 @@ type Receipt struct {
 	Digest string `json:"digest"`
 }
 
+var itemIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
+
+func canonicalLastUsed(value string) bool {
+	if value == "" {
+		return true
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil && parsed.Format(time.RFC3339Nano) == value
+}
+func validLastUsedSource(value string) bool {
+	switch value {
+	case "", "unknown", "atime", "all-container references", "process start ticks":
+		return true
+	}
+	return false
+}
+
 func Digest(raw []byte) string { h := sha256.Sum256(raw); return "sha256:" + hex.EncodeToString(h[:]) }
 func Decode(raw []byte) (Report, []byte, error) {
 	var r Report
@@ -97,7 +114,7 @@ func Decode(raw []byte) (Report, []byte, error) {
 	}
 	seen := map[string]bool{}
 	for _, i := range r.Items {
-		if i.ID == "" || len(i.ID) > 128 || seen[i.ID] || len(i.PrivatePath) > 4096 || !filepath.IsAbs(i.PrivatePath) || filepath.Clean(i.PrivatePath) != i.PrivatePath || strings.ContainsAny(i.PrivatePath, "\x00\r\n") || i.DisplayPath != "" || i.AllocatedBytes < 0 || i.LogicalBytes < 0 || i.OwnerUID < 0 || len(i.OwnerApp) > 128 || len(i.ExclusionReason) > 256 {
+		if !itemIdentifier.MatchString(i.ID) || !canonicalLastUsed(i.LastUsed) || !validLastUsedSource(i.LastUsedSource) || seen[i.ID] || len(i.PrivatePath) > 4096 || !filepath.IsAbs(i.PrivatePath) || filepath.Clean(i.PrivatePath) != i.PrivatePath || strings.ContainsAny(i.PrivatePath, "\x00\r\n") || i.DisplayPath != "" || i.AllocatedBytes < 0 || i.LogicalBytes < 0 || i.OwnerUID < 0 || len(i.OwnerApp) > 128 || len(i.ExclusionReason) > 256 {
 			return r, nil, fmt.Errorf("invalid report item")
 		}
 		seen[i.ID] = true
@@ -149,11 +166,26 @@ func ScrubDisplay(value string) string {
 }
 func StoredItem(i Item) Item {
 	i.DisplayPath = Display(i.PrivatePath)
-	i.OwnerApp = ScrubDisplay(i.OwnerApp)
-	i.ExclusionReason = ScrubDisplay(i.ExclusionReason)
+	i.OwnerApp, _, _ = boundedtext.Scrub(i.OwnerApp, 128)
+	i.ExclusionReason, _, _ = boundedtext.Scrub(i.ExclusionReason, 256)
+	i.AgeBucket, _, _ = boundedtext.Scrub(i.AgeBucket, 64)
+	// Reapply validation on projection for reports stored before this contract.
+	if !itemIdentifier.MatchString(i.ID) {
+		i.ID = "item"
+	}
+	if !canonicalLastUsed(i.LastUsed) {
+		i.LastUsed = ""
+	}
+	if !validLastUsedSource(i.LastUsedSource) {
+		i.LastUsedSource = "unknown"
+	}
 	return i
 }
 func PublicItem(i Item) Item {
+	// StoredItem also protects defensive reprojection of legacy records.
+	if i.PrivatePath != "" {
+		i = StoredItem(i)
+	}
 	display := i.DisplayPath
 	if i.PrivatePath != "" {
 		display = Display(i.PrivatePath)
@@ -168,7 +200,7 @@ func PublicItem(i Item) Item {
 	i.ContentDigest = ""
 	i.BootID = ""
 	i.StartTime = ""
-	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`).MatchString(i.ID) {
+	if !itemIdentifier.MatchString(i.ID) {
 		i.ID = "item"
 	}
 	switch i.OwnerApp {
@@ -181,7 +213,7 @@ func PublicItem(i Item) Item {
 	default:
 		i.LastUsedSource = "unknown"
 	}
-	if _, err := time.Parse(time.RFC3339Nano, i.LastUsed); err != nil {
+	if !canonicalLastUsed(i.LastUsed) {
 		i.LastUsed = ""
 	}
 	switch i.AgeBucket {
@@ -190,6 +222,29 @@ func PublicItem(i Item) Item {
 		i.AgeBucket = ""
 	}
 	return i
+}
+
+// StoredReport scrubs all free-form metadata displayed to human admins. It is
+// applied after digest verification and again on reads for legacy records.
+func StoredReport(r Report) Report {
+	r.PolicyID, _, _ = boundedtext.Scrub(r.PolicyID, 128)
+	r.PolicyDigest, _, _ = boundedtext.Scrub(r.PolicyDigest, 80)
+	for n, v := range r.Notices {
+		r.Notices[n], _, _ = boundedtext.Scrub(v, 256)
+	}
+	for n, v := range r.InaccessibleRoots {
+		r.InaccessibleRoots[n], _, _ = boundedtext.Scrub(v, 256)
+	}
+	excluded := map[string]Aggregate{}
+	for k, v := range r.Excluded {
+		key, _, _ := boundedtext.Scrub(k, 128)
+		old := excluded[key]
+		old.Count += v.Count
+		old.AllocatedBytes += v.AllocatedBytes
+		excluded[key] = old
+	}
+	r.Excluded = excluded
+	return r
 }
 
 // PublicReport never projects free-form machine notices, root paths or map keys.

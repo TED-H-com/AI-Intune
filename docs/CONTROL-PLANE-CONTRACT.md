@@ -1153,3 +1153,16 @@ inventory never means clean. Pressure evaluates active non-retired machines with
 Only enqueue and bounded coalesce decisions persist minute slots and audit rows;
 routine below-threshold/unavailable checks leave no durable trigger evidence.
 Human cleanup decisions remain disabled until P2-04; no delegated approvals.
+
+Deep-report chunk and completion uploads share process-local admission: at most
+2 concurrent requests per authenticated machine and 16 globally, with a 64-request
+per-minute machine token bucket (burst 64). Throttling returns HTTP 429 with
+`Retry-After`; neither client IP nor job ID resets the machine allowance. The
+limiter retains at most 4096 machine buckets, evicting only idle fully refilled
+entries. Job ownership, running state, lease and pinned read-script identity are
+checked through the query-only pool before acquiring the SQLite writer, then
+rechecked inside the writer transaction. Item IDs allow only ASCII letters,
+digits, underscores and hyphens (1–128 bytes); `last_used` is empty or canonical
+RFC3339Nano, and evidence sources are a fixed allowlist (atime, all-container
+references, process start ticks, unknown or empty). Displayed free text uses the
+shared bounded-text scrubber; raw private paths remain identity bindings.
