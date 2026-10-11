@@ -53,6 +53,17 @@ func (h *hub) handleScriptRun(w http.ResponseWriter, r *http.Request, apply bool
 		h.rejectOperatorPolicyTransport(w, r, actor, action, rejection.Status, rejection.Code, rejection.Detail)
 		return
 	}
+	if principal.AuthMethod == operatorauth.AuthMethodServiceToken {
+		entry, exists := scriptcatalog.Lookup(body.ScriptID)
+		if !exists || entry.Mode != "read" {
+			h.rejectOperatorPolicyTransport(w, r, actor, action, 403, "SERVICE_TOKEN_READ_SCRIPTS_ONLY", "service tokens require a read-only catalog script")
+			return
+		}
+		if !principal.Has(operatorauth.Operate) {
+			h.rejectOperatorPolicyTransport(w, r, actor, action, 403, "SCRIPT_SCOPE_REQUIRED", "read scripts require operate")
+			return
+		}
+	}
 	if e, ok := scriptcatalog.Lookup(body.ScriptID); ok && e.Mode == "write" {
 		p, ok := operatorauth.PrincipalFromContext(r.Context())
 		if !ok || !p.Has(operatorauth.Admin) {
