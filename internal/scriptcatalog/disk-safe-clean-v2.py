@@ -23,6 +23,9 @@ def inside(path, root):
 class ProtectionResolutionError(OSError):
     pass
 
+class ProtectionChangedError(ProtectionResolutionError):
+    pass
+
 def preview_resolution_guard(path):
     if not APPLY:
         # Linux readlink can update symlink atime even through O_PATH. Preview
@@ -58,8 +61,50 @@ def resolved_if_present(path):
         return None
     return strict_realpath(path)
 
+def protection_snapshot(lexical):
+    resolved = resolved_if_present(lexical)
+    try:
+        info = os.lstat(lexical)
+        root_identity = (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), info.st_uid)
+    except FileNotFoundError:
+        root_identity = None
+    aliases = {}
+    pending, seen = [lexical], set()
+    while pending:
+        path = pending.pop()
+        if path in seen: continue
+        seen.add(path)
+        if len(seen) > 256: raise ProtectionResolutionError('protection alias budget exceeded')
+        prefix = '/'
+        for part in path.split('/')[1:]:
+            prefix = os.path.join(prefix, part)
+            try: info = os.lstat(prefix)
+            except FileNotFoundError: break
+            if stat.S_ISLNK(info.st_mode):
+                target = strict_realpath(prefix)
+                identity = (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_uid)
+                aliases[prefix] = (identity, target)
+                # Include aliases in the link target chain, not only the spec.
+                pending.append(os.path.abspath(os.path.join(os.path.dirname(prefix), os.readlink(prefix))))
+    return root_identity, resolved, aliases
+
+def revalidate_protections(policy):
+    state = policy['_protection_state']
+    if state['failed']: return False
+    try:
+        for spec, snapshot in policy['_protection_specs'].items():
+            if protection_snapshot(spec) != snapshot:
+                state['failed'] = True
+                return False
+    except OSError:
+        state['failed'] = True
+        return False
+    return True
+
 def normalized_protections(policy):
     if '_protection_paths' in policy:
+        if policy['_protection_state']['failed']:
+            raise ProtectionChangedError('protection alias changed; run deferred')
         return policy
     try:
         home = os.path.abspath(os.path.expanduser('~'))
@@ -71,14 +116,16 @@ def normalized_protections(policy):
         builtins += [os.path.join(home, '.codex/generated_images')]
         builtins += [os.path.join(home, name) for name in entries(home)
                      if any(fnmatch.fnmatch(name.lower(), pat.lower()) for pat in BUILTIN)]
-        paths = set()
+        paths, specs = set(), {}
         for raw in builtins + policy['protect_paths']:
             lexical = os.path.abspath(os.path.expanduser(raw))
             paths.add(lexical)
-            resolved = resolved_if_present(lexical)
+            snapshot = protection_snapshot(lexical)
+            specs[lexical] = snapshot
+            resolved = snapshot[1]
             if resolved is not None:
                 paths.add(resolved)
-        return dict(policy, _protection_paths=paths)
+        return dict(policy, _protection_paths=paths, _protection_specs=specs, _protection_state={"failed": False})
     except OSError as error:
         raise ProtectionResolutionError('protection path resolution failed') from error
 
@@ -192,6 +239,7 @@ def unlink_checked(path, info, policy):
         fresh = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
         if not complete or held(path, fresh, opened) or any(('dir', os.fstat(fd).st_dev, os.fstat(fd).st_ino) in opened for fd in fds) or protected(path, policy):
             return False
+        if not revalidate_protections(policy): return False
         # All potentially lengthy checks precede the final descriptor-relative stat.
         fresh = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
         identity = lambda st: (st.st_dev, st.st_ino, stat.S_IFMT(st.st_mode), st.st_size, st.st_mtime_ns, st.st_ctime_ns)
@@ -209,6 +257,7 @@ def category(note='', status='skipped', candidate=0, freed=0, items=0):
 
 def scan(root, policy, opened, complete, days, mutate=False, budget=None):
     try: policy = normalized_protections(policy)
+    except ProtectionChangedError: return category("deferred: protection alias changed; run deferred")
     except ProtectionResolutionError: return category("deferred: protection path resolution failed")
     if not complete:
         return category('deferred: incomplete holder visibility')
@@ -263,6 +312,8 @@ def scan(root, policy, opened, complete, days, mutate=False, budget=None):
                         freed += info.st_size
                     else:
                         skipped += 1
+                        if policy['_protection_state']['failed']:
+                            return category('deferred: protection alias changed; run deferred', candidate=total, freed=freed, items=count)
             except ProtectionResolutionError:
                 return category('deferred: candidate path resolution failed', candidate=total, freed=freed, items=count)
             except OSError:
@@ -273,6 +324,7 @@ def native(name, cache, command, policy, opened, complete):
     try:
         policy = normalized_protections(policy)
         preview_resolution_guard(os.path.abspath(cache))
+    except ProtectionChangedError: return category("deferred: protection alias changed; run deferred")
     except ProtectionResolutionError: return category("deferred: protection path resolution failed")
     # Hold the observed directory throughout validation and spawn. uv/npm receive
     # this inherited descriptor instead of a mutable pathname.
@@ -365,6 +417,8 @@ def native_anchored(name, cache, command, policy, opened, complete, fd):
     if n: return category('deferred: cache lock held by ' + str(n))
     if not visible: return category('incomplete holder visibility')
     if not same_cache(cache, fd): return category('deferred: cache changed')
+    if not revalidate_protections(policy):
+        return category('deferred: protection alias changed; run deferred')
     target = '/proc/self/fd/' + str(fd)
     env = dict(os.environ, UV_LOCK_TIMEOUT='60', UV_CACHE_DIR=target, npm_config_cache=target)
     try:
@@ -384,6 +438,8 @@ DOCKER_COMMANDS = [ ['docker', 'image', 'prune', '-f', '--filter', 'until=168h']
 JOURNAL_COMMAND = ['journalctl', '--vacuum-size=500M']
 
 def docker(policy, opened, complete):
+    if policy.get("_protection_state", {}).get("failed"):
+        return category("deferred: protection alias changed; run deferred")
     if not APPLY:
         return category('native GC estimate unavailable; no command executed', 'ok')
     if policy['safe_tier']['docker_min_hours'] != 168:
@@ -493,16 +549,20 @@ def main():
     elif args['scope'] == 'root':
         cats = {x: category('root_helper_missing') for x in ['var_tmp', 'journald', 'docker']}
     else:
-        opened, complete = holders()
-        budget = {'remaining': policy['scan_budgets']['max_items']}
-        cats['user_tmp'] = scan('/tmp', policy, opened, complete, tier['user_tmp_min_days'], APPLY, budget)
-        for name, path in [('user_cache_tmp', home+'/.cache/tmp'), ('user_local_tmp', home+'/.local/tmp')]:
-            cats[name] = scan(path, policy, opened, complete, tier['user_tmp_min_days'], APPLY, budget) if os.path.isdir(path) else category('temporary directory absent')
-        cats['uv'] = native('uv', home + '/.cache/uv', ['uv', 'cache', 'prune'], policy, opened, complete)
-        cats['npm'] = native('npm', home + '/.npm', ['npm', 'cache', 'verify'], policy, opened, complete)
-        cats['cargo'] = category('unsupported: tested native age-aware GC unavailable')
-        cats['docker'] = docker(policy, opened, complete)
-        cats['journald'] = category('root_helper_missing')
+        try: policy = normalized_protections(policy)
+        except ProtectionResolutionError:
+            cats = {x: category('deferred: protection path resolution failed') for x in ['user_tmp','user_cache_tmp','user_local_tmp','uv','npm','cargo','docker','journald']}
+        if not cats:
+            opened, complete = holders()
+            budget = {'remaining': policy['scan_budgets']['max_items']}
+            cats['user_tmp'] = scan('/tmp', policy, opened, complete, tier['user_tmp_min_days'], APPLY, budget)
+            for name, path in [('user_cache_tmp', home+'/.cache/tmp'), ('user_local_tmp', home+'/.local/tmp')]:
+                cats[name] = scan(path, policy, opened, complete, tier['user_tmp_min_days'], APPLY, budget) if os.path.isdir(path) else category('temporary directory absent')
+            cats['uv'] = native('uv', home + '/.cache/uv', ['uv', 'cache', 'prune'], policy, opened, complete)
+            cats['npm'] = native('npm', home + '/.npm', ['npm', 'cache', 'verify'], policy, opened, complete)
+            cats['cargo'] = category('unsupported: tested native age-aware GC unavailable')
+            cats['docker'] = docker(policy, opened, complete)
+            cats['journald'] = category('root_helper_missing')
     after = os.statvfs('/')
     avail_after = after.f_bavail*after.f_frsize
     pct_after = int(100*(total-avail_after)/total) if total else 0

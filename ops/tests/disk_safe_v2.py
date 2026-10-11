@@ -337,6 +337,76 @@ class Safety(unittest.TestCase):
         self.assertEqual(before,(os.lstat(alias).st_atime_ns,os.lstat(alias).st_mtime_ns))
         self.assertTrue(file.exists())
 
+    def test_protection_alias_retarget_before_unlink_latches_run(self):
+        for builtin in [False,True]:
+            with self.subTest(builtin=builtin):
+                home=self.root/('home-'+str(builtin));home.mkdir()
+                old=self.root/('initial-'+str(builtin));old.mkdir()
+                file=self.old('candidates-'+str(builtin)+'/old.txt')
+                other=self.old('later-'+str(builtin)+'/old.txt')
+                alias=home/'.aws' if builtin else self.root/'configured-alias'
+                alias.symlink_to(old,target_is_directory=True)
+                policy=dict(POLICY,protect_paths=[] if builtin else [str(alias)])
+                with patch.dict(os.environ,HOME=str(home)):
+                    policy=self.clean.normalized_protections(policy)
+                    self.assertEqual(policy['protect_paths'],[] if builtin else [str(alias)])
+                    def retarget(**kwargs):
+                        alias.unlink();alias.symlink_to(file.parent,target_is_directory=True)
+                        return {},True
+                    with patch.object(self.clean,'holders',side_effect=retarget):
+                        result=self.clean.scan(str(file.parent),policy,{},True,10,True)
+                    self.assertEqual(result['freed_bytes'],0)
+                    self.assertIn('protection alias changed',result['note'])
+                    self.assertTrue(policy['_protection_state']['failed'])
+                    # Returning the alias to its old target cannot clear the latch.
+                    alias.unlink();alias.symlink_to(old,target_is_directory=True)
+                    with patch.object(self.clean,'holders',return_value=({},True)):
+                        result=self.clean.scan(str(other.parent),policy,{},True,10,True)
+                    self.assertIn('run deferred',result['note'])
+                    with patch.object(self.clean.subprocess,'run',side_effect=AssertionError('latched native GC')):
+                        result=self.clean.native('uv',str(old),['uv','cache','prune'],policy,{},True)
+                    self.assertIn('run deferred',result['note'])
+                    # A fresh run with unchanged protections remains usable.
+                    fresh=self.clean.normalized_protections(dict(POLICY,protect_paths=[] if builtin else [str(alias)]))
+                    with patch.object(self.clean,'holders',return_value=({},True)):
+                        self.assertTrue(self.clean.unlink_checked(str(other),other.stat(),fresh))
+                self.assertTrue(file.exists())
+
+    def test_protection_alias_replacement_same_target_and_native_retarget(self):
+        cache=self.root/'cache';cache.mkdir()
+        old=self.root/'initial';old.mkdir()
+        alias=self.root/'configured-alias';alias.symlink_to(old,target_is_directory=True)
+        policy=self.clean.normalized_protections(dict(POLICY,protect_paths=[str(alias)]))
+        # Different alias inode is a change even with the same resolved target.
+        replacement=self.root/'replacement-alias';replacement.symlink_to(old,target_is_directory=True)
+        os.replace(replacement,alias)
+        self.assertFalse(self.clean.revalidate_protections(policy))
+        policy=self.clean.normalized_protections(dict(POLICY,protect_paths=[str(alias)]))
+        def retarget(**kwargs):
+            alias.unlink();alias.symlink_to(cache,target_is_directory=True)
+            return {},True
+        with patch.object(self.clean.shutil,'which',return_value='/usr/bin/uv'),patch.object(self.clean,'holders',side_effect=retarget),patch.object(self.clean.subprocess,'run',side_effect=AssertionError('retargeted GC')):
+            result=self.clean.native('uv',str(cache),['uv','cache','prune'],policy,{},True)
+        self.assertIn('protection alias changed',result['note'])
+        self.assertTrue(policy['_protection_state']['failed'])
+
+    def test_ancestor_protection_alias_retarget_and_resolution_failure(self):
+        old=self.root/'initial';(old/'nested').mkdir(parents=True)
+        alias=self.root/'ancestor-alias';alias.symlink_to(old,target_is_directory=True)
+        policy=self.clean.normalized_protections(dict(POLICY,protect_paths=[str(alias/'nested')]))
+        file=self.old('candidate/old.txt')
+        def retarget(**kwargs):
+            alias.unlink();alias.symlink_to(file.parent,target_is_directory=True)
+            return {},True
+        with patch.object(self.clean,'holders',side_effect=retarget):
+            self.assertFalse(self.clean.unlink_checked(str(file),file.stat(),policy))
+        self.assertTrue(policy['_protection_state']['failed']);self.assertTrue(file.exists())
+        alias.unlink();alias.symlink_to(old,target_is_directory=True)
+        policy=self.clean.normalized_protections(dict(POLICY,protect_paths=[str(alias)]))
+        alias.unlink();alias.symlink_to(self.root/'missing',target_is_directory=True)
+        self.assertFalse(self.clean.revalidate_protections(policy))
+        self.assertTrue(policy['_protection_state']['failed'])
+
     def test_incomplete_visibility_and_cargo_root_skips(self):
         self.assertEqual(self.clean.native('uv',str(self.root),['uv','cache','prune'],POLICY,{},False)['status'],'skipped')
         request=json.dumps(dict(args=dict(scope='root',policy_id='fixture',policy_digest='sha256:'+'a'*64),policy=POLICY))

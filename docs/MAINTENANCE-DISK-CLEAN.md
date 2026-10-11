@@ -432,3 +432,11 @@ Preview defers strict symlink resolution on filesystems without `noatime`: readi
 an alias can update the symlink's access time. It checks ancestors before following
 them and returns a resolution-failure skip instead of changing fixture timestamps.
 Cleanup resolves aliases strictly; both modes retain the protected subtree.
+
+A run retains the original protection specifications, resolved targets, and alias
+`lstat` identities (including aliases in ancestor and target chains). Immediately
+before unlink or native GC admission, it re-resolves those specifications and
+compares the snapshot. Any change or resolution failure defers the item and latches
+a protection-change skip for all remaining mutations in that run, even if the alias
+is restored later. A new invocation establishes a fresh baseline. Alias access times
+and ordinary directory modification times do not participate in identity checks.
