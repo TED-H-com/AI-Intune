@@ -196,10 +196,13 @@ func (e Entry) Validate(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 type Spec struct {
-	Kind         string          `json:"kind"`
-	ScriptID     string          `json:"script_id"`
-	ScriptSHA256 string          `json:"script_sha256"`
-	Args         json.RawMessage `json:"args"`
+	// ExecutionMode records the catalog mode approved when the job was created.
+	// Optional for legacy agent execution; disclosure must not infer it later.
+	ExecutionMode string          `json:"execution_mode,omitempty"`
+	Kind          string          `json:"kind"`
+	ScriptID      string          `json:"script_id"`
+	ScriptSHA256  string          `json:"script_sha256"`
+	Args          json.RawMessage `json:"args"`
 }
 
 func Decode(raw []byte) (Spec, error) {

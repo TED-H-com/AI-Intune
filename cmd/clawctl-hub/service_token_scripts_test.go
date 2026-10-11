@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -216,9 +217,58 @@ func TestServiceTokenScriptEvidenceOnly(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		job, err := f.store.Job(result.JobIDs[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		desired, err := f.store.DesiredState(job.DesiredID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, err := scriptcatalog.Decode([]byte(desired.Spec))
+		if err != nil || spec.ExecutionMode != entry.Mode {
+			t.Fatal("execution-time mode not persisted")
+		}
 		return result.JobIDs[0]
 	}
 	readID := createScript("fleet-probe-v1", json.RawMessage(`{}`))
+	// Existing agents strictly reject unknown fields. Exercise actual job
+	// delivery with the pre-mode decoder shape and verify its payload digest.
+	next := requestJobAPI(t, f.mux, http.MethodGet, "/v1/jobs/next", f.machine.token, nil)
+	if next.Code != http.StatusOK {
+		t.Fatalf("next job status=%d", next.Code)
+	}
+	var wire model.JobResponse
+	if err := json.Unmarshal(next.Body.Bytes(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	var legacySpec struct {
+		Kind         string          `json:"kind"`
+		ScriptID     string          `json:"script_id"`
+		ScriptSHA256 string          `json:"script_sha256"`
+		Args         json.RawMessage `json:"args"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(wire.Spec))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&legacySpec); err != nil {
+		t.Fatalf("legacy agent decoder: %v", err)
+	}
+	if wire.JobID != readID || legacySpec.ScriptID != "fleet-probe-v1" || wire.ArtifactDigest != "sha256:"+scriptcatalog.Digest(wire.Spec) {
+		t.Fatal("agent projection identity/digest mismatch")
+	}
+	storedJob, err := f.store.Job(readID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedSpec, err := f.store.DesiredState(storedJob.DesiredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedStored, err := scriptcatalog.Decode([]byte(storedSpec.Spec))
+	if err != nil || decodedStored.ExecutionMode != "read" || storedJob.ArtifactDigest != "sha256:"+scriptcatalog.Digest([]byte(storedSpec.Spec)) {
+		t.Fatal("agent delivery changed persisted approval metadata/digest")
+	}
+
 	lease, err := f.store.ClaimJob(readID, f.machine.id, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -244,6 +294,28 @@ func TestServiceTokenScriptEvidenceOnly(t *testing.T) {
 	}
 
 	writeID := createScript("bat-sweep-report-v1", json.RawMessage(`{"hosts":["sample-host"],"connector_tree_sha256":"`+strings.Repeat("a", 64)+`"}`))
+	// Create a real write job first, then simulate a same-hash catalog-only
+	// reclassification at the shared authorization predicate.
+	writeJob, err := f.store.Job(writeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDesired, err := f.store.DesiredState(writeJob.DesiredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSpec, err := scriptcatalog.Decode([]byte(writeDesired.Spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclassified, exists := scriptcatalog.Lookup(writeSpec.ScriptID)
+	if !exists || writeSpec.ExecutionMode != "write" {
+		t.Fatal("expected real historical write job")
+	}
+	reclassified.Mode = "read"
+	if serviceTokenScriptEvidenceAllowed(writeSpec, reclassified, writeDesired.ResourceID) {
+		t.Fatal("catalog reclassification exposed historical write job")
+	}
 	otherID := createOperatorReadJob(t, f.store, f.machine.id, "cnode-operator", "NON_SCRIPT_EVIDENCE")
 	for _, tc := range []struct {
 		name, id string
@@ -284,6 +356,56 @@ func TestServiceTokenScriptEvidenceOnly(t *testing.T) {
 	if err := f.store.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE auth_subject='service:hermes-evidence' AND auth_method='service-token' AND action=? AND subject=? AND outcome!='ok'`, store.AuditOperatorDenied, route).Scan(&denials); err != nil || denials != 2 {
 		t.Fatalf("denial audits=%d err=%v", denials, err)
 	}
+	job, err := f.store.Job(readID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := f.store.DesiredState(job.DesiredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, mode string }{
+		{"legacy mode absent", ""},
+		// The current catalog is read with the same ID/hash. The historical
+		// spec below records write, exactly the state after reclassification.
+		{"historical write reclassified read with same hash", "write"},
+		{"unknown execution mode", "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := scriptcatalog.Decode([]byte(desired.Spec))
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec.ExecutionMode = tc.mode
+			raw, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.DB().Exec(`UPDATE desired_state SET spec=? WHERE desired_id=?`, string(raw), job.DesiredID); err != nil {
+				t.Fatal(err)
+			}
+			path := "/v1/operator/jobs/" + readID + "/evidence"
+			request := newBoundaryRequest(http.MethodGet, path, nil)
+			request.Header.Set("Authorization", "Bearer "+secret)
+			response := httptest.NewRecorder()
+			boundary.ServeHTTP(response, request)
+			assertAPIError(t, response, http.StatusForbidden, "SERVICE_TOKEN_SCRIPT_EVIDENCE_ONLY")
+			if strings.Contains(response.Body.String(), "read-script-results") {
+				t.Fatal("historical evidence disclosed")
+			}
+			human := httptest.NewRequest(http.MethodGet, path, nil)
+			principal := operatorauth.Principal{AuthMethod: operatorauth.AuthMethodLocalAccountSession, GrantedCapabilities: operatorauth.CapabilityNames{View: "view"}}
+			humanResponse := httptest.NewRecorder()
+			f.mux.ServeHTTP(humanResponse, operatorauth.WithPrincipal(human, principal))
+			if humanResponse.Code != http.StatusOK {
+				t.Fatalf("human status=%d", humanResponse.Code)
+			}
+		})
+	}
+	if err := f.store.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE auth_subject='service:hermes-evidence' AND auth_method='service-token' AND action=? AND subject=? AND outcome!='ok'`, store.AuditOperatorDenied, route).Scan(&denials); err != nil || denials != 5 {
+		t.Fatalf("historical denial audits=%d err=%v", denials, err)
+	}
+
 }
 
 func TestScriptEvidenceEligibilityCannotBeAssignedToOtherRoutes(t *testing.T) {

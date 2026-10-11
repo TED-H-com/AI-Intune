@@ -282,3 +282,47 @@ func TestBATReportJobPreviewApply(t *testing.T) {
 		t.Fatal("invalid host accepted")
 	}
 }
+
+func TestScriptApprovalBindsExecutionMode(t *testing.T) {
+	st, req, audit, _ := scriptFixture(t)
+	normalized, entry, err := normalizeScript(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := st.ScriptRun(req, false, "", audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.PreviewDigest != scriptModeBoundDigest(normalized, entry.Mode) {
+		t.Fatal("preview did not bind catalog mode")
+	}
+	req.PreviewDigest = scriptModeBoundDigest(normalized, "write")
+	if _, err := st.ScriptRun(req, true, "wrong-mode-approval", audit); err == nil {
+		t.Fatal("approval for a different execution mode accepted")
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	if scriptModeBoundDigest(req, "read") == scriptModeBoundDigest(req, "write") {
+		t.Fatal("request digest does not bind execution mode")
+	}
+	result, err := st.ScriptRun(req, true, "mode-bound-approval", audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized.PreviewDigest = req.PreviewDigest
+	var storedDigest string
+	if err := st.DB().QueryRow(`SELECT request_digest FROM operator_idempotency WHERE idempotency_key=?`, "mode-bound-approval").Scan(&storedDigest); err != nil || storedDigest != scriptModeBoundDigest(normalized, "read") {
+		t.Fatalf("request binding: %v", err)
+	}
+	job, err := st.Job(result.JobIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := st.DesiredState(job.DesiredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := scriptcatalog.Decode([]byte(desired.Spec))
+	if err != nil || spec.ExecutionMode != "read" {
+		t.Fatal("approved execution mode not stored")
+	}
+}

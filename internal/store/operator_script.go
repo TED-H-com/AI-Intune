@@ -91,6 +91,15 @@ func scriptDetail(req ScriptRunRequest, jobs []string) string {
 	return string(raw)
 }
 
+// The mode is resolved by the server, never trusted from the request. Binding
+// it prevents a same-hash catalog reclassification from reusing an approval.
+func scriptModeBoundDigest(request any, mode string) string {
+	return "sha256:" + scriptcatalog.Digest(mustScriptJSON(struct {
+		Request       any    `json:"request"`
+		ExecutionMode string `json:"execution_mode"`
+	}{request, mode}))
+}
+
 // ScriptRun validates and creates the complete fanout in a single writer
 // transaction with idempotency and one bounded audit row per request. No migration needed.
 func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit AuditEntry) (out ScriptRunResult, err error) {
@@ -126,9 +135,9 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 	audit.Subject = e.ID
 	previewReq := req
 	previewReq.PreviewDigest = ""
-	digest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(previewReq))
+	digest := scriptModeBoundDigest(previewReq, e.Mode)
 	out = ScriptRunResult{PreviewDigest: digest, Targets: req.Targets, JobIDs: []string{}}
-	audit.RequestDigest = "sha256:" + scriptcatalog.Digest(mustScriptJSON(req))
+	audit.RequestDigest = scriptModeBoundDigest(req, e.Mode)
 	tx, err := s.beginWrite(context.Background(), "script_run")
 	if err != nil {
 		return out, err
@@ -178,7 +187,7 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 		return reject("target unavailable")
 	}
 	if apply {
-		spec := scriptcatalog.Spec{Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: req.Args}
+		spec := scriptcatalog.Spec{ExecutionMode: e.Mode, Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: req.Args}
 		raw := mustScriptJSON(spec)
 		for _, id := range req.Targets {
 			desired, revision, ce := createDesiredStateTx(tx, "machine", id, scriptcatalog.Kind, e.ID, string(raw), "operator:"+audit.AuthSubject, audit.At)

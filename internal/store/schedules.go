@@ -265,7 +265,7 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 	canonical.Args = v.Args
 	canonical.Targets = v.Targets
 	canonical.Cron = v.Cron
-	out.PreviewDigest = "sha256:" + scriptcatalog.Digest(mustScriptJSON(canonical))
+	out.PreviewDigest = scriptModeBoundDigest(canonical, entry.Mode)
 	if v.LastJobIDs == nil {
 		v.LastJobIDs = []string{}
 	}
@@ -521,7 +521,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 		outcome = "skipped_unavailable"
 		err = nil
 	} else {
-		raw := mustScriptJSON(scriptcatalog.Spec{Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
+		raw := mustScriptJSON(scriptcatalog.Spec{ExecutionMode: entry.Mode, Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
 		for _, target := range v.Targets {
 			desired, rev, e := createDesiredStateTx(tx, "machine", target, scriptcatalog.Kind, v.ScriptID, string(raw), "operator:"+a.AuthSubject, now)
 			if e != nil {

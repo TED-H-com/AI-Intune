@@ -34,6 +34,19 @@ func TestScheduleOverlapAndAudit(t *testing.T) {
 	if e != nil || len(got.LastJobIDs) != 1 {
 		t.Fatalf("%+v %v", got, e)
 	}
+	job, err := s.Job(got.LastJobIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := s.DesiredState(job.DesiredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := scriptcatalog.Decode([]byte(desired.Spec))
+	if err != nil || spec.ExecutionMode != "read" {
+		t.Fatal("scheduled job did not persist execution mode")
+	}
+
 	if e = s.TickSchedules(got.NextRunAt); e != nil {
 		t.Fatal(e)
 	}

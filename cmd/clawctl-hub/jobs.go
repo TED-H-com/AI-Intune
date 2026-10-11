@@ -11,6 +11,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/agentadapter"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
@@ -54,17 +55,37 @@ func (h *hub) handleNextJob(w http.ResponseWriter, r *http.Request, machineID st
 		h.writeStoreError(w, "讀取工作單的期望狀態", machineID, err)
 		return
 	}
+	agentSpec, agentDigest := json.RawMessage(ds.Spec), job.ArtifactDigest
+	if ds.ResourceKind == scriptcatalog.Kind {
+		spec, decodeErr := scriptcatalog.Decode(agentSpec)
+		if decodeErr != nil || agentDigest != "sha256:"+scriptcatalog.Digest(agentSpec) {
+			h.writeStoreError(w, "script job spec integrity", machineID, errors.New("invalid script job spec or digest"))
+			return
+		}
+		if spec.ExecutionMode != "" {
+			// Approval/disclosure mode is Hub metadata. Keep the persisted spec
+			// intact, but retain the old wire shape for agents with strict JSON
+			// decoders. The wire digest covers exactly the delivered bytes.
+			spec.ExecutionMode = ""
+			agentSpec, err = json.Marshal(spec)
+			if err != nil {
+				h.writeStoreError(w, "script job projection", machineID, errors.New("script job projection failed"))
+				return
+			}
+			agentDigest = "sha256:" + scriptcatalog.Digest(agentSpec)
+		}
+	}
 	writeJSON(w, http.StatusOK, model.JobResponse{
 		ResourceKind:     ds.ResourceKind,
 		ResourceID:       ds.ResourceID,
-		Spec:             json.RawMessage(ds.Spec),
+		Spec:             agentSpec,
 		JobID:            job.JobID,
 		MachineID:        job.MachineID,
 		DesiredID:        job.DesiredID,
 		Revision:         int64(job.Revision),
 		State:            string(job.State),
 		ExecutionTimeout: job.ExecutionTimeout,
-		ArtifactDigest:   job.ArtifactDigest,
+		ArtifactDigest:   agentDigest,
 		Irreversible:     job.Irreversible,
 	})
 }

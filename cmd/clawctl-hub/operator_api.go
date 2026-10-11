@@ -373,8 +373,7 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 			if desiredErr == nil {
 				spec, decodeErr := scriptcatalog.Decode([]byte(desired.Spec))
 				entry, exists := scriptcatalog.Lookup(spec.ScriptID)
-				allowed = decodeErr == nil && exists && entry.Mode == "read" &&
-					spec.ScriptID == detail.Item.ResourceID && spec.ScriptSHA256 == entry.SHA256
+				allowed = decodeErr == nil && exists && serviceTokenScriptEvidenceAllowed(spec, entry, detail.Item.ResourceID)
 			}
 		}
 		if !allowed {
@@ -399,6 +398,13 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// A current read classification cannot grant access to legacy or historical
+// write evidence. Identity and mode must agree with the immutable job spec.
+func serviceTokenScriptEvidenceAllowed(spec scriptcatalog.Spec, entry scriptcatalog.Entry, resourceID string) bool {
+	return spec.ExecutionMode == "read" && entry.Mode == "read" &&
+		spec.ScriptID == entry.ID && spec.ScriptID == resourceID && spec.ScriptSHA256 == entry.SHA256
 }
 
 func parseOperatorJobEvidenceLimit(r *http.Request) (int, error) {
