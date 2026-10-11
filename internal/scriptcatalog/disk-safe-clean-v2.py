@@ -18,19 +18,90 @@ def entries(path):
         os.close(fd)
 
 def inside(path, root):
-    return path == root or path.startswith(root + os.sep)
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+class ProtectionResolutionError(OSError):
+    pass
+
+def preview_resolution_guard(path):
+    if not APPLY:
+        # Linux readlink can update symlink atime even through O_PATH. Preview
+        # must defer instead of reading links on filesystems without noatime.
+        prefix = '/'
+        for part in path.split('/')[1:]:
+            prefix = os.path.join(prefix, part)
+            try: info = os.lstat(prefix)
+            except FileNotFoundError: return
+            if stat.S_ISLNK(info.st_mode) and not (os.statvfs(os.path.dirname(prefix)).f_flag & os.ST_NOATIME):
+                raise ProtectionResolutionError('preview cannot resolve symlink without changing atime')
+
+def strict_realpath(path):
+    preview_resolution_guard(path)
+    return os.path.realpath(path, strict=True)
+
+def resolved_if_present(path):
+    preview_resolution_guard(path)
+    # Missing ordinary paths retain their lexical protection. Broken links,
+    # loops and inaccessible ancestors cannot safely establish a boundary.
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        prefix = '/'
+        for part in path.split('/')[1:]:
+            prefix = os.path.join(prefix, part)
+            try:
+                info = os.lstat(prefix)
+            except FileNotFoundError:
+                return None
+            if stat.S_ISLNK(info.st_mode):
+                strict_realpath(prefix)
+        return None
+    return strict_realpath(path)
+
+def normalized_protections(policy):
+    if '_protection_paths' in policy:
+        return policy
+    try:
+        home = os.path.abspath(os.path.expanduser('~'))
+        preview_resolution_guard(home)
+        # Name-pattern protections remain unconditional. Materialize matching
+        # home roots and fixed built-in locations so their symlink aliases also
+        # protect destinations elsewhere (notably caches and temp trees).
+        builtins = [os.path.join(home, name) for name in BUILTIN if not any(c in name for c in '*?[')]
+        builtins += [os.path.join(home, '.codex/generated_images')]
+        builtins += [os.path.join(home, name) for name in entries(home)
+                     if any(fnmatch.fnmatch(name.lower(), pat.lower()) for pat in BUILTIN)]
+        paths = set()
+        for raw in builtins + policy['protect_paths']:
+            lexical = os.path.abspath(os.path.expanduser(raw))
+            paths.add(lexical)
+            resolved = resolved_if_present(lexical)
+            if resolved is not None:
+                paths.add(resolved)
+        return dict(policy, _protection_paths=paths)
+    except OSError as error:
+        raise ProtectionResolutionError('protection path resolution failed') from error
 
 def protected(path, policy):
-    path = os.path.abspath(path)
-    if any(inside(path, x) or inside(x, path) for x in policy['protect_paths']):
-        return True
-    if any(fnmatch.fnmatch(x.lower(), pat.lower()) for x in path.split(os.sep) for pat in BUILTIN):
-        return True
-    parent = path if os.path.isdir(path) else os.path.dirname(path)
-    while parent != '/':
-        if os.path.lexists(os.path.join(parent, '.git')):
+    policy = normalized_protections(policy)
+    lexical = os.path.abspath(path)
+    try:
+        resolved = resolved_if_present(lexical)
+    except OSError as error:
+        raise ProtectionResolutionError('candidate path resolution failed') from error
+    candidates = {lexical}
+    if resolved is not None:
+        candidates.add(resolved)
+    for candidate in candidates:
+        if any(inside(candidate, root) or inside(root, candidate) for root in policy['_protection_paths']):
             return True
-        parent = os.path.dirname(parent)
+        if any(fnmatch.fnmatch(x.lower(), pat.lower()) for x in candidate.split(os.sep) for pat in BUILTIN):
+            return True
+        parent = candidate if os.path.isdir(candidate) else os.path.dirname(candidate)
+        while parent != '/':
+            if os.path.lexists(os.path.join(parent, '.git')):
+                return True
+            parent = os.path.dirname(parent)
     return False
 
 def held_pids(path, info, opened):
@@ -102,6 +173,8 @@ def holders(ignore_fds=()):
     return opened, complete
 
 def unlink_checked(path, info, policy):
+    try: policy = normalized_protections(policy)
+    except ProtectionResolutionError: return False
     # Anchor every ancestor without following links; retain all descriptors
     # while rechecking repositories, inode identity, owner and open holders.
     fds = [os.open('/', os.O_RDONLY | os.O_DIRECTORY)]
@@ -135,6 +208,8 @@ def category(note='', status='skipped', candidate=0, freed=0, items=0):
                 candidate_bytes=candidate, freed_bytes=freed, items=items, note=note)
 
 def scan(root, policy, opened, complete, days, mutate=False, budget=None):
+    try: policy = normalized_protections(policy)
+    except ProtectionResolutionError: return category("deferred: protection path resolution failed")
     if not complete:
         return category('deferred: incomplete holder visibility')
     budget = budget if budget is not None else {"remaining": policy["scan_budgets"]["max_items"]}
@@ -143,9 +218,12 @@ def scan(root, policy, opened, complete, days, mutate=False, budget=None):
     deadline = time.monotonic() + min(policy['scan_budgets']['max_seconds'], 60)
     while stack:
         current = stack.pop()
-        if protected(current, policy):
-            skipped += 1
-            continue
+        try:
+            if protected(current, policy):
+                skipped += 1
+                continue
+        except ProtectionResolutionError:
+            return category("deferred: candidate path resolution failed", candidate=total, freed=freed, items=count)
         try:
             names = entries(current)
         except (OSError, PermissionError):
@@ -185,11 +263,17 @@ def scan(root, policy, opened, complete, days, mutate=False, budget=None):
                         freed += info.st_size
                     else:
                         skipped += 1
+            except ProtectionResolutionError:
+                return category('deferred: candidate path resolution failed', candidate=total, freed=freed, items=count)
             except OSError:
                 return category('incomplete: filesystem changed; deferred', candidate=total, freed=freed, items=count)
     return category(str(skipped) + ' protected or open items skipped', 'ok', total, freed, count)
 
 def native(name, cache, command, policy, opened, complete):
+    try:
+        policy = normalized_protections(policy)
+        preview_resolution_guard(os.path.abspath(cache))
+    except ProtectionResolutionError: return category("deferred: protection path resolution failed")
     # Hold the observed directory throughout validation and spawn. uv/npm receive
     # this inherited descriptor instead of a mutable pathname.
     try:
@@ -202,6 +286,8 @@ def native(name, cache, command, policy, opened, complete):
         if APPLY:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return native_anchored(name, cache, command, policy, opened, complete, fd)
+    except ProtectionResolutionError:
+        return category('deferred: candidate path resolution failed')
     except OSError:
         return category('deferred: cache changed or lock held')
     finally:
@@ -265,6 +351,8 @@ def native_anchored(name, cache, command, policy, opened, complete, fd):
                             return category('incomplete: max_items budget reached', candidate=estimate, items=item_count)
                         item_count += 1
                         estimate += info.st_size
+    except ProtectionResolutionError:
+        return category('deferred: candidate path resolution failed')
     except OSError:
         return category('incomplete protection visibility')
     if not same_cache(cache, fd): return category('deferred: cache changed')

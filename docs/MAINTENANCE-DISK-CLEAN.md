@@ -419,3 +419,16 @@ file type, size, nanosecond modification/change times, owner and link count) aft
 holder scanning and protection checks, directly before unlink through the same
 retained no-follow parent directory descriptor. Changed entries are retained.
 Temporary directories are retained; the adapter never recursively removes them.
+
+Protection admission normalizes configured paths and concrete built-in home paths
+before each category scan. Each keeps its absolute lexical path and, when present,
+its strict resolved path. Candidates and cache roots use both forms for containment
+in either direction; a protection symlink into a cache or temporary subtree therefore
+protects its destination. Built-in name patterns remain unconditional. Missing ordinary
+paths retain lexical protection; dangling links, loops, inaccessible ancestors or
+other resolution failures defer the category with an explicit reason.
+
+Preview defers strict symlink resolution on filesystems without `noatime`: reading
+an alias can update the symlink's access time. It checks ancestors before following
+them and returns a resolution-failure skip instead of changing fixture timestamps.
+Cleanup resolves aliases strictly; both modes retain the protected subtree.

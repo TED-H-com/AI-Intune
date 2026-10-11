@@ -236,7 +236,8 @@ class Safety(unittest.TestCase):
         for adapter in [self.preview,self.clean]:
             with patch.object(adapter.shutil,'which',return_value='/usr/bin/uv'),patch.object(adapter.subprocess,'run',side_effect=AssertionError('protected alias spawn')):
                 result=adapter.native('uv',str(alias/'cache'),['uv','cache','prune'],dict(POLICY,protect_paths=[str(actual/'cache'/'protected')]),{},True)
-            self.assertEqual(result['status'],'skipped');self.assertIn('protected',result['note'])
+            self.assertEqual(result['status'],'skipped')
+            self.assertIn('protected' if adapter.APPLY else 'resolution failed',result['note'])
 
     def test_native_escaping_symlinks_and_bounded_scan(self):
         cache=self.root/'cache';cache.mkdir()
@@ -248,7 +249,7 @@ class Safety(unittest.TestCase):
             for adapter in [self.preview,self.clean]:
                 with patch.object(adapter.shutil,'which',return_value='/usr/bin/npm'),patch.object(adapter.subprocess,'run',side_effect=AssertionError('unsafe spawn')):
                     result=adapter.native('npm',str(cache),['npm','cache','verify'],POLICY,{},True)
-                self.assertIn('symlink escapes root',result['note'])
+                self.assertIn('symlink escapes root' if adapter.APPLY else 'resolution failed',result['note'])
             link.unlink()
         for i in range(5): (cache/('entry-'+str(i))).write_text('data')
         policy=dict(POLICY,scan_budgets=dict(POLICY['scan_budgets'],max_entries=2))
@@ -259,6 +260,82 @@ class Safety(unittest.TestCase):
         cache=self.root/'cache';cache.mkdir()
         (cache/'content').write_text('data');(cache/'alias').symlink_to(cache/'content')
         self.assertEqual(self.native('npm',['npm','cache','verify'])['status'],'ok')
+
+    def test_configured_protection_alias_blocks_native_cache_gc(self):
+        cache=self.root/'cache';(cache/'content').mkdir(parents=True)
+        alias=self.root/'protection-alias';alias.symlink_to(cache/'content',target_is_directory=True)
+        policy=dict(POLICY,protect_paths=[str(alias)])
+        for adapter in [self.preview,self.clean]:
+            with patch.object(adapter.shutil,'which',return_value='/usr/bin/uv'),patch.object(adapter.subprocess,'run',side_effect=AssertionError('protected GC')):
+                result=adapter.native('uv',str(cache),['uv','cache','prune'],policy,{},True)
+            self.assertEqual(result['status'],'skipped');self.assertTrue('protected' in result['note'] or 'resolution failed' in result['note'])
+
+    def test_configured_protection_alias_retains_tmp_subtree(self):
+        file=self.old('tmp-candidates/keep.txt')
+        alias=self.root/'protection-alias';alias.symlink_to(file.parent,target_is_directory=True)
+        policy=dict(POLICY,protect_paths=[str(alias)])
+        for adapter in [self.preview,self.clean]:
+            with patch.object(adapter,'holders',return_value=({},True)):
+                result=adapter.scan(str(file.parent),policy,{},True,10,adapter.APPLY)
+            self.assertEqual(result['candidate_bytes'],0);self.assertEqual(result['freed_bytes'],0)
+            self.assertTrue(file.exists())
+
+    def test_builtin_alias_and_candidate_alias_use_both_path_sets(self):
+        home=self.root/'home';home.mkdir()
+        cache=self.root/'cache';cache.mkdir()
+        (home/'.aws').symlink_to(cache,target_is_directory=True)
+        for adapter in [self.preview,self.clean]:
+            with patch.dict(os.environ,HOME=str(home)),patch.object(adapter.shutil,'which',return_value='/usr/bin/uv'):
+                if adapter.APPLY:
+                    policy=adapter.normalized_protections(POLICY)
+                    self.assertIn(str(home/'.aws'),policy['_protection_paths'])
+                    self.assertIn(str(cache),policy['_protection_paths'])
+                result=adapter.native('uv',str(cache),['uv','cache','prune'],POLICY,{},True)
+                self.assertEqual(result['status'],'skipped')
+            alias=self.root/'candidate-alias';alias.symlink_to(cache,target_is_directory=True)
+            if adapter.APPLY:
+                self.assertTrue(adapter.protected(str(alias),dict(POLICY,protect_paths=[str(cache/'nested')])))
+            else:
+                with self.assertRaises(adapter.ProtectionResolutionError):
+                    adapter.protected(str(alias),dict(POLICY,protect_paths=[str(cache/'nested')]))
+            alias.unlink()
+
+    def test_protection_resolution_errors_fail_closed(self):
+        file=self.old('temp-data/old.txt')
+        cache=self.root/'cache';cache.mkdir()
+        dangling=self.root/'dangling';dangling.symlink_to(self.root/'absent')
+        loop=self.root/'loop';loop.symlink_to(loop)
+        absent=self.root/'missing-parent/missing-child'
+        parent=self.root/'broken-parent';parent.symlink_to(self.root/'absent-parent')
+        for adapter in [self.preview,self.clean]:
+            ordinary=adapter.normalized_protections(dict(POLICY,protect_paths=[str(absent)]))
+            self.assertIn(str(absent),ordinary['_protection_paths'])
+            for alias in [dangling,loop,parent/'nested']:
+                policy=dict(POLICY,protect_paths=[str(alias)])
+                result=adapter.scan(str(file.parent),policy,{},True,10,adapter.APPLY)
+                self.assertEqual(result['status'],'skipped');self.assertIn('protection path resolution failed',result['note'])
+                with patch.object(adapter.subprocess,'run',side_effect=AssertionError('unresolved GC')):
+                    result=adapter.native('uv',str(cache),['uv','cache','prune'],policy,{},True)
+                self.assertIn('protection path resolution failed',result['note'])
+            original=adapter.os.path.realpath
+            def denied(path,**kwargs):
+                if path==str(cache): raise PermissionError('fixture')
+                return original(path,**kwargs)
+            with patch.object(adapter.os.path,'realpath',side_effect=denied):
+                result=adapter.scan(str(file.parent),dict(POLICY,protect_paths=[str(cache)]),{},True,10,adapter.APPLY)
+            self.assertIn('protection path resolution failed',result['note'])
+        self.assertTrue(file.exists())
+
+    def test_preview_alias_resolution_preserves_symlink_atime(self):
+        file=self.old('tmp-candidates/keep.txt')
+        alias=self.root/'protection-alias';alias.symlink_to(file.parent,target_is_directory=True)
+        age=time.time()-40*86400;os.utime(alias,(age,age),follow_symlinks=False)
+        before=(os.lstat(alias).st_atime_ns,os.lstat(alias).st_mtime_ns)
+        policy=dict(POLICY,protect_paths=[str(alias/'keep.txt')])
+        result=self.preview.scan(str(file.parent),policy,{},True,10)
+        self.assertEqual(result['status'],'skipped')
+        self.assertEqual(before,(os.lstat(alias).st_atime_ns,os.lstat(alias).st_mtime_ns))
+        self.assertTrue(file.exists())
 
     def test_incomplete_visibility_and_cargo_root_skips(self):
         self.assertEqual(self.clean.native('uv',str(self.root),['uv','cache','prune'],POLICY,{},False)['status'],'skipped')
