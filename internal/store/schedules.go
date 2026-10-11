@@ -450,6 +450,16 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	a.Subject = v.Name
 	a.AuthSubject = "scheduler:" + v.Name
 	a.OK = true
+	if manual {
+		operatorAudit := a
+		operatorAudit.AuthSubject = originalPrincipal
+		operatorAudit.Action = AuditScheduleRunNow
+		operatorAudit.Detail = "manual schedule trigger"
+		operatorAudit.RequestDigest = requestDigest
+		if err = s.recordAuditTx(tx, operatorAudit); err != nil {
+			return
+		}
+	}
 	if !ok || entry.SHA256 != v.ScriptSHA256 || scriptcatalog.Digest(entry.Bytes) != v.ScriptSHA256 {
 		_, err = tx.Exec(`UPDATE schedules SET enabled=0,paused_reason='script_changed',revision=revision+1,updated_at=? WHERE id=?`, fmtTime(now), id)
 		if err != nil {
@@ -462,15 +472,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 		err = commit()
 		return
 	}
-	if manual {
-		operatorAudit := a
-		operatorAudit.AuthSubject = originalPrincipal
-		operatorAudit.Action = AuditScheduleRunNow
-		operatorAudit.Detail = "manual schedule trigger"
-		if err = s.recordAuditTx(tx, operatorAudit); err != nil {
-			return
-		}
-	}
+
 	slot := v.NextRunAt
 	if manual {
 		slot = time.Time{}

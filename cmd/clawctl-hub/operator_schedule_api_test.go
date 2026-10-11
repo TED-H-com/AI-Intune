@@ -173,3 +173,24 @@ func TestScheduleMutationsRateLimitBeforeAudit(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduleMissingRunNowAuditsActor(t *testing.T) {
+	f := observedOperatorFixture(t)
+	h := &hub{store: f.store}
+	id, key := "missing-schedule", "missing-manual-key"
+	req := verifiedOperatorRequest(httptest.NewRequest(http.MethodPost, "/v1/operator/schedules/"+id+"/run-now", strings.NewReader(`{}`)), operatorauth.Operate)
+	req.SetPathValue("id", id)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	actor := operatorActor(req)
+	w := httptest.NewRecorder()
+	h.handleScheduleRunNow(w, req)
+	var response model.APIError
+	if w.Code != 404 || json.Unmarshal(w.Body.Bytes(), &response) != nil || response.Code != "NOT_FOUND" {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var count int
+	if e := f.store.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action='schedule-run-now' AND auth_subject=? AND subject=? AND idempotency_key=? AND outcome='failed' AND detail='schedule not found'`, actor.AuthSubject, id, key).Scan(&count); e != nil || count != 1 {
+		t.Fatalf("missing audit %d %v", count, e)
+	}
+}

@@ -373,3 +373,48 @@ func TestScheduleSkippedEvidenceAtomic(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduleManualHashPauseAuditsInitiator(t *testing.T) {
+	for _, hash := range []string{"", strings.Repeat("a", 64)} {
+		t.Run(fmt.Sprintf("hash-length-%d", len(hash)), func(t *testing.T) {
+			s, v, a, _ := createTestSchedule(t)
+			key := "manual-hash-pause"
+			if _, e := s.DB().Exec(`UPDATE schedules SET script_sha256=? WHERE id=?`, hash, v.ID); e != nil {
+				t.Fatal(e)
+			}
+			out, e := s.ScheduleRunNow(v.ID, key, a)
+			if e != nil || len(out.JobIDs) != 0 {
+				t.Fatalf("pause %+v %v", out, e)
+			}
+			got, _ := s.ScheduleGet(v.ID)
+			if got.Enabled || got.PausedReason != "script_changed" {
+				t.Fatal(got)
+			}
+			var n int
+			if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action='schedule-run-now' AND auth_subject=? AND subject=? AND idempotency_key=? AND outcome='ok'`, a.AuthSubject, v.Name, key).Scan(&n); e != nil || n != 1 {
+				t.Fatalf("initiator audit %d %v", n, e)
+			}
+			if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action='schedule-run' AND auth_subject=? AND detail='script_changed'`, "scheduler:"+v.Name).Scan(&n); e != nil || n != 1 {
+				t.Fatalf("scheduler audit %d %v", n, e)
+			}
+			replay, e := s.ScheduleRunNow(v.ID, key, a)
+			if e != nil || !replay.Replayed {
+				t.Fatalf("pause replay %+v %v", replay, e)
+			}
+		})
+	}
+}
+func TestScheduleManualPauseRequiresInitiatorAudit(t *testing.T) {
+	s, v, a, _ := createTestSchedule(t)
+	s.DB().Exec(`UPDATE schedules SET script_sha256='' WHERE id=?`, v.ID)
+	if _, e := s.DB().Exec(`CREATE TRIGGER reject_manual_audit BEFORE INSERT ON audit_log WHEN NEW.action='schedule-run-now' AND NEW.outcome='ok' BEGIN SELECT RAISE(ABORT,'test audit failure'); END`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.ScheduleRunNow(v.ID, "manual-failed-audit", a); e == nil {
+		t.Fatal("pause without initiator audit")
+	}
+	got, _ := s.ScheduleGet(v.ID)
+	if !got.Enabled || got.PausedReason != "" || got.Revision != v.Revision {
+		t.Fatal("pause partially committed")
+	}
+}

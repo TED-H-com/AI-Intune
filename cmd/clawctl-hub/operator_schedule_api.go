@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -103,9 +105,18 @@ func (h *hub) handleScheduleRunNow(w http.ResponseWriter, r *http.Request) {
 	}
 	v, e := h.store.ScheduleGet(r.PathValue("id"))
 	if e != nil {
+		if !errors.Is(e, sql.ErrNoRows) {
+			writeSettingErr(w, "schedule", e)
+			return
+		}
+		if e = operator.New(h.store).RejectScheduleRunNow(r.PathValue("id"), r.Header.Get("Idempotency-Key"), actor); e != nil {
+			writeSettingErr(w, "schedule audit", e)
+			return
+		}
 		writeErr(w, 404, "NOT_FOUND", "schedule not found")
 		return
 	}
+
 	entry, _ := scriptcatalog.Lookup(v.ScriptID)
 	if entry.Mode == "write" {
 		p, ok := operatorauth.PrincipalFromContext(r.Context())
