@@ -686,5 +686,7 @@ uses revision checks and preview/apply receipts. Scheduled jobs remain normal
 `script_v1` jobs, audited as `scheduler:<name>` and attributed by schedule name.
 
 BAT sweep report pilot: embedded `bat-sweep-report-v1`, read-only connector
-calls, JSON classifications and explicit unknown cleanup/Jev gates; disabled
+calls from an admin-approved digest-pinned connector tree, structured JSON
+classifications (excerpts off by default), bounded reads, fixed no-symlink mapping
+and explicit unknown cleanup/Jev gates; disabled
 hourly schedule example and [comparison runbook](runbooks/BAT-SWEEP-PILOT.md).

@@ -1,12 +1,14 @@
 {
   "name": "bat-sweep-report-pilot",
   "script_id": "bat-sweep-report-v1",
-  "script_sha256": "65d1df0900176b28cad51e8702d77f475de6d779efc38805fd80752750cc4cc2",
+  "script_sha256": "3a5d238fae4e4cbbe22e9dae53a5006ff424aa4c84604253384a884e55ccc9cf",
   "args": {
     "hosts": [
       "sample-host-a",
       "sample-host-b"
-    ]
+    ],
+    "connector_tree_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "include_excerpts": false
   },
   "targets": [
     "connector-node"

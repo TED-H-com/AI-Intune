@@ -15,7 +15,7 @@ func TestRegistryHashIntegrity(t *testing.T) {
 		if !ok || Digest(e.Bytes) != e.SHA256 {
 			t.Fatal("embedded hash mismatch")
 		}
-		if e.Mode != "read" || e.RunsAs != "agent-user" || e.ArgsSchema.AdditionalProperties {
+		if (e.ID == "bat-sweep-report-v1" && e.Mode != "write") || (e.ID != "bat-sweep-report-v1" && e.Mode != "read") || e.RunsAs != "agent-user" || e.ArgsSchema.AdditionalProperties {
 			t.Fatal("unsafe catalog metadata")
 		}
 	}
@@ -48,12 +48,12 @@ func TestBATSweepArgs(t *testing.T) {
 	if !ok || e.DefaultTimeout != 600 || e.MaxTimeout != 600 || e.OutputCap != 64<<10 {
 		t.Fatal("BAT constraints")
 	}
-	for _, raw := range []string{`{}`, `{"hosts":[]}`, `{"hosts":["bad.host"]}`, `{"hosts":[1]}`, `{"hosts":["a","b","c","d","e","f","g","h","i"]}`, `{"hosts":"sample"}`, `{"hosts":["sample"],"command":"true"}`} {
+	for _, raw := range []string{`{"hosts":["sample-host"]}`, `{"hosts":["sample-host"],"connector_tree_sha256":"bad"}`, `{"hosts":["sample-host"],"connector_tree_sha256":"` + strings.Repeat("a", 64) + `","channels_file":"removed"}`, `{"hosts":["sample-host"],"connector_tree_sha256":"` + strings.Repeat("a", 64) + `","include_excerpts":"true"}`, `{}`, `{"hosts":[]}`, `{"hosts":["bad.host"]}`, `{"hosts":[1]}`, `{"hosts":["a","b","c","d","e","f","g","h","i"]}`, `{"hosts":"sample"}`, `{"hosts":["sample"],"command":"true"}`} {
 		if _, err := e.Validate(json.RawMessage(raw)); err == nil {
 			t.Errorf("accepted %s", raw)
 		}
 	}
-	if _, err := e.Validate(json.RawMessage(`{"hosts":["sample-host"],"channels_file":"~/.config/bat-agent-connector/channels.toml"}`)); err != nil {
+	if _, err := e.Validate(json.RawMessage(`{"hosts":["sample-host"],"connector_tree_sha256":"` + strings.Repeat("a", 64) + `","include_excerpts":false}`)); err != nil {
 		t.Fatal(err)
 	}
 }

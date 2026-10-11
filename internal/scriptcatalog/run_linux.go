@@ -86,7 +86,11 @@ func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error)
 		}
 		home = account.HomeDir
 	}
-	cmd := exec.CommandContext(ctx, interpreter, path)
+	argv := []string{path}
+	if e.ID == "bat-sweep-report-v1" {
+		argv = []string{"-I", "-S", "-B", path}
+	}
+	cmd := exec.CommandContext(ctx, interpreter, argv...)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + home, "TMPDIR=" + dir, "PYTHONDONTWRITEBYTECODE=1"}
 	cmd.Stdin = bytes.NewReader(canonical)

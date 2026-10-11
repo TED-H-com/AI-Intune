@@ -257,7 +257,11 @@ func TestBATReportJobPreviewApply(t *testing.T) {
 	st, req, actor, _ := scriptFixture(t)
 	entry, _ := scriptcatalog.Lookup("bat-sweep-report-v1")
 	req.ScriptID, req.ScriptSHA256 = entry.ID, entry.SHA256
-	req.Args = json.RawMessage(`{"hosts":["sample-host"]}`)
+	req.Args = json.RawMessage(`{"hosts":["sample-host"],"connector_tree_sha256":"` + strings.Repeat("a", 64) + `"}`)
+	if _, err := st.ScriptRun(req, false, "", actor); err == nil {
+		t.Fatal("operate principal accepted")
+	}
+	actor.AuthCapability = "admin"
 	req.TimeoutSeconds = 600
 	preview, err := st.ScriptRun(req, false, "", actor)
 	if err != nil {
