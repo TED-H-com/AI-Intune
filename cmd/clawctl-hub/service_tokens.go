@@ -28,33 +28,60 @@ type serviceFormRoute struct {
 	Selected                    bool
 }
 type serviceFormData struct {
-	Tokens                                    []store.ServiceToken
-	Message, Secret, CreatedID, CreatedExpiry string
-	Name, Scope, Expiry, CIDRs, MaxLifetime   string
-	Routes                                    []serviceFormRoute
+	Tokens                                                []store.ServiceToken
+	Message, ErrorField, Secret, CreatedID, CreatedExpiry string
+	Name, Scope, Expiry, CIDRs, MaxLifetime               string
+	Routes                                                []serviceFormRoute
 }
 
 // Only the one-time creation response permits this exact script through a CSP hash.
 const serviceTokenCopyScript = `const t=document.getElementById("issued-token");const b=document.getElementById("copy-token");if(t&&b){t.addEventListener("focus",()=>t.select());b.addEventListener("click",()=>{t.select();if(navigator.clipboard){navigator.clipboard.writeText(t.value).then(()=>{b.textContent="Copied";},()=>{b.textContent="Selected; copy manually";});}else{b.textContent="Selected; copy manually";}});}`
 
-var serviceTokenForm = template.Must(template.New("service-tokens").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Service tokens</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem}label{display:block;margin:.6rem 0}input,select,textarea,button{font:inherit}table{border-collapse:collapse}th,td{padding:.5rem;border:1px solid #ccc;text-align:left}small{display:block}fieldset{margin:1rem 0}</style></head><body><a href="/account/security">Account security</a><h1>Service tokens</h1><p role="alert">{{.Message}}</p>
-{{if .Secret}}<label for="issued-token">New service token</label><input id="issued-token" readonly size="72" value="{{.Secret}}"><button id="copy-token" type="button">Copy token</button><script>` + serviceTokenCopyScript + `</script><p>Save it now; it will not be shown again.</p><p>Token ID: {{.CreatedID}} · Expires: {{.CreatedExpiry}}</p>{{end}}
+var serviceTokenForm = template.Must(template.New("service-tokens").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{{if .ErrorField}}Error: {{end}}Service tokens</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem}label{display:block;margin:.6rem 0}input,select,textarea,button{font:inherit}table{border-collapse:collapse}th,td{padding:.5rem;border:1px solid #ccc;text-align:left}small{display:block}fieldset{margin:1rem 0}.error{background:#fff0f0;color:#8b0000;border:3px solid #b00020;padding:1rem;font-weight:bold}[aria-invalid="true"]{outline:2px solid #b00020}</style></head><body><a href="/account/security">Account security</a><h1>Service tokens</h1>{{if .ErrorField}}<div class="error" role="alert">{{.Message}}</div>{{else}}<p>{{.Message}}</p>{{end}}
 <h2>Create token</h2><form method="post" action="/account/service-tokens/create">
-<label for="name">Name</label><input id="name" name="name" value="{{.Name}}" required maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" aria-describedby="name-help"><small id="name-help">Letters, digits, - and _ only; 1–64 characters.</small>
-<label for="scope">Scope</label><select id="scope" name="scope"><option value="view" {{if eq .Scope "view"}}selected{{end}}>view</option><option value="operate" {{if eq .Scope "operate"}}selected{{end}}>operate</option></select><small>view: read-only routes. operate: view plus running READ-only catalog scripts.</small>
-<label for="expiry">Expiry</label><select id="expiry" name="expiry_days"><option value="30" {{if eq .Expiry "30"}}selected{{end}}>30 days</option><option value="60" {{if eq .Expiry "60"}}selected{{end}}>60 days</option><option value="90" {{if eq .Expiry "90"}}selected{{end}}>90 days</option></select>
-<label for="max-lifetime">Maximum chain lifetime</label><select id="max-lifetime" name="max_lifetime"><option value="none">None (unlimited rotation)</option><option value="180" {{if eq .MaxLifetime "180"}}selected{{end}}>180 days</option><option value="365" {{if eq .MaxLifetime "365"}}selected{{end}}>365 days</option></select>
-<fieldset><legend>Allowed routes</legend><small>Select exact API routes. Script-runs requires operate scope and accepts only READ catalog scripts.</small>{{range .Routes}}<label><input type="checkbox" name="routes" value="{{.Pattern}}" {{if .Selected}}checked{{end}}> {{.Label}} — {{.Description}} <code>{{.Pattern}}</code></label>{{end}}</fieldset>
-<label for="cidrs">Optional source CIDRs</label><textarea id="cidrs" name="source_cidrs">{{.CIDRs}}</textarea><small>One network per line or comma-separated, e.g. 192.0.2.0/24. Empty allows any source IP.</small>
-<label for="password">Current password</label><input id="password" type="password" name="password" required autocomplete="current-password">
-<label for="code">Authenticator code</label><input id="code" name="code" required inputmode="numeric" autocomplete="one-time-code">
-<button>Create selected routes</button><button name="preset" value="hermes-default">Create with Hermes default</button><small>Hermes default: supervision summaries, job list/details/evidence and script-runs preview/apply. Select operate scope.</small></form>
+{{if eq .ErrorField "name"}}<p class="error" id="name-error">{{.Message}}</p>{{end}}<label for="name">Name</label><input id="name" {{if eq .ErrorField "name"}}aria-invalid="true" aria-errormessage="name-error"{{end}} name="name" value="{{.Name}}" required maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" aria-describedby="name-help"><small id="name-help">Letters, digits, - and _ only; 1–64 characters.</small>
+{{if eq .ErrorField "scope"}}<p class="error" id="scope-error">{{.Message}}</p>{{end}}<label for="scope">Scope</label><select id="scope" {{if eq .ErrorField "scope"}}aria-invalid="true" aria-errormessage="scope-error"{{end}} name="scope"><option value="view" {{if eq .Scope "view"}}selected{{end}}>view</option><option value="operate" {{if eq .Scope "operate"}}selected{{end}}>operate</option></select><small>view: read-only routes. operate: view plus running READ-only catalog scripts.</small>
+{{if eq .ErrorField "expiry_days"}}<p class="error" id="expiry_days-error">{{.Message}}</p>{{end}}<label for="expiry">Expiry</label><select id="expiry" {{if eq .ErrorField "expiry_days"}}aria-invalid="true" aria-errormessage="expiry_days-error"{{end}} name="expiry_days"><option value="30" {{if eq .Expiry "30"}}selected{{end}}>30 days</option><option value="60" {{if eq .Expiry "60"}}selected{{end}}>60 days</option><option value="90" {{if eq .Expiry "90"}}selected{{end}}>90 days</option></select>
+{{if eq .ErrorField "max_lifetime"}}<p class="error" id="max_lifetime-error">{{.Message}}</p>{{end}}<label for="max-lifetime">Maximum chain lifetime</label><select id="max-lifetime" {{if eq .ErrorField "max_lifetime"}}aria-invalid="true" aria-errormessage="max_lifetime-error"{{end}} name="max_lifetime"><option value="none">None (unlimited rotation)</option><option value="180" {{if eq .MaxLifetime "180"}}selected{{end}}>180 days</option><option value="365" {{if eq .MaxLifetime "365"}}selected{{end}}>365 days</option></select>
+<fieldset {{if eq .ErrorField "routes"}}aria-invalid="true" aria-errormessage="routes-error"{{end}}><legend>Allowed routes</legend>{{if eq .ErrorField "routes"}}<p class="error" id="routes-error">{{.Message}}</p>{{end}}<small>Select exact API routes. Script-runs requires operate scope and accepts only READ catalog scripts.</small>{{range .Routes}}<label><input type="checkbox" name="routes" value="{{.Pattern}}" {{if .Selected}}checked{{end}}> {{.Label}} — {{.Description}} <code>{{.Pattern}}</code></label>{{end}}</fieldset>
+{{if eq .ErrorField "source_cidrs"}}<p class="error" id="source_cidrs-error">{{.Message}}</p>{{end}}<label for="cidrs">Optional source CIDRs</label><textarea id="cidrs" {{if eq .ErrorField "source_cidrs"}}aria-invalid="true" aria-errormessage="source_cidrs-error"{{end}} name="source_cidrs">{{.CIDRs}}</textarea><small>One network per line or comma-separated, e.g. 192.0.2.0/24. Empty allows any source IP.</small>
+{{if eq .ErrorField "password"}}<p class="error" id="password-error">{{.Message}}</p>{{end}}<label for="password">Current password</label><input id="password" {{if eq .ErrorField "password"}}aria-invalid="true" aria-errormessage="password-error"{{end}} type="password" name="password" required autocomplete="current-password">
+{{if or (eq .ErrorField "code") (eq .ErrorField "password")}}<p class="error" id="code-error">{{.Message}}</p>{{end}}<label for="code">Authenticator code</label><input id="code" {{if or (eq .ErrorField "code") (eq .ErrorField "password")}}aria-invalid="true" aria-errormessage="code-error"{{end}} name="code" required inputmode="numeric" autocomplete="one-time-code">
+<button>Create selected routes</button><button name="preset" value="hermes-default">Create Hermes token (operate)</button><small>Hermes default: supervision summaries, job list/details and script-runs preview/apply. Hermes always uses operate scope; selected routes use the scope above.</small></form>
 <h2>Existing tokens</h2><table><tr><th>ID / name</th><th>Scope</th><th>Status</th><th>Allowed routes / CIDRs</th><th>Expires</th><th>Revoke chain</th></tr>{{range .Tokens}}<tr><td>{{.ID}}<br>{{.Name}}</td><td>{{.Scope}}</td><td>{{.Status}}</td><td>{{range .Allowlist}}{{.}}<br>{{end}}{{range .SourceCIDRs}}{{.}}<br>{{end}}</td><td>{{.ExpiresAt}}</td><td><form method="post" action="/account/service-tokens/revoke"><input type="hidden" name="id" value="{{.ID}}"><label>Password <input type="password" name="password" required autocomplete="current-password"></label><label>Authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Revoke entire chain</button></form></td></tr>{{end}}</table></body></html>`))
 
-var hermesServiceRoutes = []string{"GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status", "GET /v1/operator/jobs", "GET /v1/operator/jobs/{id}", "GET /v1/operator/jobs/{id}/evidence", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}
+// Creation renders directly, without forms or the list, so the one-time secret is unmistakable.
+var serviceTokenSuccess = template.Must(template.New("service-token-created").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Copy your token now</title><style>body{font:18px system-ui;max-width:850px;margin:3rem auto;padding:1rem}input,button{font:inherit}input{width:100%;box-sizing:border-box}strong{display:block;padding:1rem;border:3px solid #b00020;background:#fff0f0}</style></head><body><h1>Copy your token now</h1><p>Name: {{.Name}}</p><p>Token ID: {{.CreatedID}}</p><p>Scope: {{.Scope}}</p><p>Expires: {{.CreatedExpiry}}</p><strong>This is the only time it will be shown. Store it now (e.g. in the Hermes host file ~/.config/hermes/service-token, mode 0600).</strong><p><label for="issued-token">Service token (select and copy)</label><input id="issued-token" readonly value="{{.Secret}}" autocomplete="off" spellcheck="false"></p><button id="copy-token" type="button">Copy token</button><script>` + serviceTokenCopyScript + `</script><p><a href="/account/service-tokens">I have saved it — back to service tokens</a></p></body></html>`))
+
+// Messages contain only non-secret validation details. Factor failures stay generic.
+func serviceTokenErrorField(message string) string {
+	switch {
+	case strings.HasPrefix(message, "Name"):
+		return "name"
+	case strings.HasPrefix(message, "Scope"), strings.HasPrefix(message, "Script-runs"):
+		return "scope"
+	case strings.HasPrefix(message, "Expiry"):
+		return "expiry_days"
+	case strings.HasPrefix(message, "Maximum lifetime"):
+		return "max_lifetime"
+	case strings.Contains(message, "CIDR"):
+		return "source_cidrs"
+	case strings.Contains(message, "route"), strings.HasPrefix(message, "Route"):
+		return "routes"
+	case message == "Password or code incorrect.":
+		return "password"
+	default:
+		return "general"
+	}
+}
+
+var hermesServiceRoutes = []string{"GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status", "GET /v1/operator/jobs", "GET /v1/operator/jobs/{id}", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}
 
 func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 	t := store.ServiceToken{Name: r.PostForm.Get("name"), Scope: r.PostForm.Get("scope"), SourceCIDRs: splitServiceList(r.PostForm.Get("source_cidrs"))}
+	if r.PostForm.Get("preset") == "hermes-default" {
+		t.Scope = "operate"
+	}
 	if !serviceTokenAuditName.MatchString(t.Name) {
 		return t, "Name invalid: use 1–64 letters, digits, - or _."
 	}
@@ -194,6 +221,7 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 				if strings.HasSuffix(r.URL.Path, "/create") {
 					var created store.ServiceToken
 					created, secret, err = st.CreateServiceToken(token, actor)
+					data.Name, data.Scope = created.Name, created.Scope
 					data.CreatedID = created.ID
 					data.CreatedExpiry = created.ExpiresAt.UTC().Format(time.RFC3339)
 
@@ -205,18 +233,26 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 				if message == "" {
 					message = "Password or code incorrect."
 				}
+				data.ErrorField = serviceTokenErrorField(message)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(status)
 			}
 		}
+		if secret != "" {
+			data.Secret = secret
+			hash := sha256.Sum256([]byte(serviceTokenCopyScript))
+			w.Header().Set("Content-Security-Policy", lockedOperatorContentSecurityPolicy+"; script-src 'sha256-"+base64.StdEncoding.EncodeToString(hash[:])+"'")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			_ = serviceTokenSuccess.Execute(w, data)
+			return
+		}
+
 		tokens, err := st.ListServiceTokens()
 		if err != nil {
-			if secret == "" {
-				http.Error(w, "Unavailable", 503)
-				return
-			}
-			tokens = nil
-			message = "Token created; the token list is temporarily unavailable."
+			http.Error(w, "Unavailable", 503)
+			return
 		}
 		if len(tokens) > 200 {
 			tokens = tokens[:200]
@@ -224,13 +260,8 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 		}
 		_ = st.RecordAudit(store.AuditEntry{Action: "service-token-list", AuthSubject: p.StableSubject(), AuthMethod: p.AuthMethod, OK: true})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if secret != "" {
-			hash := sha256.Sum256([]byte(serviceTokenCopyScript))
-			w.Header().Set("Content-Security-Policy", lockedOperatorContentSecurityPolicy+"; script-src 'sha256-"+base64.StdEncoding.EncodeToString(hash[:])+"'")
-		}
 		data.Tokens = tokens
 		data.Message = message
-		data.Secret = secret
 		for route, policy := range operatorRoutePolicies {
 			if !policy.ServiceTokenEligible.eligible() || policy.ServiceTokenEligible == serviceEligibleSelf {
 				continue
