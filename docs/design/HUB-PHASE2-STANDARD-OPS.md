@@ -322,7 +322,7 @@ Reads need view. Human preview/decision/restore needs admin. Delegated preview a
 decision need operate plus explicit route eligibility and identical low-risk checks
 on both calls. Restore and direct deletion are never delegated. No raw paths/commands.
 
-Optional Hermes policy: quarantine only, agent-user-owned installer staging >14 days
+Optional Hermes policy (NOT enabled; Ted decided 2026-10-11 that all cleanup approvals go to him, see §9): quarantine only, agent-user-owned installer staging >14 days
 or reproducible cache artifacts >30 days; high confidence, complete holder evidence,
 known owner app, same-filesystem rename, no secrets/user data or active references.
 At most 100 items/1 GiB per decision and 2 GiB per machine per UTC day; one active
@@ -733,17 +733,37 @@ MCP schemas, route manifest and tests; run focused Go packages/shell fixtures an
 before fleet enablement. Separate implementation from deployment; never merge
 without Ted's request.
 
-## 9. Open questions for Ted
+## 9. Decisions (Ted, 2026-10-11) and remaining questions
 
-- Enable the proposed bounded Hermes quarantine policy or remain human-only?
-  Default is human-only; no delegation inferred from this draft.
-- Telegram or Discord private recipient? Default login delivery is a banner link;
-  direct short-lived codes require explicit acceptance of chat retention.
+Decided:
+
+- **Cleanup approvals: Ted only.** The bounded Hermes quarantine policy (§4.4) is
+  not enabled. Every deep-analysis action, quarantine, delete and restore needs
+  Ted's human-admin approval. Hermes recommends and summarizes only. Enabling
+  delegation later is a separate reviewed change.
+- **Login challenge delivery: Telegram** to Ted's private recipient (private
+  config). Ted accepts chat retention for short-lived URL/code payloads. The
+  authenticated no-store Hub banner stays available, and the rules in §3.4 still apply:
+  no persistence or logging of the payload, no delivery after success or cancel.
+- **Rollout order: C1 is the canary.** C3 (production web app) and C4 go last, in
+  separate supervised windows. Never roll out to C3 or C4 during the
+  **2026-10-28 to 2026-11-03 settlement freeze** (a recurring production freeze
+  window in private config). The rollout planner rejects targets inside a
+  configured freeze window. Disk safe-tier schedules on C3 keep running; deep
+  actions on C3 wait for the window to end.
+- **Quarantine TTL: 7 days.** No automatic TTL shortening under pressure (§4.4).
+- **Upgrade-bundle signing key lives on C4**, held by a dedicated non-Hermes
+  system user with 0600 key material. Hermes's runtime user and its service token
+  cannot read it or invoke signing. Hosts pin the public key locally in the helper
+  (§6.4 step 3), so a compromised Hub alone cannot authorize a bundle. Key
+  rotation and recovery are a Ted-approved operation, and the key has an offline
+  backup Ted holds. Because C4 is also the outage fallback, signing is never
+  automatic: each signature is a Ted-approved job.
+
+Remaining questions:
+
 - Confirm Claude renewal reminders and record existing setup dates privately.
-- Select C1/C2 canaries after workload review and C3/C4 maintenance windows.
-- Approve seven-day quarantine TTL and capacity; no emergency automatic TTL reduction.
 - Confirm helper-eligible hosts and one-time W1/W2 sudo bootstrap/recovery access.
-- Decide signing-key custody/recovery before helper rollout.
 - Confirm pinned app sources/ownership, especially BAT, agy and Grok; unsupported
   adapters remain inventory-only.
 
@@ -751,8 +771,8 @@ without Ted's request.
 
 | Feature | Catalog scripts | Schedules | MCP tools | Scope | Approval | Hermes role | Grok Bot role |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Disk safe | `disk-safe-preview-v2`, `disk-safe-clean-v2` | Daily root/user | Generic scripts/schedules, `disk_ops_status` | View; admin setup | Ted standing policy after canary | Review pressure/skips | Investigate exceptional locks with Ted |
-| Disk deep | `disk-deep-report-v1`, `disk-approved-quarantine-v1`, `disk-approved-delete-v1`, `disk-quarantine-expire-v1`, `disk-quarantine-restore-v1` | Weekly/>80% report; daily approved TTL | `disk_report_get`, action preview/decide, restore preview/apply | Operate only for explicit low-risk delegation; otherwise admin | Exact digest; Ted outside policy | Rank/recommend; bounded quarantine decisions | Supervised recovery/process investigation |
+| Disk safe | `disk-safe-preview-v2`, `disk-safe-clean-v2` | Daily root/user | Generic scripts/schedules, `disk_ops_status` | View; admin setup | Ted standing policy after C1 canary | Review pressure/skips | Investigate exceptional locks with Ted |
+| Disk deep | `disk-deep-report-v1`, `disk-approved-quarantine-v1`, `disk-approved-delete-v1`, `disk-quarantine-expire-v1`, `disk-quarantine-restore-v1` | Weekly/>80% report; daily approved TTL | `disk_report_get`, action preview/decide, restore preview/apply | Operate only for explicit low-risk delegation; otherwise admin | Exact digest; Ted outside policy | Rank/recommend only (delegation off, §9) | Supervised recovery/process investigation |
 | AI login | `ai-credential-report-v1`, `ai-cli-check-v1`, `ai-login-start-v1`, `ai-login-cancel-v1` | Six-hour metadata/daily hygiene; no login schedule | Credentials status; login start/status/cancel | View; human admin mutations/reveal | Ted starts/completes provider auth | Remind/diagnose; rotate own service token | Private setup assistance when asked |
 | Managed apps | Inventory/plan/apply/health/rollback/remove scripts | Daily inventory/15m health | Status, desired, rollout, continue, rollback, decisions | View; admin writes | Ted adoption/exact rollout/continuation | Explain drift and gate evidence | Approved repair/recovery |
 | Agent upgrade | `agent-self-upgrade-v1` | Approved windows only | App rollout/status/rollback | Admin rollout; machine-bound fetch | Ted helper bootstrap/target approval | Observe check-in/rollback | Supervised SSH recovery; Ted handles sudo |
