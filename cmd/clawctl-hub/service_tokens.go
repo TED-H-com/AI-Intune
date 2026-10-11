@@ -82,12 +82,18 @@ func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 	default:
 		return t, "Maximum lifetime invalid."
 	}
+	if preset := r.PostForm.Get("preset"); preset != "" && preset != "hermes-default" {
+		return t, "Route preset invalid."
+	}
 	t.Allowlist = r.PostForm["routes"]
 	if r.PostForm.Get("preset") == "hermes-default" {
 		t.Allowlist = append([]string(nil), hermesServiceRoutes...)
 	}
 	if len(t.Allowlist) == 0 {
 		return t, "No routes selected."
+	}
+	if len(t.Allowlist) > 128 {
+		return t, "Allowed routes invalid: maximum 128 routes."
 	}
 	for _, route := range t.Allowlist {
 		policy, ok := operatorRoutePolicies[route]
@@ -146,7 +152,6 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			return
 		}
 		message, secret := "", ""
-		factorsVerified := false
 		data := serviceFormData{Scope: "view", Expiry: "90"}
 		if r.Method == "POST" {
 			data.Name = r.PostForm.Get("name")
@@ -163,6 +168,18 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 				status = 429
 				err = store.ErrServiceToken
 			}
+			var token store.ServiceToken
+			if err == nil {
+				if strings.HasSuffix(r.URL.Path, "/create") {
+					token, message = validateServiceTokenForm(r)
+					if message != "" {
+						err = store.ErrServiceToken
+					}
+				} else if !serviceTokenAuditID.MatchString(r.PostForm.Get("id")) {
+					message = "Token ID invalid."
+					err = store.ErrServiceToken
+				}
+			}
 			if err == nil {
 				var a store.HubAccount
 				a, err = st.VerifyPassword(p.TailnetUserLogin, r.PostForm.Get("password"), source, metadata)
@@ -172,20 +189,13 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			}
 			if err == nil {
 				err = st.VerifyAdminTOTP(actor, source, r.PostForm.Get("code"), metadata)
-				factorsVerified = err == nil
 			}
 			if err == nil {
 				if strings.HasSuffix(r.URL.Path, "/create") {
-					var token store.ServiceToken
-					token, message = validateServiceTokenForm(r)
-					if message != "" {
-						err = store.ErrServiceToken
-					} else {
-						var created store.ServiceToken
-						created, secret, err = st.CreateServiceToken(token, actor)
-						data.CreatedID = created.ID
-						data.CreatedExpiry = created.ExpiresAt.UTC().Format(time.RFC3339)
-					}
+					var created store.ServiceToken
+					created, secret, err = st.CreateServiceToken(token, actor)
+					data.CreatedID = created.ID
+					data.CreatedExpiry = created.ExpiresAt.UTC().Format(time.RFC3339)
 
 				} else {
 					err = st.RevokeServiceToken(r.PostForm.Get("id"), actor)
@@ -193,11 +203,7 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			}
 			if err != nil {
 				if message == "" {
-					if factorsVerified {
-						message = "Service token could not be updated. Try again."
-					} else {
-						message = "Password or code incorrect."
-					}
+					message = "Password or code incorrect."
 				}
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(status)

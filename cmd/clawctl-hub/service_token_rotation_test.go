@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/totp"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -109,6 +111,9 @@ func TestServiceTokenSelfAndRotateHTTP(t *testing.T) {
 	if err = json.Unmarshal(rotated.Body.Bytes(), &result); err != nil || !store.ValidServiceSecret(result.Token) {
 		t.Fatal("rotation response")
 	}
+	if rec := call("GET", "/v1/operator/service-tokens/self", result.Token, "192.0.2.1"); rec.Code != 200 {
+		t.Fatal("confirmation", rec.Code)
+	}
 	if rec := call("POST", "/v1/operator/service-tokens/rotate", secret, "192.0.2.1"); rec.Code != 409 {
 		t.Fatal("double rotate", rec.Code)
 	}
@@ -120,5 +125,114 @@ func TestServiceTokenSelfAndRotateHTTP(t *testing.T) {
 	}
 	if rec := call("GET", "/v1/operator/service-tokens/self", result.Token, "192.0.2.1"); rec.Code != 401 {
 		t.Fatal("chain revoke", rec.Code)
+	}
+}
+
+type disconnectedTokenResponse struct{ header http.Header }
+
+func (w *disconnectedTokenResponse) Header() http.Header     { return w.header }
+func (*disconnectedTokenResponse) WriteHeader(int)           {}
+func (*disconnectedTokenResponse) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestServiceTokenLostResponseReissue(t *testing.T) {
+	st := boundaryStore(t)
+	actor, err := st.CreateFirstAdmin("admin", usersPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, secret, err := st.CreateServiceToken(store.ServiceToken{Name: "lost-response", Scope: "view", ExpiresAt: time.Now().Add(time.Hour), Allowlist: []string{"GET /v1/operator/jobs"}}, actor.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.Handle("POST /v1/operator/service-tokens/rotate", http.NotFoundHandler())
+	boundary := newOperatorBoundary(mux, nil, st, operatorRoutePolicies, testOperatorAuthority)
+	request := func() *http.Request {
+		req := newBoundaryRequest("POST", "/v1/operator/service-tokens/rotate", strings.NewReader("{}"))
+		req.Header.Set("Authorization", "Bearer "+secret)
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+	boundary.ServeHTTP(&disconnectedTokenResponse{http.Header{}}, request())
+	tokens, err := st.ListServiceTokens()
+	if err != nil || len(tokens) != 2 {
+		t.Fatal("disconnected commit", err)
+	}
+	rec := httptest.NewRecorder()
+	boundary.ServeHTTP(rec, request())
+	if rec.Code != 200 {
+		t.Fatal("lost response retry", rec.Code)
+	}
+	var result struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	if err = json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.AuthenticateServiceToken(result.Token, "GET /v1/operator/service-tokens/self", "192.0.2.1", "view"); err != nil {
+		t.Fatal("fresh credential", err)
+	}
+	rec = httptest.NewRecorder()
+	boundary.ServeHTTP(rec, request())
+	if rec.Code != 409 {
+		t.Fatal("confirmed predecessor replay", rec.Code)
+	}
+	tokens, err = st.ListServiceTokens()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range tokens {
+		if token.ID != old.ID && token.ID != result.ID && token.RevokedAt == nil {
+			t.Fatal("lost successor remains valid")
+		}
+	}
+}
+
+func TestServiceTokenValidationPrecedesFactorsAndInternalFailureIsGeneric(t *testing.T) {
+	mux, st, principal, agent := managementAuditFixture(t, false)
+	actor := strings.TrimPrefix(principal.StableSubject(), "local-user:")
+	factor, err := st.BeginTOTPEnrollment(actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enroll, _ := totp.Code(factor, time.Now().Unix()/30-1)
+	if _, err = st.ConfirmTOTP(actor, enroll); err != nil {
+		t.Fatal(err)
+	}
+	code, _ := totp.Code(factor, time.Now().Unix()/30)
+	fields := url.Values{"name": {"bad name"}, "scope": {"view"}, "expiry_days": {"90"}, "routes": {"GET /v1/operator/jobs"}, "password": {usersPassword}, "code": {code}}
+	good := managementAuditRequest(mux, principal, "create", fields, "192.0.2.1:1234", agent)
+	fields.Set("password", "bad-password")
+	fields.Set("code", "bad-code")
+	bad := managementAuditRequest(mux, principal, "create", fields, "192.0.2.1:1234", agent)
+	if good.Code != 400 || bad.Code != good.Code || bad.Body.String() != good.Body.String() || !strings.Contains(good.Body.String(), "Name invalid") {
+		t.Fatal("validation depends on factors")
+	}
+	audits, err := st.Audit("", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range audits {
+		if a.Action == store.AuditHubLoginFailed || a.Action == store.AuditMFAFailed {
+			t.Fatal("invalid fields reached factor verification")
+		}
+	}
+	fields = url.Values{"id": {"00000000-0000-4000-8000-000000000001"}, "password": {"bad-password"}, "code": {"bad-code"}}
+	bad = managementAuditRequest(mux, principal, "revoke", fields, "192.0.2.2:1234", agent)
+	fields.Set("password", usersPassword)
+	fields.Set("code", code)
+	good = managementAuditRequest(mux, principal, "revoke", fields, "192.0.2.2:1234", agent)
+	if good.Code != 400 || good.Code != bad.Code || good.Body.String() != bad.Body.String() || !strings.Contains(good.Body.String(), "Password or code incorrect.") {
+		t.Fatal("post-factor failure reveals factor validity")
+	}
+	audits, err = st.Audit("", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range audits {
+		if a.Action == store.AuditMFAFailed {
+			t.Fatal("test did not reach post-factor failure")
+		}
 	}
 }

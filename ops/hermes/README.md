@@ -27,6 +27,16 @@ The timer does not restart those clients.
 
 Exit codes: 0 = rotated or not due; 1 = file, network, Hub, or persistence error;
 2 = invalid command/options. A failed file replacement leaves the old token usable
-for the overlap; fix the file problem promptly. The newest token alone can rotate;
-repeating rotation with the old token returns 409. When the maximum chain lifetime
+for the original overlap. Rename or file-fsync failure preserves a mode-0600
+recovery token file and reports its path; install it promptly, fsync the directory,
+then authenticate with GET self (a new command using that file does so). Directory
+fsync failure reports the destination containing the new token; sync the directory
+before retrying authentication. The CLI confirms GET self after successful install.
+
+If the response was lost or the client crashed before installation, re-run rotation
+with the predecessor during the original overlap (use `--force` if the original
+rotation was forced). While the successor is unused, this revokes it and issues a
+fresh one, subject to the shared three/hour chain/IP budget. Once the successor
+has authenticated, the predecessor returns 409. The newest token cannot rotate
+until its predecessor's overlap ends. When the maximum chain lifetime
 is reached, create a new token through the admin page.

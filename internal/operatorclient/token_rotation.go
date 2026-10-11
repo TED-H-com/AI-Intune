@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,9 @@ func (c *Client) ServiceTokenSelf(ctx context.Context) (ServiceTokenSelf, error)
 
 // RotateTokenFile never includes a plaintext credential in output or errors.
 func (c *Client) RotateTokenFile(ctx context.Context, path string, minRemaining time.Duration, force bool) (bool, error) {
+	return c.rotateTokenFileWithOps(ctx, path, minRemaining, force, defaultTokenFileOps())
+}
+func (c *Client) rotateTokenFileWithOps(ctx context.Context, path string, minRemaining time.Duration, force bool, ops tokenFileOps) (bool, error) {
 	if minRemaining < 0 {
 		return false, errors.New("min-remaining must not be negative")
 	}
@@ -70,58 +74,77 @@ func (c *Client) RotateTokenFile(ctx context.Context, path string, minRemaining 
 	if json.Unmarshal(raw.body, &result) != nil || !store.ValidServiceSecret(result.Token) {
 		return false, errors.New("invalid rotation response")
 	}
-	if err = replaceServiceTokenFile(path, current, result.Token); err != nil {
+	if err = replaceServiceTokenFileWithOps(path, current, result.Token, ops); err != nil {
 		return false, err
 	}
 	c.token = result.Token
+	if _, err = c.ServiceTokenSelf(ctx); err != nil {
+		return false, fmt.Errorf("new token saved at %q; authentication confirmation failed; retry using that file", path)
+	}
 	return true, nil
 }
 
+type tokenFileOps struct {
+	rename   func(string, string) error
+	syncFile func(*os.File) error
+	syncDir  func(*os.File) error
+}
+
+func defaultTokenFileOps() tokenFileOps {
+	return tokenFileOps{os.Rename, (*os.File).Sync, (*os.File).Sync}
+}
 func replaceServiceTokenFile(path, current, next string) error {
+	return replaceServiceTokenFileWithOps(path, current, next, defaultTokenFileOps())
+}
+func replaceServiceTokenFileWithOps(path, current, next string, ops tokenFileOps) error {
 	if !store.ValidServiceSecret(next) {
 		return errors.New("invalid replacement token")
-	}
-	actual, err := ReadServiceTokenFile(path)
-	if err != nil {
-		return err
-	}
-	if actual != current {
-		return errors.New("token file changed; retry")
 	}
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".service-token-*")
 	if err != nil {
-		return errors.New("cannot create temporary token file")
+		return errors.New("cannot create temporary token file; retry rotation during overlap")
 	}
 	name := f.Name()
-	defer os.Remove(name)
-	defer f.Close()
+	keep := false
+	defer func() {
+		f.Close()
+		if !keep {
+			os.Remove(name)
+		}
+	}()
 	if err = f.Chmod(0600); err != nil {
-		return errors.New("cannot secure temporary token file")
+		return errors.New("cannot secure temporary token file; retry rotation during overlap")
 	}
 	if _, err = f.WriteString(next + "\n"); err != nil {
-		return errors.New("cannot write temporary token file")
+		return errors.New("cannot write temporary token file; retry rotation during overlap")
 	}
-	if err = f.Sync(); err != nil {
-		return errors.New("cannot sync temporary token file")
+	keep = true
+	recovery := func(reason string) error {
+		return fmt.Errorf("%s; recovery token file: %q (0600); install it before the overlap ends", reason, name)
+	}
+	if err = ops.syncFile(f); err != nil {
+		return recovery("cannot sync temporary token file")
 	}
 	if err = f.Close(); err != nil {
-		return errors.New("cannot close temporary token file")
+		return recovery("cannot close temporary token file")
 	}
-	actual, err = ReadServiceTokenFile(path)
+	actual, err := ReadServiceTokenFile(path)
 	if err != nil || actual != current {
-		return errors.New("token file changed; retry")
+		return recovery("token file changed or is unsafe")
 	}
-	if err = os.Rename(name, path); err != nil {
-		return errors.New("cannot replace token file")
+	if err = ops.rename(name, path); err != nil {
+		return recovery("cannot replace token file")
 	}
+	// The durable credential now lives at the destination. Never authenticate it
+	// until rename and directory fsync complete, so pre-install failures allow re-issue.
 	d, err := os.Open(dir)
 	if err != nil {
-		return errors.New("cannot open token directory")
+		return fmt.Errorf("new token saved at %q; cannot open token directory", path)
 	}
 	defer d.Close()
-	if err = d.Sync(); err != nil {
-		return errors.New("cannot sync token directory")
+	if err = ops.syncDir(d); err != nil {
+		return fmt.Errorf("new token saved at %q; cannot sync token directory; retry directory fsync before confirming authentication", path)
 	}
 	return nil
 }

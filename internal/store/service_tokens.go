@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/teddashh/AI-Intune/internal/clientip"
 )
 
 var ErrServiceToken = errors.New("service token rejected")
@@ -320,12 +322,50 @@ func (s *Store) RotateServiceToken(id, source string) (ServiceToken, string, err
 	if t.RevokedAt != nil || !t.ExpiresAt.After(now) {
 		return t, "", ErrServiceToken
 	}
+	sourceKey := clientip.Key(source)
+	reissue := false
+	overlap := now.Add(10 * time.Minute)
 	if t.RotatedAt != nil {
+		if t.OverlapDeadline == nil || !t.OverlapDeadline.After(now) {
+			return t, "", ErrServiceTokenRotated
+		}
+		successor, e := scanServiceToken(tx.QueryRow("SELECT "+serviceTokenColumns+" FROM service_tokens WHERE rotation_chain_id=? AND rotated_from=? AND revoked_at IS NULL AND rotated_at IS NULL", t.RotationChainID, id))
+		if e != nil || successor.LastUsedAt != nil {
+			return t, "", ErrServiceTokenRotated
+		}
+		reissue = true
+		overlap = *t.OverlapDeadline // Recovery never extends the predecessor's window.
+	} else if t.RotatedFrom != "" {
+		var deadline *string
+		if err = tx.QueryRow("SELECT overlap_deadline FROM service_tokens WHERE id=?", t.RotatedFrom).Scan(&deadline); err != nil {
+			return t, "", ErrServiceTokenRotated
+		}
+		if deadline == nil {
+			return t, "", ErrServiceTokenRotated
+		}
+		end, e := time.Parse(time.RFC3339Nano, *deadline)
+		if e != nil || end.After(now) {
+			return t, "", ErrServiceTokenRotated
+		}
+	}
+	// Enforce newest membership even for legacy chains with several live generations.
+	var newer int
+	if err = tx.QueryRow("SELECT count(*) FROM service_tokens WHERE rotation_chain_id=? AND rotated_from=? AND revoked_at IS NULL", t.RotationChainID, id).Scan(&newer); err != nil {
+		return t, "", err
+	}
+	if !reissue && newer != 0 {
 		return t, "", ErrServiceTokenRotated
 	}
-	for _, key := range []string{"token:" + id, "ip:" + source} {
+	keys := []string{"chain:" + t.RotationChainID, "ip:" + sourceKey}
+	for i, key := range keys {
 		var n int
-		if err = tx.QueryRow("SELECT count(*) FROM service_token_rotations WHERE budget_key=? AND julianday(created_at)>julianday(?)", key, now.Add(-time.Hour).Format(time.RFC3339Nano)).Scan(&n); err != nil {
+		query := "SELECT count(*) FROM service_token_rotations WHERE budget_key=? AND julianday(created_at)>julianday(?)"
+		args := []any{key, now.Add(-time.Hour).Format(time.RFC3339Nano)}
+		if i == 0 {
+			query = "SELECT count(*) FROM service_token_rotations WHERE (budget_key=? OR budget_key IN (SELECT 'token:'||id FROM service_tokens WHERE rotation_chain_id=?)) AND julianday(created_at)>julianday(?)"
+			args = []any{key, t.RotationChainID, now.Add(-time.Hour).Format(time.RFC3339Nano)}
+		}
+		if err = tx.QueryRow(query, args...).Scan(&n); err != nil {
 			return t, "", err
 		}
 		if n >= 3 {
@@ -360,11 +400,15 @@ func (s *Store) RotateServiceToken(id, source string) (ServiceToken, string, err
 	if err != nil {
 		return t, "", err
 	}
-	_, err = tx.Exec("UPDATE service_tokens SET rotated_at=?,overlap_deadline=? WHERE id=?", now.Format(time.RFC3339Nano), now.Add(10*time.Minute).Format(time.RFC3339Nano), id)
+	_, err = tx.Exec("UPDATE service_tokens SET rotated_at=COALESCE(rotated_at,?),overlap_deadline=? WHERE id=?", now.Format(time.RFC3339Nano), overlap.Format(time.RFC3339Nano), id)
 	if err != nil {
 		return t, "", err
 	}
-	for _, key := range []string{"token:" + id, "ip:" + source} {
+	// Retain only the new credential and its immediate predecessor.
+	if _, err = tx.Exec("UPDATE service_tokens SET revoked_at=COALESCE(revoked_at,?) WHERE rotation_chain_id=? AND id NOT IN (?,?)", now.Format(time.RFC3339Nano), t.RotationChainID, id, nextID); err != nil {
+		return t, "", err
+	}
+	for _, key := range keys {
 		if _, err = tx.Exec("INSERT INTO service_token_rotations(budget_key,created_at) VALUES(?,?)", key, now.Format(time.RFC3339Nano)); err != nil {
 			return t, "", err
 		}
@@ -372,7 +416,11 @@ func (s *Store) RotateServiceToken(id, source string) (ServiceToken, string, err
 	if _, err = tx.Exec("DELETE FROM service_token_rotations WHERE julianday(created_at)<=julianday(?)", now.Add(-time.Hour).Format(time.RFC3339Nano)); err != nil {
 		return t, "", err
 	}
-	err = s.recordAuditTx(tx, AuditEntry{Action: "service-token-rotate", AuthSubject: "service:" + t.Name, AuthMethod: "service-token", Subject: id, SourceAddr: source, OK: true, Detail: "rotated to " + nextID})
+	action := AuditAction("service-token-rotate")
+	if reissue {
+		action = "service-token-reissue"
+	}
+	err = s.recordAuditTx(tx, AuditEntry{Action: action, AuthSubject: "service:" + t.Name, AuthMethod: "service-token", Subject: id, SourceAddr: source, OK: true, Detail: "rotated to " + nextID})
 	if err != nil {
 		return t, "", err
 	}
@@ -384,5 +432,7 @@ func (s *Store) RotateServiceToken(id, source string) (ServiceToken, string, err
 	t.CreatedAt = now
 	t.ExpiresAt = expires
 	t.LastUsedAt = nil
+	t.RotatedAt = nil
+	t.OverlapDeadline = nil
 	return t, secret, nil
 }

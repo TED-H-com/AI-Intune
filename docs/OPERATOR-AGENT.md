@@ -316,3 +316,12 @@ The command prints only whether rotation happened. Exit codes: 0 rotated/not
 due, 1 operation failure, 2 usage failure. Long-running clients must reread the
 file within the 10-minute overlap. See the
 [systemd user service and timer example](../ops/hermes/README.md).
+
+Rotation writes the returned credential to a 0600 temporary file and fsyncs it
+before rename, then fsyncs the directory and confirms GET self with the installed
+credential. Failed rename or file fsync keeps a recovery file and reports its
+path. A lost response or crash can be recovered by re-rotating the predecessor
+within its original overlap while the successor is unused; re-issue revokes the
+unused successor. Once the successor authenticates, predecessor rotation returns
+409. Chain-wide budgets include re-issues, and successors wait for the prior
+overlap to end before rotating again.

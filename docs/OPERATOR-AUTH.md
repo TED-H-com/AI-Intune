@@ -677,7 +677,8 @@ manifest-derived route checkboxes, optional source CIDRs, and the Hermes default
 preset. Names use 1–64 letters, digits, hyphens or underscores. Scope `view`
 permits read routes; `operate` additionally permits READ-only catalog scripts.
 Creation and chain revocation require the local admin session, password and
-authenticator code; failed factors share one generic message. Plaintext appears
+authenticator code. Non-secret form fields are validated before reauthentication;
+factor failures and internal post-factor failures share the same generic 400 response. Plaintext appears
 only in the creation response; all token responses use `Cache-Control: no-store`.
 
 `GET /v1/operator/service-tokens/self` and
@@ -685,13 +686,22 @@ only in the creation response; all token responses use `Cache-Control: no-store`
 including its source CIDR checks, independently of its route allowlist. Human
 sessions cannot use these routes. Rotation preserves scope, routes, CIDRs and
 name, with the original issue lifetime capped at 90 days. The old token overlaps
-for 10 minutes; a second rotation of it returns 409. Revoking any member revokes
-the entire chain. Rotation is limited to three successes/hour per token and
-resolved IP, with persisted budgets. Audit records identify `service:<name>`
+for 10 minutes. During that original window, an unused successor may be revoked
+and replaced by re-rotating the predecessor, audited as `service-token-reissue`.
+No successor plaintext is persisted. Once the successor authenticates, predecessor
+rotation returns 409. The newest member cannot rotate until its predecessor's
+overlap ends. Rotation immediately revokes all older members except its immediate
+predecessor. Revoking any member revokes the entire chain. Rotation and re-issue
+share three successes/hour per chain and normalized client-IP limiter key
+(IPv6 /64), with persisted budgets. Audit records identify `service:<name>`
 and the old/new IDs without credentials.
 
 An optional maximum chain lifetime (none, 180 or 365 days) bounds rotation.
 New expiry is clamped to that deadline; once reached, rotation fails with 403
 (the normal expiry check may first reject the expired token with 401).
 The CLI checks its own expiry and replaces its mode-0600 non-symlink token file
-atomically, with file and directory fsync. See [Hermes timer](../ops/hermes/README.md).
+atomically, with file and directory fsync, then authenticates the installed token
+through GET self before reporting success. Failed rename/file fsync preserves a
+0600 recovery file and reports its path; failed directory fsync reports the
+installed destination. Retry during overlap or install the recovery file promptly.
+See [Hermes timer](../ops/hermes/README.md).

@@ -705,10 +705,15 @@ Rotation adds two service-token-only JSON routes; both use the view admission ca
 | Method | Route | Authentication | Response |
 | --- | --- | --- | --- |
 | GET | `/v1/operator/service-tokens/self` | Current service token only, CIDRs enforced | `id/name/scope/expires_at/max_expiry` (null max means unlimited) |
-| POST | `/v1/operator/service-tokens/rotate` | Current newest service token only, CIDRs enforced | `id/token/expires_at/max_expiry`; plaintext once |
+| POST | `/v1/operator/service-tokens/rotate` | Newest token or recovering predecessor, CIDRs enforced | `id/token/expires_at/max_expiry`; plaintext once |
 
 Neither self route needs an allowlist entry. No human session is accepted.
-Rotation returns 409 for an already rotated token during overlap, 429 for the
-persisted three/hour token or resolved-IP budget, 403 at the maximum chain
+During the original overlap, the predecessor may re-issue an unused successor;
+that successor is revoked and a fresh credential is returned, never replayed from
+stored plaintext. A used successor makes predecessor rotation return 409. The
+newest token also returns 409 until its predecessor's overlap ends. All older
+chain members except the immediate predecessor are revoked on rotation.
+Rotation and re-issue share a persisted three/hour chain or normalized-IP budget
+(IPv6 /64), returning 429 on exhaustion, 403 at the maximum chain
 deadline, and 401 for expired/revoked/invalid credentials. Old credentials stop
 authenticating after 10 minutes. Admin revoke applies to the whole chain.

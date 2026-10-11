@@ -620,7 +620,7 @@ func TestServiceTokenManagementDeniedAuditsIncludeRateLimitAndMetadata(t *testin
 				target = "00000000-0000-4000-8000-000000000001"
 				field = "id"
 			}
-			fields := url.Values{field: {target}, "password": {"incorrect-test-password"}, "code": {"invalid-test-code"}}
+			fields := url.Values{field: {target}, "password": {"incorrect-test-password"}, "code": {"invalid-test-code"}, "scope": {"view"}, "expiry_days": {"90"}, "routes": {"GET /v1/operator/jobs"}}
 			for i := 0; i < 6; i++ {
 				rec := managementAuditRequest(mux, principal, action, fields, "203.0.113.1:1234", agent)
 				want := 400
@@ -700,7 +700,7 @@ func TestServiceTokenManagementDeniedMetadataForOtherFailures(t *testing.T) {
 				field = "id"
 				target = "00000000-0000-4000-8000-000000000001"
 			}
-			rec := managementAuditRequest(mux, principal, tc.action, url.Values{field: {target}, "password": {tc.password}, "code": {tc.code}}, tc.peer, agent)
+			rec := managementAuditRequest(mux, principal, tc.action, url.Values{field: {target}, "password": {tc.password}, "code": {tc.code}, "scope": {"view"}, "expiry_days": {"90"}, "routes": {"GET /v1/operator/jobs"}}, tc.peer, agent)
 			if rec.Code != tc.want {
 				t.Fatalf("failure status: %d", rec.Code)
 			}
