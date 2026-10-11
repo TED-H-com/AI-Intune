@@ -10,10 +10,11 @@ from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
-import time
 import unittest
 from unittest import mock
 from datetime import datetime, timezone
+
+FIXED_NOW = datetime(2026, 1, 15, 12, tzinfo=timezone.utc).timestamp()
 
 SCRIPT = Path(__file__).with_name('bat-sweep-report-v1.py').resolve()
 spec = importlib.util.spec_from_file_location('sweep', SCRIPT)
@@ -22,12 +23,12 @@ spec.loader.exec_module(sweep)
 
 class SweepTests(unittest.TestCase):
     def test_classification(self):
-        now = time.time()
+        now = FIXED_NOW
         def messages(text):
             return [{'role': 'assistant', 'text': text}]
         for text, expected in [('Please provide the password?', 'needs_human'), ('Phase 2 complete', 'milestone'), ('[BAT-STATUS: NEED_HUMAN] review', 'needs_human'), ('[BAT-STATUS: CONTINUE] next step', 'nudge'), ('Unclear next step', 'needs_human')]:
             self.assertEqual(sweep.classify(messages(text), now)[0], expected)
-        self.assertEqual(sweep.classify(messages('continue') + [{'role': 'user', 'text': 'hello', 'ts': datetime.now(timezone.utc).isoformat()}], now), ('skip', 'Ted active'))
+        self.assertEqual(sweep.classify(messages('continue') + [{'role': 'user', 'text': 'hello', 'ts': datetime.fromtimestamp(now, timezone.utc).isoformat()}], now), ('skip', 'Ted active'))
         for command in ['git push origin example', 'rm -rf /', 'sudo test', 'terraform apply', 'gh pr merge 1']:
             self.assertTrue(sweep.DESTRUCTIVE_CMD.search(command))
         self.assertFalse(sweep.DESTRUCTIVE_CMD.search('python3 -m unittest'))
@@ -49,7 +50,7 @@ class SweepTests(unittest.TestCase):
             package.joinpath('triage.py').write_text('QUOTA_PATTERNS=[]\nasync def sessions_triage(*a, **k):\n    ids = range(3) if k.get("agent") else range(2)\n    return {"sessions": [{"session_id": str(i), "workspace": "w"+str(i)} for i in ids]}\n')
             package.joinpath('service.py').write_text(textwrap.dedent('''
                 from datetime import datetime, timezone, timedelta
-                def stamp(): return (datetime.now(timezone.utc)-timedelta(minutes=40)).isoformat()
+                def stamp(): return (datetime.fromtimestamp(__FIXED_NOW__, timezone.utc)-timedelta(minutes=40)).isoformat()
                 async def sessions_list(*a, **k):
                     return {"sessions": [{"session_id": str(i), "workspace": "w"+str(i), "agent_kind": "claude" if i < 3 else "codex", "state": "quota_exhausted" if i < 3 else "idle", "loaded": True, "last_activity": stamp()} for i in range(10)]}
                 async def session_read(fleet, host, sid, **k):
@@ -60,7 +61,7 @@ class SweepTests(unittest.TestCase):
                 def forbidden(*a, **k):
                     raise AssertionError('WRITE CALLED')
                 session_answer = session_send = forbidden
-            '''))
+            ''').replace('__FIXED_NOW__', repr(FIXED_NOW)))
             for name in ['lifecycle', 'jev']:
                 package.joinpath(name+'.py').write_text("raise AssertionError('FORBIDDEN MODULE IMPORT')\n")
             if temporary_write:
@@ -89,12 +90,14 @@ class SweepTests(unittest.TestCase):
             except sweep.Refused:
                 digest = 'a'*64
             if not native and not unsafe:
-                helper = subprocess.run(['/usr/bin/python3', '-I', '-S', '-B', str(SCRIPT), '--print-connector-digest'], text=True, capture_output=True, env={**os.environ, 'HOME': tmp, 'PYTHONPATH': tmp})
+                helper = subprocess.run(['/usr/bin/python3', '-I', '-S', '-B', str(SCRIPT), '--print-connector-digest'], text=True, capture_output=True, env={**os.environ, 'HOME': tmp, 'PYTHONPATH': tmp, 'TZ': 'UTC'})
                 self.assertEqual(helper.returncode, 0)
                 self.assertEqual(helper.stdout.strip(), digest)
                 self.assertEqual(helper.stderr, '')
             args = {'hosts': ['sample-host'], 'connector_tree_sha256': '0'*64 if mismatch else digest, 'include_excerpts': include_excerpts}
-            result = subprocess.run(['/usr/bin/python3', '-I', '-S', '-B', str(SCRIPT)], input=json.dumps(args), text=True, capture_output=True, env={**os.environ, 'HOME': tmp, 'PYTHONPATH': tmp})
+            # Inject through a Python argument; the production CLI has no clock hook.
+            harness = "import runpy, sys; sweep = runpy.run_path(sys.argv[1]); sys.argv = [sys.argv[1]]; sweep['main'](now=" + repr(FIXED_NOW) + ")"
+            result = subprocess.run(['/usr/bin/python3', '-I', '-S', '-B', '-c', harness, str(SCRIPT)], input=json.dumps(args), text=True, capture_output=True, env={**os.environ, 'HOME': tmp, 'PYTHONPATH': tmp, 'TZ': 'UTC'})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stderr, '')
             self.assertFalse((root / '.local/state').exists())
@@ -109,6 +112,7 @@ class SweepTests(unittest.TestCase):
     def test_fake_reads_caps_and_no_writes(self):
         report = self.run_fake()
         self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['generated_at'], datetime.fromtimestamp(FIXED_NOW, timezone.utc).isoformat())
         self.assertEqual(report['counts']['approve'], 1)
         self.assertEqual(report['counts']['escalate'], 1)
         self.assertEqual(report['counts']['failover'], 2)

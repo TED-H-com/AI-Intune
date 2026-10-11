@@ -582,18 +582,18 @@ func validateOperatorRoutePolicies(registered []string, policies map[string]oper
 		if !ok {
 			return fmt.Errorf("operator route %q is missing capability policy", pattern)
 		}
-		if policy.Permission < operatorauth.View || policy.Permission > operatorauth.Admin ||
-			!operatorRepresentationValid(pattern, policy.Representation) ||
-			(policy.SourceKind != operator.SourceKindWeb && policy.SourceKind != operator.SourceKindOperatorAPI) ||
-			!operatorPolicyAdmissible(pattern, policy) {
-			return fmt.Errorf("operator route %q policy is invalid", pattern)
-		}
 		method, path, valid := strings.Cut(pattern, " ")
 		if !valid || !validRouteMethod(method) || path == "" {
 			return fmt.Errorf("operator route %q is not a supported method/path pattern", pattern)
 		}
 		if !isSafeMethod(method) && policy.Permission == operatorauth.View && pattern != navigationLanguagePattern {
 			return fmt.Errorf("unsafe operator route %q must not be classified as view", pattern)
+		}
+		if policy.Permission < operatorauth.View || policy.Permission > operatorauth.Admin ||
+			!operatorRepresentationValid(pattern, policy.Representation) ||
+			(policy.SourceKind != operator.SourceKindWeb && policy.SourceKind != operator.SourceKindOperatorAPI) ||
+			!operatorPolicyAdmissible(pattern, policy) {
+			return fmt.Errorf("operator route %q policy is invalid", pattern)
 		}
 		if policy.SourceKind == operator.SourceKindOperatorAPI {
 			if !strings.HasPrefix(path, "/v1/operator/") {

@@ -354,14 +354,14 @@ def classify(messages, now):
         return "nudge", "BAT-STATUS CONTINUE"
     return "needs_human", "Jev stop-point evaluation unavailable in report-only mode"
 
-async def collect(args):
+async def collect(args, now=None):
     # TemporaryDirectory uses mkdtemp (0700); exit removes even refused snapshots.
     with tempfile.TemporaryDirectory(prefix="connector-snapshot-", dir=os.environ["TMPDIR"]) as private:
         snapshot = Path(private) / "bat_agent_connector"
         snapshot.mkdir(mode=0o700)
-        return await collect_snapshot(args, snapshot)
+        return await collect_snapshot(args, snapshot, now=now)
 
-async def collect_snapshot(args, snapshot):
+async def collect_snapshot(args, snapshot, now=None):
     try:
         package = connector_directory()
         if connector_digest(package, snapshot) != args["connector_tree_sha256"]:
@@ -390,8 +390,8 @@ async def collect_snapshot(args, snapshot):
             raise ValueError("missing config")
     except Exception:
         return {"status": "unavailable", "reason": "connector package or configuration unavailable"}
-    now = time.time()
-    report = {"schema_version": 1, "status": "ok", "generated_at": datetime.now(timezone.utc).isoformat(), "hosts": {}, "would_actions": [], "needs_human": [], "limitations": ["Cleanup gates and Jev require forbidden calls; reported as unknown", "Daily nudge history inferred only from available transcript; no persistent state"]}
+    now = time.time() if now is None else now
+    report = {"schema_version": 1, "status": "ok", "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(), "hosts": {}, "would_actions": [], "needs_human": [], "limitations": ["Cleanup gates and Jev require forbidden calls; reported as unknown", "Daily nudge history inferred only from available transcript; no persistent state"]}
     fleet = fleet_api.Fleet(config, actor="bat-sweep-report")
     try:
         for host in args["hosts"]:
@@ -465,7 +465,7 @@ async def collect_snapshot(args, snapshot):
                         last_nudge = next((i for i in range(len(messages)-1, -1, -1) if "[BAT hourly sweep]" in messages[i].get("text", "")), None)
                         if action == "nudge" and last_nudge is not None and not any(m.get("role") not in ("user", "system") and m.get("text") for m in messages[last_nudge+1:]):
                             action, reason = "skip", "no new output since last nudge"
-                        day = datetime.now().astimezone().date()
+                        day = datetime.fromtimestamp(now).date()
                         history = [m for m in messages if "[BAT hourly sweep]" in m.get("text", "") and datetime.fromtimestamp(ts(m.get("ts"))).date() == day]
                         if action == "nudge":
                             if len(history) >= MAX_NUDGES_PER_SESSION_DAY:
@@ -506,7 +506,7 @@ def emit(report):
         largest.pop()
     print(json.dumps(report, ensure_ascii=True))
 
-def main():
+def main(now=None):
     try:
         if sys.argv[1:] == ["--print-connector-digest"]:
             print(connector_digest(connector_directory()))
@@ -528,7 +528,7 @@ def main():
             # Connector chatter is discarded; exceptions never expose credentials.
             enforce_io(private)
             with contextlib.redirect_stdout(Discard()), contextlib.redirect_stderr(Discard()):
-                report = asyncio.run(collect(args))
+                report = asyncio.run(collect(args, now=now))
         emit(report)
         return 0
     except Refused as e:
