@@ -33,6 +33,15 @@ type Schedule struct {
 	NextRunAt    time.Time       `json:"next_run_at"`
 	PausedReason string          `json:"paused_reason"`
 }
+
+// ScheduleListResponse is the shared wire envelope for schedule lists.
+type ScheduleListResponse struct {
+	Items []Schedule `json:"items"`
+}
+type ScheduleRunNowResponse struct {
+	JobIDs []string `json:"job_ids"`
+}
+
 type ScheduleRequest struct {
 	ID               string          `json:"id,omitempty"`
 	Name             string          `json:"name,omitempty"`
@@ -256,6 +265,9 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 	canonical.Targets = v.Targets
 	canonical.Cron = v.Cron
 	out.PreviewDigest = "sha256:" + scriptcatalog.Digest(mustScriptJSON(canonical))
+	if v.LastJobIDs == nil {
+		v.LastJobIDs = []string{}
+	}
 	out.Schedule = v
 	if apply {
 		if req.PreviewDigest != out.PreviewDigest {

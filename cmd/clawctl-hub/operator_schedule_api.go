@@ -23,7 +23,7 @@ func (h *hub) handleScheduleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, v)
+	writeJSON(w, 200, store.ScheduleListResponse{Items: v})
 }
 func (h *hub) handleScheduleGet(w http.ResponseWriter, r *http.Request) {
 	v, e := h.store.ScheduleGet(r.PathValue("id"))
@@ -114,7 +114,10 @@ func (h *hub) handleScheduleRunNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, map[string]any{"job_ids": jobs})
+	if jobs == nil {
+		jobs = []string{}
+	}
+	writeJSON(w, 200, store.ScheduleRunNowResponse{JobIDs: jobs})
 }
 
 // The registry and stored schedule select the boundary scope, never a caller mode.

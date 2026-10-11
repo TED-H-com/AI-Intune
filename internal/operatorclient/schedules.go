@@ -28,9 +28,9 @@ func (c *Client) ScheduleRead(ctx context.Context, id string) (any, error) {
 		return nil, e
 	}
 	if id == "" {
-		var out []store.Schedule
+		var out store.ScheduleListResponse
 		e = decodeStrictJSONDocument(r.body, "schedules", &out)
-		return out, e
+		return out.Items, e
 	}
 	var out store.Schedule
 	e = decodeStrictJSONDocument(r.body, "schedule", &out)
@@ -81,9 +81,7 @@ func (c *Client) ScheduleRunNow(ctx context.Context, id string) (any, error) {
 	if e = validateSettingReadHeaders(r.header); e != nil {
 		return nil, e
 	}
-	var out struct {
-		JobIDs []string `json:"job_ids"`
-	}
+	var out store.ScheduleRunNowResponse
 	e = decodeStrictJSONDocument(r.body, "schedule run", &out)
 	return out, e
 }

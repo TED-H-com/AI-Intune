@@ -576,13 +576,18 @@ still commit atomically.
 
 ### Catalog schedules
 
-`GET /v1/operator/schedules` and `GET /v1/operator/schedules/{id}` require view.
+`GET /v1/operator/schedules` returns `{"items":[...]}` (an empty list is
+`{"items":[]}`); `GET /v1/operator/schedules/{id}` returns a schedule object.
+Both require view.
 `POST /v1/operator/schedules/{operation}/{phase}` uses operations `upsert` and
 `set-enabled`, phases `preview` and `apply`. Apply requires `preview_digest`,
 `Idempotency-Key`, and `expected_revision` (zero for creation). The request includes
 `reason`; upsert includes `name`, `script_id`, `script_sha256`, `args`, explicit
 `targets`, `cron`, and `enabled`. `catch_up` must be false.
-`POST /v1/operator/schedules/{id}/run-now` accepts `{}`. Mutations require operate
+Preview and apply return a `ScheduleResult` object with `schedule`,
+`preview_digest`, and `replayed`.
+`POST /v1/operator/schedules/{id}/run-now` accepts `{}` and returns
+`{"job_ids":[...]}` (an empty array when no jobs are enqueued). Mutations require operate
 for read catalog scripts and admin for write catalog scripts. Jobs expose
 `schedule_name` for supervision grouping. Numeric five-field cron uses UTC,
 including lists, ranges, and steps; consecutive occurrences must be at least
