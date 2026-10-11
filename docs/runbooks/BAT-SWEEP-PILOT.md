@@ -39,19 +39,24 @@ writable; symlinks, nonregular files, `.so`, `.pyd`, `.dll` and `.dylib` files
 are refused. Tree contents are limited to 32 MiB. A digest mismatch returns
 `status: refused`, `reason: connector_digest_mismatch`, before import.
 
-Python starts with `-I -S -B`. After verification its search path contains
-only the interpreter's standard library and that package's parent directory.
-A restricted finder permits only standard-library imports and that connector
-tree; unpinned third-party dependencies are unsupported and fail closed.
-The approved tree can still call arbitrary standard-library/native facilities.
-**Residual risk:** files or path components can change between hashing and
-importing from the same directory. Keep the installation admin-controlled,
-quiescent, and immutable during runs; digest approval is not an OS sandbox.
-The supplied digest cannot prove that an approved implementation is report-only.
-Review its internal HTTP behavior and configuration loaders before approval.
-Follow up in bat-agent-connector with a purpose-built read-only transport that
-enforces HTTP methods/routes below the Python process, streaming response
-limits, and an OS sandbox restricting filesystem/process/network access.
+Python starts with `-I -S -B`. The runner copies every regular connector file
+through an `O_NOFOLLOW` source fd into a private `mkdtemp` snapshot (0700),
+hashing the exact bytes written with the algorithm above. Only a matching
+snapshot is imported. Its isolated search path contains the interpreter's
+standard library and the snapshot parent; the original installation is never
+an import path. A restricted finder permits only standard-library imports and
+that snapshot tree. Unpinned third-party dependencies fail closed. The snapshot
+is removed at exit, including digest refusal and connector errors. Source-file
+replacement after hashing cannot change the bytes imported.
+
+Digest approval remains an admin trust decision, not an OS sandbox: an approved
+implementation can call standard-library/native facilities. Review its internal
+HTTP behavior and configuration loaders before approval; wrappers/audit hooks
+are defense in depth. The remaining resource-limit open item is streaming
+response limits in the bat-agent-connector transport: its dict-returning API
+currently decodes responses before the launcher can enforce its decoded budget.
+The connector follow-up should enforce limits while streaming and provide
+purpose-built read-only HTTP methods/routes below the Python process.
 
 ## Arguments and fixed mapping
 

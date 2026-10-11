@@ -132,6 +132,44 @@ class SweepTests(unittest.TestCase):
             package.joinpath('linked.py').symlink_to(package/'__init__.py')
             with self.assertRaises(sweep.Refused): sweep.connector_digest(package)
 
+    def test_snapshot_import_survives_source_replacement(self):
+        original_path = list(sys.path)
+        original_finders = list(sys.meta_path)
+        original_bytecode = sys.dont_write_bytecode
+        previous = {k:v for k,v in sys.modules.items() if k == 'bat_agent_connector' or k.startswith('bat_agent_connector.')}
+        for key in previous:
+            del sys.modules[key]
+        try:
+            with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory(prefix='connector-snapshot-') as snapshot_dir:
+                source = Path(source_dir)/'bat_agent_connector'
+                source.mkdir()
+                source.joinpath('__init__.py').write_text('')
+                module = source/'sample.py'
+                module.write_text('VALUE = "approved"\n')
+                expected = sweep.connector_digest(source)
+                snapshot = Path(snapshot_dir)/'bat_agent_connector'
+                snapshot.mkdir(mode=0o700)
+                self.assertEqual(Path(snapshot_dir).stat().st_mode & 0o777, 0o700)
+                self.assertEqual(sweep.connector_digest(source, snapshot), expected)
+                replacement = source/'replacement'
+                replacement.write_text('VALUE = "replaced"\n')
+                replacement.replace(module)
+                self.assertNotEqual(sweep.connector_digest(source), expected)
+                sweep.isolated_imports(snapshot)
+                imported = importlib.import_module('bat_agent_connector.sample')
+                self.assertEqual(imported.VALUE, 'approved')
+                self.assertTrue(Path(imported.__file__).is_relative_to(snapshot))
+                self.assertNotIn(str(source.parent), sys.path)
+            self.assertFalse(Path(snapshot_dir).exists())
+        finally:
+            sys.path[:] = original_path
+            sys.meta_path[:] = original_finders
+            sys.dont_write_bytecode = original_bytecode
+            for key in list(sys.modules):
+                if key == 'bat_agent_connector' or key.startswith('bat_agent_connector.'):
+                    del sys.modules[key]
+            sys.modules.update(previous)
+
     def test_channels_symlink_refused(self):
         self.assertEqual(self.run_fake(symlink=True)['status'], 'refused')
 

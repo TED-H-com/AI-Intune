@@ -1,7 +1,7 @@
 {
   "name": "bat-sweep-report-pilot",
   "script_id": "bat-sweep-report-v1",
-  "script_sha256": "3a5d238fae4e4cbbe22e9dae53a5006ff424aa4c84604253384a884e55ccc9cf",
+  "script_sha256": "8a38c3be5c3c0e9cf69fcd19225753db8ffcd70e9bc77e72d9739a9011d11a31",
   "args": {
     "hosts": [
       "sample-host-a",

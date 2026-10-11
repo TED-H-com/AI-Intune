@@ -45,6 +45,8 @@ def enforce_io(private):
         if event == "open":
             path, mode, flags = args
             writing = (isinstance(mode, str) and any(c in mode for c in "wax+")) or (flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC))
+            if writing and isinstance(path, int):
+                path = os.readlink(f"/proc/self/fd/{path}")
             if writing and (not isinstance(path, (str, bytes, os.PathLike)) or not Path(os.fsdecode(path)).resolve().is_relative_to(root)):
                 raise PermissionError("report-only write boundary")
         if event in ("os.remove", "os.rmdir", "os.mkdir", "os.rename", "os.chmod", "os.chown", "os.truncate", "os.link", "os.symlink"):
@@ -219,7 +221,7 @@ def connector_directory():
             return package
     raise FileNotFoundError("connector unavailable")
 
-def connector_digest(package):
+def connector_digest(package, snapshot=None):
     info = package.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022:
         raise Refused("connector_unsafe_tree")
@@ -237,12 +239,23 @@ def connector_digest(package):
         total += info.st_size
         if total > 32 * 1024 * 1024:
             raise Refused("connector_tree_budget")
-        relative = path.relative_to(package).as_posix().encode()
+        relative_path = path.relative_to(package)
+        relative = relative_path.as_posix().encode()
+        target = None
+        if snapshot is not None:
+            destination = snapshot / relative_path
+            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target = destination
         digest.update(struct.pack(">I", len(relative)))
         digest.update(relative)
         digest.update(struct.pack(">Q", info.st_size))
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, "rb") as stream:
+        with contextlib.ExitStack() as stack:
+            stream = stack.enter_context(os.fdopen(fd, "rb"))
+            output = None
+            if target is not None:
+                output_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                output = stack.enter_context(os.fdopen(output_fd, "wb"))
             opened = os.fstat(stream.fileno())
             if (opened.st_dev, opened.st_ino, opened.st_size) != (info.st_dev, info.st_ino, info.st_size):
                 raise Refused("connector_unsafe_tree")
@@ -252,6 +265,9 @@ def connector_digest(package):
                 if not chunk:
                     raise Refused("connector_unsafe_tree")
                 remaining -= len(chunk)
+                if output is not None and output.write(chunk) != len(chunk):
+                    raise Refused("connector_snapshot_failed")
+                # These are the exact bytes written to the private import tree.
                 digest.update(chunk)
             if stream.read(1):
                 raise Refused("connector_unsafe_tree")
@@ -339,11 +355,18 @@ def classify(messages, now):
     return "needs_human", "Jev stop-point evaluation unavailable in report-only mode"
 
 async def collect(args):
+    # TemporaryDirectory uses mkdtemp (0700); exit removes even refused snapshots.
+    with tempfile.TemporaryDirectory(prefix="connector-snapshot-", dir=os.environ["TMPDIR"]) as private:
+        snapshot = Path(private) / "bat_agent_connector"
+        snapshot.mkdir(mode=0o700)
+        return await collect_snapshot(args, snapshot)
+
+async def collect_snapshot(args, snapshot):
     try:
         package = connector_directory()
-        if connector_digest(package) != args["connector_tree_sha256"]:
+        if connector_digest(package, snapshot) != args["connector_tree_sha256"]:
             raise Refused("connector_digest_mismatch")
-        isolated_imports(package)
+        isolated_imports(snapshot)
         mapping = channel_mapping()
     except Refused as e:
         return {"status": "refused", "reason": str(e)}
