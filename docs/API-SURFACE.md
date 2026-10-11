@@ -3,13 +3,13 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 253 個 HTTP operations（24 non-operator＋229 operator；117 條 operator JSON）、
+> 逐一對照 255 個 HTTP operations（24 non-operator＋231 operator；119 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 253-operation tally above (24 non-operator + 229 operator). The inventory/contract excludes these six public account operations and totals 247. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 255-operation tally above (24 non-operator + 231 operator). The inventory/contract excludes these six public account operations and totals 249. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -698,4 +698,17 @@ Schedule configuration is human-only: upsert and set-enabled preview/apply
 (`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
 Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
 Schedule list/get eligibility remains unchanged (currently human-only).
-No routes or capability tallies changed.
+Rotation adds two service-token-only JSON routes; both use the view admission capability and a dedicated self-only eligibility class.
+
+### Service token self and rotation
+
+| Method | Route | Authentication | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/operator/service-tokens/self` | Current service token only, CIDRs enforced | `id/name/scope/expires_at/max_expiry` (null max means unlimited) |
+| POST | `/v1/operator/service-tokens/rotate` | Current newest service token only, CIDRs enforced | `id/token/expires_at/max_expiry`; plaintext once |
+
+Neither self route needs an allowlist entry. No human session is accepted.
+Rotation returns 409 for an already rotated token during overlap, 429 for the
+persisted three/hour token or resolved-IP budget, 403 at the maximum chain
+deadline, and 401 for expired/revoked/invalid credentials. Old credentials stop
+authenticating after 10 minutes. Admin revoke applies to the whole chain.

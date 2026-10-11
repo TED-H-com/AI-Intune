@@ -320,6 +320,9 @@ func TestRequiredMFAGatesEveryOperatorRoute(t *testing.T) {
 		if policy.Representation == operatorHTML {
 			want = 303
 		}
+		if policy.ServiceTokenEligible == serviceEligibleSelf {
+			want = 401
+		}
 		if w.Code != want {
 			t.Errorf("%s: got %d, want %d: %s", pattern, w.Code, want, w.Body.String())
 		}

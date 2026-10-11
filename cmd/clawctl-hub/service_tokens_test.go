@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -149,7 +151,7 @@ func TestServiceTokenManagementPlaintextOnce(t *testing.T) {
 	}
 	cookie := adminSession(t, st)
 	code, _ := totp.Code(factor, time.Now().Unix()/30)
-	fields := url.Values{"name": {"agent"}, "scope": {"view"}, "expires_at": {time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, "password": {usersPassword}, "code": {code}, "allowlist": {"GET /v1/operator/machines"}}
+	fields := url.Values{"name": {"agent"}, "scope": {"view"}, "expiry_days": {"90"}, "password": {usersPassword}, "code": {code}, "routes": {"GET /v1/operator/machines"}}
 	w := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), cookie)
 	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("create status: %d", w.Code)
@@ -158,6 +160,11 @@ func TestServiceTokenManagementPlaintextOnce(t *testing.T) {
 	if secret == "" || strings.Count(w.Body.String(), secret) != 1 {
 		t.Fatal("creation did not show exactly one secret")
 	}
+	hash := sha256.Sum256([]byte(serviceTokenCopyScript))
+	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'sha256-"+base64.StdEncoding.EncodeToString(hash[:])+"'") || !strings.Contains(w.Body.String(), serviceTokenCopyScript) {
+		t.Fatal("copy script missing exact CSP hash")
+	}
+
 	page := accountRequest(h, "GET", "/account/service-tokens", "", cookie)
 	if page.Code != 200 || strings.Contains(page.Body.String(), secret) {
 		t.Fatal("listing disclosed secret or failed")
@@ -203,7 +210,7 @@ func TestServiceTokenManagementRejectsAdminScope(t *testing.T) {
 	}
 	cookie := adminSession(t, st)
 	code, _ := totp.Code(factor, time.Now().Unix()/30)
-	fields := url.Values{"name": {"agent"}, "scope": {"admin"}, "expires_at": {time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, "password": {usersPassword}, "code": {code}}
+	fields := url.Values{"name": {"agent"}, "scope": {"admin"}, "expiry_days": {"90"}, "password": {usersPassword}, "code": {code}}
 	w := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), cookie)
 	if w.Code != 400 {
 		t.Fatalf("admin create: %d", w.Code)
@@ -228,6 +235,9 @@ func TestServiceTokenManifestEligibility(t *testing.T) {
 			continue
 		}
 		count++
+		if policy.ServiceTokenEligible == serviceEligibleSelf {
+			continue
+		}
 		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly {
 			scriptCount++
 			if (route != "POST /v1/operator/script-runs/preview" && route != "POST /v1/operator/script-runs") || policy.Permission != operatorauth.Operate || !operatorPolicyAdmissible(route, policy) {
@@ -477,7 +487,7 @@ func TestServiceTokenManagementRejectsIneligibleAllowlist(t *testing.T) {
 			}
 			cookie := adminSession(t, st)
 			code, _ := totp.Code(factor, time.Now().Unix()/30)
-			fields := url.Values{"name": {"agent"}, "scope": {"operate"}, "expires_at": {time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, "password": {usersPassword}, "code": {code}, "allowlist": {allow}}
+			fields := url.Values{"name": {"agent"}, "scope": {"operate"}, "expiry_days": {"90"}, "password": {usersPassword}, "code": {code}, "routes": {allow}}
 			rec := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), cookie)
 			if rec.Code != 400 {
 				t.Fatalf("create ineligible allowlist: %d", rec.Code)
@@ -620,6 +630,16 @@ func TestServiceTokenManagementDeniedAuditsIncludeRateLimitAndMetadata(t *testin
 				if rec.Code != want {
 					t.Fatalf("attempt %d: %d", i, rec.Code)
 				}
+				if i < 5 && !strings.Contains(rec.Body.String(), "Password or code incorrect.") {
+					t.Fatal("factor error not generic")
+				}
+				if i == 5 && !strings.Contains(rec.Body.String(), "Rate limited") {
+					t.Fatal("missing rate limit error")
+				}
+				if strings.Contains(rec.Body.String(), "incorrect-test-password") || strings.Contains(rec.Body.String(), "invalid-test-code") {
+					t.Fatal("credentials echoed")
+				}
+
 			}
 			audits, err := st.Audit("", 100)
 			if err != nil {
@@ -875,7 +895,7 @@ func TestServiceTokenManagementScriptAllowlistScope(t *testing.T) {
 			}
 			cookie := adminSession(t, st)
 			code, _ := totp.Code(factor, time.Now().Unix()/30)
-			fields := url.Values{"name": {"hermes"}, "scope": {scope}, "expires_at": {time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, "password": {usersPassword}, "code": {code}, "allowlist": {"POST /v1/operator/script-runs/preview,POST /v1/operator/script-runs"}}
+			fields := url.Values{"name": {"hermes"}, "scope": {scope}, "expiry_days": {"90"}, "password": {usersPassword}, "code": {code}, "routes": {"POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}}
 			rec := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), cookie)
 			want := 200
 			wantTokens := 1

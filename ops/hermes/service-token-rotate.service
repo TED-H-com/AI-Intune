@@ -1,0 +1,8 @@
+[Unit]
+Description=Rotate the Hermes Hub service token
+
+[Service]
+Type=oneshot
+UMask=0077
+EnvironmentFile=%h/.config/hermes/hub.env
+ExecStart=%h/.local/bin/clawctl-operator --hub-url ${HERMES_HUB_ORIGIN} token rotate --token-file %h/.config/hermes/service-token --min-remaining 14d

@@ -300,3 +300,19 @@ Schedule configuration is human-only: upsert and set-enabled preview/apply
 Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
 Schedule list/get eligibility remains unchanged (currently human-only).
 No routes or capability tallies changed.
+
+## Hermes credential lifecycle
+
+Create a token through the admin Account security → Service tokens page:
+name `hermes`, scope `operate`, 90 days, **Create with Hermes default**.
+The preset includes jobs_summary, approvals_summary, hub_status, job
+list/get/evidence, and READ-only script-runs preview/apply. Save the displayed
+credential immediately into a regular mode-0600 file on the Hermes host.
+
+Run `clawctl-operator --hub-url https://hub.example.com token rotate --token-file
+PATH --min-remaining 14d` daily, or use `--force` for immediate rotation.
+Durations accept days (`14d`) or Go duration units (`336h`).
+The command prints only whether rotation happened. Exit codes: 0 rotated/not
+due, 1 operation failure, 2 usage failure. Long-running clients must reread the
+file within the 10-minute overlap. See the
+[systemd user service and timer example](../ops/hermes/README.md).
