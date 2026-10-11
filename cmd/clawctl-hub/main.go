@@ -453,7 +453,7 @@ func runRollbackCompatibility(argv []string, out io.Writer) error {
 
 func serve(argv []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	diskOpsV2Writes := fs.Bool("disk-ops-v2-writes", false, "enable human-admin Phase 2 disk policy writes; execution adapters remain separately gated")
+	diskOpsV2Writes := fs.Bool("disk-ops-v2-writes", false, "enable human-admin disk policy changes and safe cleanup jobs; targets require disk_ops_v2")
 	authModeFlag := fs.String("auth-mode", os.Getenv("CLAWCTL_AUTH_MODE"), "operator auth mode: tailscale (default), local, or both")
 	addr := fs.String("listen", "127.0.0.1:8770", "listen address (literal Tailscale IP:port; reads $CLAWCTL_LISTEN when unset). Flag default 127.0.0.1:8770 is a fail-closed placeholder that Hub rejects. No production default port; 8787 is only a convention example in docs; grant dst, CLAWCTL_PUBLIC_URL, agent --hub, and tunnel origin must use the same port as this address")
 	dbPath := fs.String("db", defaultDB(), "path to SQLite database")

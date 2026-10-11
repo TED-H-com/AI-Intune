@@ -53,6 +53,9 @@ func (h *hub) handleScheduleManage(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAuditedJSON(w, r, actor, action) {
 		return
 	}
+	if p, ok := operatorauth.PrincipalFromContext(r.Context()); apply && ok && p.Has(operatorauth.Admin) && !h.requireDiskJSONFreshHuman(w, r, action) {
+		return
+	}
 	var body store.ScheduleRequest
 	if rejection := decodeOperatorBody(w, r, &body); rejection != nil {
 		h.rejectOperatorPolicyTransport(w, r, actor, action, rejection.Status, rejection.Code, rejection.Detail)
@@ -96,6 +99,9 @@ func (h *hub) handleScheduleRunNow(w http.ResponseWriter, r *http.Request) {
 	actor := operatorActor(r)
 	action := store.AuditAction("schedule-run-now")
 	if !h.requireAuditedJSON(w, r, actor, action) {
+		return
+	}
+	if p, ok := operatorauth.PrincipalFromContext(r.Context()); ok && p.Has(operatorauth.Admin) && !h.requireDiskJSONFreshHuman(w, r, action) {
 		return
 	}
 	var body struct{}

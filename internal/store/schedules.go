@@ -249,9 +249,21 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 	if operation == "set-enabled" && req.Enabled && (v.PausedReason != "" || v.ExecutionMode == "" || v.ExecutionMode != entry.Mode) {
 		return out, scriptBad("re-approve script through upsert")
 	}
+	if v.Enabled && scriptcatalog.IsDiskSafe(v.ScriptID) {
+		var args struct {
+			Scope string `json:"scope"`
+		}
+		_ = json.Unmarshal(v.Args, &args)
+		if args.Scope == "root" {
+			return out, operatorError("PRECONDITION_FAILED", "root_helper_missing: root schedule requires a reviewed helper-ready target")
+		}
+	}
 	if v.Enabled {
 		normalized, _, e := normalizeScript(ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: v.Targets, Reason: req.Reason})
 		if e != nil {
+			return out, e
+		}
+		if e = s.diskSafeGateTx(tx, normalized, entry, apply); e != nil {
 			return out, e
 		}
 		if e = validateScriptTargetsTx(tx, normalized, entry); e != nil {
@@ -376,7 +388,7 @@ func (s *Store) ScheduleRunNow(id, key string, a AuditEntry) (out ScheduleRunNow
 	}
 	return
 }
-func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry, receipt *ScheduleRunNowResponse) (jobs []string, err error) {
+func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry, receipt *ScheduleRunNowResponse, binding ...string) (jobs []string, err error) {
 	tx, err := s.beginWrite(context.Background(), "schedule_run")
 	if err != nil {
 		return
@@ -400,6 +412,9 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 		return nil, nil
 	}
 
+	if len(binding) > 0 && binding[0] != "sha256:"+scriptcatalog.Digest(mustScriptJSON(v)) {
+		return nil, operatorError("REVISION_CONFLICT", "schedule preview changed")
+	}
 	requestDigest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(struct{ ID, Principal string }{id, a.AuthSubject}))
 	if manual {
 		if a.IdempotencyKey == "" || len(a.IdempotencyKey) > 200 {
@@ -525,11 +540,22 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	req := ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: v.Targets, TimeoutSeconds: entry.DefaultTimeout, Reason: "scheduled catalog run"}
 	if active > 0 {
 		outcome = "skipped_overlap"
+	} else if err = s.diskSafeGateTx(tx, req, entry); err != nil {
+		if manual {
+			return nil, err
+		}
+		outcome = "skipped_unavailable"
+		a.Detail = err.Error()
+		err = nil
 	} else if err = validateScriptTargetsTx(tx, req, entry); err != nil {
 		outcome = "skipped_unavailable"
 		err = nil
 	} else {
-		raw := mustScriptJSON(scriptcatalog.Spec{ExecutionMode: v.ExecutionMode, Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
+		policy, e := diskSafePolicyTx(tx, req, entry)
+		if e != nil {
+			return nil, e
+		}
+		raw := mustScriptJSON(scriptcatalog.Spec{Policy: policy, ExecutionMode: v.ExecutionMode, Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
 		for _, target := range v.Targets {
 			desired, rev, e := createDesiredStateTx(tx, "machine", target, scriptcatalog.Kind, v.ScriptID, string(raw), "operator:"+a.AuthSubject, now)
 			if e != nil {
@@ -554,7 +580,9 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 		}
 	}
 	if outcome != "enqueued" {
-		a.Detail = outcome
+		if a.Detail == "" {
+			a.Detail = outcome
+		}
 		if err = s.recordAuditTx(tx, a); err != nil {
 			return
 		}

@@ -1,0 +1,337 @@
+# Fixed policy adapter. No caller-selected commands, paths, or environment.
+import datetime, fcntl, fnmatch, json, os, shutil, stat, subprocess, sys, time
+
+APPLY = False
+BUILTIN = 'systemd-private-* .X11-unix .ICE-unix .XIM-unix .font-unix .Test-unix tmux-* ssh-* snap-private-tmp *openclaw* *clawctl* *claude* *codex* *grok* *agy* *cursor* *vscode* *backup* *snapshot* *.sock *.pid *.lock .X*-lock .s.PGSQL* *odoo* *postgres* pulse-* dbus-* gpg-* krb5cc* hsperfdata_* *credential* *secret* *token* *password* *.pem *.key *model* *.gguf *.safetensors *.pt .npmrc .netrc auth.json .ssh .gnupg .aws .azure .config .git'.split()
+
+def entries(path):
+    # O_NOATIME is mandatory: preview must not change directory atime either.
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NOATIME)
+    try:
+        return os.listdir(fd)
+    finally:
+        os.close(fd)
+
+def inside(path, root):
+    return path == root or path.startswith(root + os.sep)
+
+def protected(path, policy):
+    path = os.path.abspath(path)
+    if any(inside(path, x) or inside(x, path) for x in policy['protect_paths']):
+        return True
+    if any(fnmatch.fnmatch(x.lower(), pat.lower()) for x in path.split(os.sep) for pat in BUILTIN):
+        return True
+    parent = path if os.path.isdir(path) else os.path.dirname(path)
+    while parent != '/':
+        if os.path.lexists(os.path.join(parent, '.git')):
+            return True
+        parent = os.path.dirname(parent)
+    return False
+
+def holders():
+    opened = {}
+    complete = True
+    try:
+        with open('/proc/mounts') as mounts:
+            if any('hidepid=' in line and 'hidepid=0' not in line for line in mounts): complete = False
+    except OSError:
+        complete = False
+    for pid in os.listdir('/proc'):
+        if not pid.isdigit():
+            continue
+        try:
+            for fd in os.listdir('/proc/' + pid + '/fd'):
+                try:
+                    opened.setdefault(os.readlink('/proc/' + pid + '/fd/' + fd).removesuffix(' (deleted)'), set()).add(pid)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    complete = False
+            try:
+                opened.setdefault(os.readlink('/proc/'+pid+'/cwd'),set()).add(pid)
+                with open('/proc/'+pid+'/maps') as mappings:
+                    for line in mappings:
+                        fields=line.rstrip().split(None,5)
+                        if len(fields)==6 and fields[5].startswith('/'):
+                            opened.setdefault(fields[5].removesuffix(' (deleted)'),set()).add(pid)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                complete=False
+        except FileNotFoundError:
+            pass
+        except OSError:
+            complete = False
+    # Descriptor visibility includes advisory-lock holders. An inaccessible
+    # process makes native GC and unlink ineligible, never a reason to kill it.
+    return opened, complete
+
+def unlink_checked(path, info, policy):
+    # Anchor every ancestor without following links; retain all descriptors
+    # while rechecking repositories, inode identity, owner and open holders.
+    fds = [os.open('/', os.O_RDONLY | os.O_DIRECTORY)]
+    try:
+        parts = os.path.abspath(path).split('/')[1:]
+        for part in parts[:-1]:
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[-1])
+            fds.append(fd)
+            try:
+                os.stat('.git', dir_fd=fd, follow_symlinks=False)
+                return False
+            except FileNotFoundError:
+                pass
+        fresh = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
+        opened, complete = holders()
+        if not complete or path in opened or protected(path, policy):
+            return False
+        if (fresh.st_dev, fresh.st_ino, fresh.st_mtime_ns, fresh.st_ctime_ns, fresh.st_nlink, fresh.st_uid) != (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns, 1, os.geteuid()):
+            return False
+        os.unlink(parts[-1], dir_fd=fds[-1])
+        return True
+    finally:
+        for fd in reversed(fds):
+            os.close(fd)
+
+def category(note='', status='skipped', candidate=0, freed=0, items=0):
+    return dict(mode='apply' if APPLY else 'dry-run', status=status,
+                candidate_bytes=candidate, freed_bytes=freed, items=items, note=note)
+
+def scan(root, policy, opened, complete, days, mutate=False):
+    if not complete:
+        return category('deferred: incomplete holder visibility')
+    total = count = freed = skipped = visited = 0
+    stack = [root]
+    deadline = time.monotonic() + min(policy['scan_budgets']['max_seconds'], 60)
+    while stack:
+        current = stack.pop()
+        if protected(current, policy):
+            skipped += 1
+            continue
+        try:
+            names = entries(current)
+        except (OSError, PermissionError):
+            return category('incomplete visibility')
+        # A repository root protects every child, including before .git is visited.
+        if '.git' in names:
+            skipped += len(names)
+            continue
+        for name in names:
+            visited += 1
+            if visited > policy['scan_budgets']['max_entries'] or time.monotonic() > deadline:
+                return category('scan budget exceeded')
+            path = os.path.join(current, name)
+            try:
+                info = os.lstat(path)
+                if protected(path, policy) or info.st_uid != os.geteuid() or stat.S_ISLNK(info.st_mode):
+                    skipped += 1
+                    continue
+                if stat.S_ISDIR(info.st_mode):
+                    stack.append(path)
+                    continue
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    skipped += 1
+                    continue
+                if time.time() - max(info.st_mtime, info.st_atime) < days * 86400:
+                    continue
+                if path in opened or not complete:
+                    skipped += 1
+                    continue
+                total += info.st_size
+                count += 1
+                if mutate:
+                    if unlink_checked(path, info, policy):
+                        freed += info.st_size
+                    else:
+                        skipped += 1
+            except OSError:
+                return category('filesystem changed; deferred')
+    return category(str(skipped) + ' protected or open items skipped', 'ok', total, freed, count)
+
+def native(name, cache, command, policy, opened, complete):
+    n = len(set().union(*(pids for p, pids in opened.items() if inside(p, cache))))
+    if n:
+        return category('deferred: cache lock held by ' + str(n))
+    if not complete:
+        return category('incomplete holder visibility')
+    if not shutil.which(command[0]):
+        return category('unsupported: native tool unavailable')
+    if not os.path.isdir(cache):
+        return category('cache absent')
+    # Refuse native GC if it could affect a protected subtree or lock file.
+    stack = [cache]
+    visited = estimate = 0
+    try:
+        while stack:
+            root = stack.pop()
+            if protected(root, policy):
+                return category('protected cache subtree')
+            for item in entries(root):
+                visited += 1
+                p = os.path.join(root, item)
+                if visited > policy['scan_budgets']['max_entries']:
+                    return category('scan budget exceeded')
+                if (protected(p, policy) and not (name=='uv' and p==cache+'/.lock' and not policy['protect_paths'])) or os.path.islink(p):
+                    return category('protected cache subtree')
+                if os.path.isdir(p):
+                    stack.append(p)
+                else:
+                    info=os.lstat(p)
+                    if stat.S_ISREG(info.st_mode): estimate += info.st_size
+    except OSError:
+        return category('incomplete protection visibility')
+    if not APPLY:
+        return category('native GC estimate is an upper bound; no command executed', 'ok', candidate=estimate)
+    fresh, visible = holders()
+    n = len(set().union(*(pids for p, pids in fresh.items() if inside(p, cache))))
+    if n: return category('deferred: cache lock held by ' + str(n))
+    if not visible: return category('incomplete holder visibility')
+    env = dict(os.environ, UV_LOCK_TIMEOUT='60', UV_CACHE_DIR=cache, npm_config_cache=cache)
+    try:
+        out = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, timeout=60, check=False)
+        observation = scan(cache, policy, {}, True, 0) if out.returncode==0 else None
+        after = observation['candidate_bytes'] if observation and observation['status']=='ok' else estimate
+        return category('native GC completed' if out.returncode == 0 else 'native GC deferred', 'ok' if out.returncode == 0 else 'skipped', candidate=estimate, freed=max(estimate-after,0))
+    except subprocess.TimeoutExpired:
+        return category('deferred: cache lock timeout')
+
+DOCKER_COMMANDS = [ ['docker', 'image', 'prune', '-f', '--filter', 'until=168h'],
+                    ['docker', 'builder', 'prune', '-f', '--filter', 'until=168h'] ]
+JOURNAL_COMMAND = ['journalctl', '--vacuum-size=500M']
+
+def docker(policy, opened, complete):
+    if not APPLY:
+        return category('native GC estimate unavailable; no command executed', 'ok')
+    if policy['safe_tier']['docker_min_hours'] != 168:
+        return category('unsupported: Docker age policy requires a reviewed adapter')
+    if not complete or not shutil.which('docker'):
+        return category('incomplete holder visibility or Docker unavailable')
+    # Never prune a remote context or an unverified storage root.
+    try:
+        context = subprocess.run(['docker', 'context', 'inspect', '--format', '{{json .Endpoints.docker.Host}}'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10, check=True)
+        endpoint = json.loads(context.stdout)
+        if endpoint not in ['unix:///var/run/docker.sock', 'unix:///run/user/' + str(os.geteuid()) + '/docker.sock']:
+            return category('unsupported: non-local Docker context')
+        info = subprocess.run(['docker', 'info', '--format', '{{json .DockerRootDir}}'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10, check=True)
+        root = json.loads(info.stdout)
+        if root not in ['/var/lib/docker', os.path.expanduser('~/.local/share/docker')]:
+            return category('unsupported: Docker storage root')
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return category('incomplete Docker inventory')
+    # Native prune commands retain referenced objects; the storage tree must
+    # additionally pass the same no-repository/model/additive-path checks.
+    result = native('docker', root, DOCKER_COMMANDS[0], policy, opened, complete)
+    if result['status'] != 'ok' or not APPLY:
+        return result
+    return native('docker', root, DOCKER_COMMANDS[1], policy, opened, complete)
+
+def state_lock(home):
+    # Share the existing local user timer's scope lock. Root timers are untouched.
+    fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in ['.local', 'state', 'disk-clean']:
+            try: os.mkdir(part, mode=0o700, dir_fd=fd)
+            except FileExistsError: pass
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd); fd = child
+            info = os.fstat(fd)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+                raise OSError('unsafe state directory')
+    except OSError:
+        os.close(fd)
+        raise
+    lock = os.open('lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+    info = os.fstat(lock)
+    if info.st_uid != os.geteuid() or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        os.close(lock); os.close(fd)
+        raise OSError('unsafe scope lock')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock); os.close(fd)
+        raise
+    return fd, lock
+
+def save_summary(directory, summary):
+    # Existing fleet-disk-clean/v1 consumers continue reading last.json.
+    name = 'last-v2-' + str(os.getpid()) + '.tmp'
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    try:
+        with os.fdopen(fd, 'w') as output:
+            json.dump(summary, output, separators=(',', ':'))
+            output.write('\n'); output.flush(); os.fsync(output.fileno())
+        os.rename(name, 'last.json', src_dir_fd=directory, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
+        try: os.unlink(name, dir_fd=directory)
+        except FileNotFoundError: pass
+
+def mount_usage():
+    mounts = []
+    seen = set()
+    try:
+        with open('/proc/self/mountinfo') as source:
+            for line in source:
+                fields = line.split()
+                separator = fields.index('-')
+                if fields[separator+1] not in ['ext4','xfs','btrfs','zfs','overlay','fuseblk']:
+                    continue
+                mount = fields[4].replace('\\040',' ').replace('\\134','\\')
+                if mount in seen or len(mounts)>=16 or not os.path.isdir(mount):
+                    continue
+                seen.add(mount)
+                disk = os.statvfs(mount)
+                avail, total = disk.f_bavail*disk.f_frsize, disk.f_blocks*disk.f_frsize
+                mounts.append(dict(mount=mount,total_bytes=total,available_bytes=avail,percent=int(100*(total-avail)/total) if total else 0))
+    except (OSError, ValueError):
+        pass
+    return mounts
+
+def main():
+    start = time.monotonic()
+    request = json.load(sys.stdin)
+    args, policy = request['args'], request['policy']
+    # Canonical policy is checked by the Go runner; enforce adapter safety floors.
+    tier = policy['safe_tier']
+    if policy['schema_version'] != 1 or tier['user_tmp_min_days'] < 10 or tier['var_tmp_min_days'] < 14 or tier['cargo_min_days'] < 30 or tier['docker_min_hours'] < 168 or tier['npm_mode'] != 'verify-only' or tier['uv_mode'] != 'lock-aware-prune':
+        raise ValueError('unsafe policy')
+    home = os.path.expanduser('~')
+    disk = os.statvfs('/')
+    avail, total = disk.f_bavail * disk.f_frsize, disk.f_blocks * disk.f_frsize
+    pct = int(100 * (total - avail) / total) if total else 0
+    cats = {}
+    state = None
+    if APPLY and args['scope']=='user':
+        try: state = state_lock(home)
+        except OSError: cats = {x: category('deferred: local scope lock busy or unsafe') for x in ['user_tmp','uv','npm','cargo','docker','journald']}
+    if cats:
+        pass
+    elif args['scope'] == 'root':
+        cats = {x: category('root_helper_missing') for x in ['var_tmp', 'journald', 'docker']}
+    else:
+        opened, complete = holders()
+        cats['user_tmp'] = scan('/tmp', policy, opened, complete, tier['user_tmp_min_days'], APPLY)
+        for name, path in [('user_cache_tmp', home+'/.cache/tmp'), ('user_local_tmp', home+'/.local/tmp')]:
+            cats[name] = scan(path, policy, opened, complete, tier['user_tmp_min_days'], APPLY) if os.path.isdir(path) else category('temporary directory absent')
+        cats['uv'] = native('uv', home + '/.cache/uv', ['uv', 'cache', 'prune'], policy, opened, complete)
+        cats['npm'] = native('npm', home + '/.npm', ['npm', 'cache', 'verify'], policy, opened, complete)
+        cats['cargo'] = category('unsupported: tested native age-aware GC unavailable')
+        cats['docker'] = docker(policy, opened, complete)
+        cats['journald'] = category('root_helper_missing')
+    after = os.statvfs('/')
+    avail_after = after.f_bavail*after.f_frsize
+    pct_after = int(100*(total-avail_after)/total) if total else 0
+    summary = dict(schema='fleet-disk-clean/v1', version='2.0.0', scope=args['scope'], host='agent', user='agent',
+        mode='apply' if APPLY else 'dry-run', ts=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        duration_s=int(time.monotonic()-start), config_digest=args['policy_digest'],
+        disk=dict(mount='/', pct_before=pct, pct_after=pct_after, avail_bytes_before=avail, avail_bytes_after=avail_after),
+        candidate_bytes=sum(x['candidate_bytes'] for x in cats.values()), freed_bytes=sum(x['freed_bytes'] for x in cats.values()), categories=cats,
+        attention='', weekly=None, root=None)
+    if state is not None:
+        try: save_summary(state[0], summary)
+        finally: os.close(state[1]); os.close(state[0])
+    print(json.dumps(dict(summary=summary, operation=dict(schema='disk-safe/v2', policy_id=args['policy_id'], policy_digest=args['policy_digest'],
+        ownership='hub' if args['scope']=='user' else 'local-timer', skip_code='root_helper_missing' if args['scope']=='root' else '', mounts=mount_usage(), protections=['credentials','generated_images','repositories','active-models','configured-paths','open-descriptors','locks'])), separators=(',', ':')))
+
+if __name__ == '__main__':
+    main()

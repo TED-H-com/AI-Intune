@@ -3,6 +3,7 @@ package operatoragent
 import (
 	"context"
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/maintenance"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"strings"
@@ -134,5 +135,37 @@ func TestDiskPolicyMCPRedactsAllPathBearingResponses(t *testing.T) {
 	hub.policy.Body = json.RawMessage(`{"protect_paths":["/srv/private-models"]}`)
 	if _, err := s.Call(context.Background(), "disk_policy_get", json.RawMessage(`{"id":"disk-default"}`)); err == nil || strings.Contains(err.Error(), "/srv/private-models") {
 		t.Fatal("malformed response must fail closed", err)
+	}
+}
+
+func (f *fakeDiskPolicyHub) DiskOpsStatus(_ context.Context, id string) (store.DiskOpsStatus, error) {
+	f.calls++
+	return store.DiskOpsStatus{MachineID: id, Thresholds: store.DefaultDiskPolicy().Thresholds}, nil
+}
+func TestDiskOpsStatusToolClosedArguments(t *testing.T) {
+	f := &fakeDiskPolicyHub{}
+	s := &Service{Hub: f}
+	for _, raw := range []string{`{}`, `{"machine_id":"fixture","paths":true}`} {
+		if _, err := s.Call(context.Background(), "disk_ops_status", json.RawMessage(raw)); err == nil || f.calls != 0 {
+			t.Fatal("invalid status called Hub", err)
+		}
+	}
+	out, err := s.Call(context.Background(), "disk_ops_status", json.RawMessage(`{"machine_id":"fixture"}`))
+	if err != nil || out.(map[string]any)["machine_id"] != "fixture" || f.calls != 1 {
+		t.Fatal("status", err)
+	}
+}
+
+func TestDiskStatusMCPProjectionExcludesPrivateEvidence(t *testing.T) {
+	s := store.DiskOpsStatus{MachineID: "fixture", Mounts: []store.DiskMountUsage{{Mount: "/srv/private"}}, Skips: map[string]string{"/srv/private": "/srv/private"}, Ownership: map[string]string{"user": "/srv/private"}}
+	e := &store.DiskSafeEnvelope{}
+	e.Operation.Protections = []string{"/srv/private"}
+	e.Summary.Host = "/srv/private"
+	e.Summary.Disk.Mount = "/srv/private"
+	e.Summary.Categories = map[string]maintenance.SummaryCategory{"uv": {Status: "skipped", Note: "/srv/private"}, "/srv/private": {Note: "/srv/private"}}
+	s.LastSafeTier, s.Preview = e, e
+	raw, err := json.Marshal(redactedDiskStatus(s))
+	if err != nil || strings.Contains(string(raw), "/srv/private") || !strings.Contains(string(raw), "sha256:"+scriptcatalog.Digest([]byte("/srv/private"))) {
+		t.Fatalf("unsafe projection: %s %v", raw, err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/teddashh/AI-Intune/internal/deploy"
+	"github.com/teddashh/AI-Intune/internal/diskpolicy"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"os"
@@ -28,11 +29,24 @@ func (scriptExecutor) Run(ctx context.Context, job model.JobResponse) ([]model.J
 	if os.Geteuid() == 0 {
 		return nil, &rejectError{Code: deploy.PreconditionFailed, Detail: "script_v1 refuses root execution in phase 1"}
 	}
+	if scriptcatalog.IsDiskSafe(e.ID) && spec.ExecutionMode != e.Mode {
+		return reject()
+	}
+	if scriptcatalog.IsDiskSafe(e.ID) {
+		_, canonical, digest, policyErr := diskpolicy.CanonicalDiskPolicy(spec.Policy)
+		var args struct {
+			Digest string `json:"policy_digest"`
+		}
+		_ = json.Unmarshal(spec.Args, &args)
+		if policyErr != nil || args.Digest != digest || string(canonical) != string(spec.Policy) {
+			return reject()
+		}
+	}
 	args, err := e.Validate(spec.Args)
 	if err != nil {
 		return reject()
 	}
-	result, err := scriptcatalog.Run(ctx, e, args, job.ExecutionTimeout)
+	result, err := scriptcatalog.RunPolicy(ctx, e, args, job.ExecutionTimeout, spec.Policy)
 	if err != nil {
 		return nil, err
 	}

@@ -257,3 +257,39 @@ func TestDiskJSONFreshHumanGatePrecedesLedgerLookup(t *testing.T) {
 		assertDiskJSONLocalDenied(t, f.mux, path, "existing-retry-key", `{"id":"example-approval","decision":"approved","reason":"reviewed manifest"}`)
 	}
 }
+
+func TestDiskOpsStatusAPIViewAndQueryContract(t *testing.T) {
+	f := newJobsFixture(t, "example-device")
+	h := &hub{store: f.store}
+	h.operatorRoutes(f.mux)
+	r := verifiedOperatorRequest(httptest.NewRequest("GET", "/v1/operator/disk-ops/status/"+f.machine.id, nil), operatorauth.View)
+	w := httptest.NewRecorder()
+	f.mux.ServeHTTP(w, r)
+	var status store.DiskOpsStatus
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &status) != nil || status.MachineID != f.machine.id || status.Thresholds.WarnPercent != 85 || status.Thresholds.CriticalPercent != 93 {
+		t.Fatal("status", w.Code, w.Body.String())
+	}
+	// Fixture target identity is immutable; the status route reports unknown
+	// machines as a typed rejection and rejects query widening.
+	for _, path := range []string{"/v1/operator/disk-ops/status/missing", "/v1/operator/disk-ops/status/missing?paths=true"} {
+		r := verifiedOperatorRequest(httptest.NewRequest("GET", path, nil), operatorauth.View)
+		w := httptest.NewRecorder()
+		f.mux.ServeHTTP(w, r)
+		if w.Code == 200 || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("invalid read", w.Code, w.Body.String())
+		}
+	}
+	policy := operatorRoutePolicies["GET /v1/operator/disk-ops/status/{machine_id}"]
+	if policy.Permission != operatorauth.View || policy.ServiceTokenEligible != serviceIneligible {
+		t.Fatal("unsafe status eligibility", policy)
+	}
+}
+
+func TestDiskScriptAndScheduleJSONFreshGateBeforeDecodeAndReplay(t *testing.T) {
+	f := newJobsFixture(t, "example-device")
+	h := &hub{store: f.store}
+	h.operatorRoutes(f.mux)
+	for _, path := range []string{"/v1/operator/script-runs", "/v1/operator/schedules/upsert/apply", "/v1/operator/schedules/set-enabled/apply", "/v1/operator/schedules/fixture/run-now"} {
+		assertDiskJSONLocalDenied(t, f.mux, path, "retry-key", `invalid JSON`)
+	}
+}

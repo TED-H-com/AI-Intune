@@ -374,6 +374,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	DiskMachine           *diskMachinePage
 	DiskPolicies          *diskPoliciesPage
 	DiskPolicyReview      *diskPolicyReviewPage
 	DiskApprovals         *diskApprovalsPage
