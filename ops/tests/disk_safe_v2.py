@@ -9,7 +9,7 @@ def module(name):
     spec.loader.exec_module(obj)
     return obj
 
-POLICY = dict(schema_version=1, safe_tier=dict(user_tmp_min_days=10,var_tmp_min_days=14,cargo_min_days=30,docker_min_hours=168,npm_mode='verify-only',uv_mode='lock-aware-prune'), protect_paths=[], scan_budgets=dict(max_seconds=60,max_entries=200000))
+POLICY = dict(schema_version=1, safe_tier=dict(user_tmp_min_days=10,var_tmp_min_days=14,cargo_min_days=30,docker_min_hours=168,npm_mode='verify-only',uv_mode='lock-aware-prune'), protect_paths=[], scan_budgets=dict(max_seconds=60,max_entries=200000,max_items=500))
 
 class Safety(unittest.TestCase):
     def setUp(self):
@@ -109,12 +109,86 @@ class Safety(unittest.TestCase):
             self.native('docker',command)
             self.assertEqual((self.root/'args').read_text().splitlines(),command[1:])
         self.assertEqual(self.clean.DOCKER_COMMANDS,[['docker','image','prune','-f','--filter','until=168h'],['docker','builder','prune','-f','--filter','until=168h']])
+        for command in self.clean.DOCKER_COMMANDS:
+            self.assertFalse(set(command) & {'--force','system','volume','container','-a','--all'})
         self.assertEqual(self.clean.JOURNAL_COMMAND,['journalctl','--vacuum-size=500M'])
     def test_preview_never_runs_native_gc(self):
         cache=self.root/'cache';cache.mkdir()
         with patch.object(self.preview.shutil,'which',return_value='/usr/bin/uv'),patch.object(self.preview.subprocess,'run',side_effect=AssertionError('preview GC')):
             result=self.preview.native('uv',str(cache),['uv','cache','prune'],POLICY,{},True)
         self.assertEqual(result['status'],'ok')
+    def test_max_items_bounds_preview_and_clean(self):
+        for i in range(507): self.old('eligible/item-%04d' % i)
+        for adapter, mutate in [(self.preview,False),(self.clean,True)]:
+            with patch.object(adapter,'holders',return_value=({},True)):
+                result=adapter.scan(str(self.root),POLICY,{},True,10,mutate)
+            self.assertEqual(result['items'],500)
+            self.assertEqual(result['candidate_bytes'],3500)
+            self.assertIn('incomplete: max_items',result['note'])
+            self.assertEqual(result['freed_bytes'],3500 if mutate else 0)
+        self.assertEqual(len(list((self.root/'eligible').iterdir())),7)
+
+    def test_inode_alias_and_held_directory_subtree(self):
+        file=self.old('original.txt')
+        with open(file) as descriptor:
+            info=os.fstat(descriptor.fileno())
+            renamed=self.root/'renamed.txt';file.rename(renamed)
+            opened={(info.st_dev,info.st_ino):{'fixture'}}
+            self.assertIn((info.st_dev,info.st_ino),self.clean.holders()[0])
+            for adapter in [self.preview,self.clean]:
+                with patch.object(adapter,'holders',return_value=(opened,True)):
+                    self.assertEqual(adapter.scan(str(self.root),POLICY,opened,True,10,adapter.APPLY)['items'],0)
+            self.assertTrue(renamed.exists())
+        child=self.old('directory/child.txt')
+        fd=os.open(child.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:
+            info=os.fstat(fd)
+            directory=self.root/'moved';child.parent.rename(directory)
+            opened={('dir',info.st_dev,info.st_ino):{'fixture'}}
+            for adapter in [self.preview,self.clean]:
+                with patch.object(adapter,'holders',return_value=(opened,True)):
+                    self.assertEqual(adapter.scan(str(self.root),POLICY,opened,True,10,adapter.APPLY)['items'],1)
+            self.assertTrue((directory/'child.txt').exists())
+        finally: os.close(fd)
+
+    def test_inode_holder_rechecked_immediately_before_unlink(self):
+        file=self.old('recheck.txt');info=file.stat()
+        opened={(info.st_dev,info.st_ino):{'fixture'}}
+        with patch.object(self.clean,'holders',return_value=(opened,True)):
+            self.assertFalse(self.clean.unlink_checked(str(file),info,POLICY))
+        self.assertTrue(file.exists())
+
+    def test_cache_swap_before_spawn_is_refused(self):
+        cache=self.root/'cache';cache.mkdir()
+        other=self.root/'other';other.mkdir()
+        real_entries=self.clean.entries
+        def swapped(path):
+            names=real_entries(path)
+            if path==str(cache):
+                cache.rename(self.root/'original-cache');cache.symlink_to(other,target_is_directory=True)
+            return names
+        with patch.object(self.clean,'entries',side_effect=swapped), patch.object(self.clean.shutil,'which',return_value='/usr/bin/uv'), patch.object(self.clean,'holders',return_value=({},True)), patch.object(self.clean.subprocess,'run',side_effect=AssertionError('unsafe spawn')):
+            result=self.clean.native('uv',str(cache),['uv','cache','prune'],POLICY,{},True)
+        self.assertEqual(result['status'],'skipped');self.assertIn('changed',result['note'])
+
+    def test_cache_swap_at_spawn_keeps_inherited_directory(self):
+        for tool, command in [('uv',['uv','cache','prune']),('npm',['npm','cache','verify'])]:
+            cache=self.root/(tool+'-cache');cache.mkdir()
+            other=self.root/(tool+'-other');other.mkdir()
+            info=cache.stat()
+            def spawn(argv,**kwargs):
+                fd=kwargs['pass_fds'][0]
+                self.assertEqual((os.fstat(fd).st_dev,os.fstat(fd).st_ino),(info.st_dev,info.st_ino))
+                key='UV_CACHE_DIR' if tool=='uv' else 'npm_config_cache'
+                self.assertEqual(kwargs['env'][key],'/proc/self/fd/'+str(fd))
+                cache.rename(self.root/(tool+'-original'));cache.symlink_to(other,target_is_directory=True)
+                self.assertEqual(os.stat(kwargs['env'][key]).st_ino,info.st_ino)
+                return subprocess.CompletedProcess(argv,0)
+            with patch.object(self.clean.shutil,'which',return_value='/usr/bin/'+tool),patch.object(self.clean,'holders',return_value=({},True)),patch.object(self.clean.subprocess,'run',side_effect=spawn):
+                result=self.clean.native(tool,str(cache),command,POLICY,{},True)
+            self.assertEqual(result['status'],'skipped');self.assertIn('changed',result['note'])
+            self.assertEqual(list(other.iterdir()),[])
+
     def test_incomplete_visibility_and_cargo_root_skips(self):
         self.assertEqual(self.clean.native('uv',str(self.root),['uv','cache','prune'],POLICY,{},False)['status'],'skipped')
         request=json.dumps(dict(args=dict(scope='root',policy_id='fixture',policy_digest='sha256:'+'a'*64),policy=POLICY))

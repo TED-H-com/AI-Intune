@@ -214,6 +214,20 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 .empty{color:var(--dim);font-style:normal;padding:6px 0}
 .field-label{display:block;font-weight:600;font-size:13px;margin:0 0 4px}
 .form-grid{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:10px;align-items:end}
+.disk-form{display:grid;gap:16px;margin-top:16px}
+.disk-form fieldset{border:1px solid var(--line);border-radius:4px;padding:16px;margin:0;min-width:0}
+.disk-form legend{font-weight:600;padding:0 6px}
+.disk-form label{display:block}
+.disk-form input,.disk-form select{width:100%;box-sizing:border-box}
+.disk-button-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0}
+.disk-schedule{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}
+.disk-badge{display:inline-block;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.disk-ok{background:#e6f4ea;color:#176536}
+.disk-skipped{background:#fff2d5;color:#785200}
+.disk-error{background:#fde7e9;color:#a4262c}
+.disk-usage{width:100%;height:18px}
+.disk-mount + .disk-mount{border-top:1px solid var(--line);margin-top:16px;padding-top:8px}
+.disk-review-request{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f7f7;border:1px solid var(--line);padding:16px}
 .disk-form-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
 .form-grid label,.form-grid input,.form-grid select{width:100%}
 .enrollment-form{
@@ -334,10 +348,20 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 
 <div class="page-heading"><div><h1>Disk · machine-fixture</h1><p>Safe cleanup, usage and schedules. Root maintenance stays owned by local timers until a reviewed helper is installed.</p></div></div>
 
-<div class="panel"><h2>Run safe cleanup</h2><p>Review the pinned policy, target, script and schedule before applying.</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{&#34;scope&#34;:&#34;user&#34;,&#34;policy_id&#34;:&#34;disk-default&#34;,&#34;machine_id&#34;:&#34;machine-fixture&#34;}</pre>
-<form method="post" action="/machines/machine-fixture/disk/actions"><input type="hidden" name="action" value="apply"><input type="hidden" name="request" value="{&#34;scope&#34;:&#34;user&#34;,&#34;policy_id&#34;:&#34;disk-default&#34;,&#34;machine_id&#34;:&#34;machine-fixture&#34;}"><input type="hidden" name="digest" value="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"><input type="hidden" name="key" value="fixture-key"><input type="hidden" name="operation" value="script">
+<div class="panel"><h2>Run safe cleanup</h2><p>Review the pinned policy, target, script and schedule before applying. Estimates below come from the latest observation and are not guaranteed savings.</p>
+<details open><summary>Operation details</summary><pre class="disk-review-request">{&#34;scope&#34;:&#34;user&#34;,&#34;policy_id&#34;:&#34;disk-default&#34;,&#34;machine_id&#34;:&#34;machine-fixture&#34;}</pre></details>
+<form class="disk-form" method="post" action="/machines/machine-fixture/disk/actions"><input type="hidden" name="action" value="apply"><input type="hidden" name="request" value="{&#34;scope&#34;:&#34;user&#34;,&#34;policy_id&#34;:&#34;disk-default&#34;,&#34;machine_id&#34;:&#34;machine-fixture&#34;}"><input type="hidden" name="digest" value="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"><input type="hidden" name="key" value="fixture-key"><input type="hidden" name="operation" value="script">
+<fieldset><legend>Authorization</legend>
 <p>Your human administrator permission is rechecked on apply. Tailscale authentication does not provide fresh MFA; type the exact ID to confirm your intent.</p>
-<button >Apply reviewed operation</button> <a href="/machines/machine-fixture/disk">Cancel</a></form></div>
+<p class="small">Apply confirms this reviewed operation for this machine.</p></fieldset>
+<div class="command-bar disk-button-row"><button >Apply reviewed operation</button><a href="/machines/machine-fixture/disk">Cancel</a></div></form></div>
+
+
+<div class="panel"><h2>Mount usage</h2><p>Warning 85% · critical 93%. Latest agent measurement; only reported mounts appear.</p>
+<div class="disk-mount"><h3>/ · 88% <span class="disk-badge disk-skipped">Warning</span></h3><meter class="disk-usage" min="0" max="100" low="85" high="93" optimum="0" value="88">88%</meter><p><span title="12000000000 bytes">11.2 GiB</span> available of <span title="100000000000 bytes">93.1 GiB</span>. </p></div></div>
+<div class="panel"><h2>Last safe-tier cleanup</h2><p>2026-10-01T12:00:00Z · <span title="524288000 bytes">500.0 MiB</span> freed · <span title="537919488 bytes">513.0 MiB</span> estimated candidates</p><table><thead><tr><th>Category</th><th>Estimate</th><th>Freed</th><th>Status</th><th>Reason</th></tr></thead><tbody><tr><td>cargo</td><td><span title="0 bytes">0 B</span></td><td><span title="0 bytes">0 B</span></td><td><span class="disk-badge disk-skipped">skipped</span></td><td>unsupported: native age-aware GC unavailable</td></tr><tr><td>docker</td><td><span title="0 bytes">0 B</span></td><td><span title="0 bytes">0 B</span></td><td><span class="disk-badge disk-error">error</span></td><td>native tool reported an error; retained for review</td></tr><tr><td>npm</td><td><span title="536870912 bytes">512.0 MiB</span></td><td><span title="524288000 bytes">500.0 MiB</span></td><td><span class="disk-badge disk-ok">ok</span></td><td>native GC completed</td></tr><tr><td>uv</td><td><span title="1048576 bytes">1.0 MiB</span></td><td><span title="0 bytes">0 B</span></td><td><span class="disk-badge disk-skipped">skipped</span></td><td>deferred: cache lock held by 2</td></tr></tbody></table></div>
+<div class="panel"><h2>Observation preview</h2><p>2026-10-01T12:00:00Z · no cleanup commands executed</p><table><thead><tr><th>Category</th><th>Estimate</th><th>Freed</th><th>Status</th><th>Reason</th></tr></thead><tbody><tr><td>cargo</td><td><span title="0 bytes">0 B</span></td><td><span title="0 bytes">0 B</span></td><td><span class="disk-badge disk-skipped">skipped</span></td><td>unsupported: native age-aware GC unavailable</td></tr><tr><td>docker</td><td><span title="0 bytes">0 B</span></td><td><span title="0 bytes">0 B</span></td><td><span class="disk-badge disk-error">error</span></td><td>native tool reported an error; retained for review</td></tr><tr><td>npm</td><td><span title="536870912 bytes">512.0 MiB</span></td><td><span title="0 bytes">0 B</span></td><td><span class="disk-badge disk-ok">ok</span></td><td>native GC completed</td></tr><tr><td>uv</td><td><span title="1048576 bytes">1.0 MiB</span></td><td><span title="0 bytes">0 B</span></td><td><span class="disk-badge disk-skipped">skipped</span></td><td>deferred: cache lock held by 2</td></tr></tbody></table>
+</div>
 
       </div>
     </main>

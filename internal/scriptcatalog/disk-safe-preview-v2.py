@@ -28,7 +28,29 @@ def protected(path, policy):
         parent = os.path.dirname(parent)
     return False
 
-def holders():
+def held_pids(path, info, opened):
+    pids = set(opened.get(path, ())) | set(opened.get((info.st_dev, info.st_ino), ()))
+    # A descriptor-held directory protects descendants after rename or alias.
+    parent = path if stat.S_ISDIR(info.st_mode) else os.path.dirname(path)
+    while True:
+        ancestor = os.stat(parent, follow_symlinks=False)
+        pids.update(opened.get(('dir', ancestor.st_dev, ancestor.st_ino), ()))
+        if parent == '/':
+            return pids
+        parent = os.path.dirname(parent)
+
+def held(path, info, opened):
+    return bool(held_pids(path, info, opened))
+
+def cache_holders(cache, opened):
+    pids = set()
+    for key, owners in opened.items():
+        if isinstance(key, str) and inside(key, cache):
+            pids.update(owners)
+    pids.update(held_pids(cache, os.stat(cache, follow_symlinks=False), opened))
+    return len(pids)
+
+def holders(ignore_fds=()):
     opened = {}
     complete = True
     try:
@@ -42,13 +64,21 @@ def holders():
         try:
             for fd in os.listdir('/proc/' + pid + '/fd'):
                 try:
-                    opened.setdefault(os.readlink('/proc/' + pid + '/fd/' + fd).removesuffix(' (deleted)'), set()).add(pid)
+                    if pid == str(os.getpid()) and int(fd) in ignore_fds:
+                        continue
+                    descriptor = '/proc/' + pid + '/fd/' + fd
+                    info = os.stat(descriptor)
+                    opened.setdefault((info.st_dev, info.st_ino), set()).add(pid)
+                    if stat.S_ISDIR(info.st_mode):
+                        opened.setdefault(('dir', info.st_dev, info.st_ino), set()).add(pid)
+                    opened.setdefault(os.readlink(descriptor).removesuffix(' (deleted)'), set()).add(pid)
                 except FileNotFoundError:
                     pass
                 except OSError:
                     complete = False
             try:
-                opened.setdefault(os.readlink('/proc/'+pid+'/cwd'),set()).add(pid)
+                cwd = '/proc/'+pid+'/cwd'
+                opened.setdefault(os.readlink(cwd),set()).add(pid)
                 with open('/proc/'+pid+'/maps') as mappings:
                     for line in mappings:
                         fields=line.rstrip().split(None,5)
@@ -81,8 +111,8 @@ def unlink_checked(path, info, policy):
             except FileNotFoundError:
                 pass
         fresh = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
-        opened, complete = holders()
-        if not complete or path in opened or protected(path, policy):
+        opened, complete = holders(ignore_fds=fds)
+        if not complete or held(path, fresh, opened) or any(('dir', os.fstat(fd).st_dev, os.fstat(fd).st_ino) in opened for fd in fds) or protected(path, policy):
             return False
         if (fresh.st_dev, fresh.st_ino, fresh.st_mtime_ns, fresh.st_ctime_ns, fresh.st_nlink, fresh.st_uid) != (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns, 1, os.geteuid()):
             return False
@@ -96,9 +126,10 @@ def category(note='', status='skipped', candidate=0, freed=0, items=0):
     return dict(mode='apply' if APPLY else 'dry-run', status=status,
                 candidate_bytes=candidate, freed_bytes=freed, items=items, note=note)
 
-def scan(root, policy, opened, complete, days, mutate=False):
+def scan(root, policy, opened, complete, days, mutate=False, budget=None):
     if not complete:
         return category('deferred: incomplete holder visibility')
+    budget = budget if budget is not None else {"remaining": policy["scan_budgets"]["max_items"]}
     total = count = freed = skipped = visited = 0
     stack = [root]
     deadline = time.monotonic() + min(policy['scan_budgets']['max_seconds'], 60)
@@ -118,7 +149,7 @@ def scan(root, policy, opened, complete, days, mutate=False):
         for name in names:
             visited += 1
             if visited > policy['scan_budgets']['max_entries'] or time.monotonic() > deadline:
-                return category('scan budget exceeded')
+                return category('incomplete: scan budget exceeded', candidate=total, freed=freed, items=count)
             path = os.path.join(current, name)
             try:
                 info = os.lstat(path)
@@ -133,9 +164,12 @@ def scan(root, policy, opened, complete, days, mutate=False):
                     continue
                 if time.time() - max(info.st_mtime, info.st_atime) < days * 86400:
                     continue
-                if path in opened or not complete:
+                if held(path, info, opened) or not complete:
                     skipped += 1
                     continue
+                if budget['remaining'] <= 0:
+                    return category('incomplete: max_items budget reached', candidate=total, freed=freed, items=count)
+                budget['remaining'] -= 1
                 total += info.st_size
                 count += 1
                 if mutate:
@@ -144,11 +178,33 @@ def scan(root, policy, opened, complete, days, mutate=False):
                     else:
                         skipped += 1
             except OSError:
-                return category('filesystem changed; deferred')
+                return category('incomplete: filesystem changed; deferred', candidate=total, freed=freed, items=count)
     return category(str(skipped) + ' protected or open items skipped', 'ok', total, freed, count)
 
 def native(name, cache, command, policy, opened, complete):
-    n = len(set().union(*(pids for p, pids in opened.items() if inside(p, cache))))
+    # Hold the observed directory throughout validation and spawn. uv/npm receive
+    # this inherited descriptor instead of a mutable pathname.
+    try:
+        fd = os.open(cache, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NOATIME)
+    except OSError:
+        return category('cache absent or unsafe')
+    try:
+        if APPLY:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return native_anchored(name, cache, command, policy, opened, complete, fd)
+    except OSError:
+        return category('deferred: cache changed or lock held')
+    finally:
+        os.close(fd)
+
+def same_cache(cache, fd):
+    info = os.stat(cache, follow_symlinks=False)
+    pinned = os.fstat(fd)
+    return stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (pinned.st_dev, pinned.st_ino)
+
+def native_anchored(name, cache, command, policy, opened, complete, fd):
+    try: n = cache_holders(cache, opened)
+    except OSError: return category('cache absent or changed')
     if n:
         return category('deferred: cache lock held by ' + str(n))
     if not complete:
@@ -159,7 +215,8 @@ def native(name, cache, command, policy, opened, complete):
         return category('cache absent')
     # Refuse native GC if it could affect a protected subtree or lock file.
     stack = [cache]
-    visited = estimate = 0
+    visited = estimate = item_count = 0
+    identities = set()
     try:
         while stack:
             root = stack.pop()
@@ -172,29 +229,45 @@ def native(name, cache, command, policy, opened, complete):
                     return category('scan budget exceeded')
                 if (protected(p, policy) and not (name=='uv' and p==cache+'/.lock' and not policy['protect_paths'])) or os.path.islink(p):
                     return category('protected cache subtree')
-                if os.path.isdir(p):
+                info = os.lstat(p)
+                identities.add((info.st_dev, info.st_ino))
+                owners = held_pids(p, info, opened)
+                if owners: return category('deferred: cache lock held by ' + str(len(owners)))
+                if stat.S_ISDIR(info.st_mode):
                     stack.append(p)
                 else:
                     info=os.lstat(p)
-                    if stat.S_ISREG(info.st_mode): estimate += info.st_size
+                    if stat.S_ISREG(info.st_mode):
+                        if item_count >= policy['scan_budgets']['max_items']:
+                            return category('incomplete: max_items budget reached', candidate=estimate, items=item_count)
+                        item_count += 1
+                        estimate += info.st_size
     except OSError:
         return category('incomplete protection visibility')
+    if not same_cache(cache, fd): return category('deferred: cache changed')
     if not APPLY:
         return category('native GC estimate is an upper bound; no command executed', 'ok', candidate=estimate)
-    fresh, visible = holders()
-    n = len(set().union(*(pids for p, pids in fresh.items() if inside(p, cache))))
+    fresh, visible = holders(ignore_fds=(fd,))
+    owners = set()
+    for identity in identities: owners.update(fresh.get(identity, ()))
+    n = max(cache_holders(cache, fresh), len(owners))
     if n: return category('deferred: cache lock held by ' + str(n))
     if not visible: return category('incomplete holder visibility')
-    env = dict(os.environ, UV_LOCK_TIMEOUT='60', UV_CACHE_DIR=cache, npm_config_cache=cache)
+    if not same_cache(cache, fd): return category('deferred: cache changed')
+    target = '/proc/self/fd/' + str(fd)
+    env = dict(os.environ, UV_LOCK_TIMEOUT='60', UV_CACHE_DIR=target, npm_config_cache=target)
     try:
         out = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, timeout=60, check=False)
+                             stderr=subprocess.DEVNULL, timeout=60, check=False, pass_fds=(fd,))
+        if not same_cache(cache, fd): return category('deferred: cache changed during native GC')
         observation = scan(cache, policy, {}, True, 0) if out.returncode==0 else None
         after = observation['candidate_bytes'] if observation and observation['status']=='ok' else estimate
         return category('native GC completed' if out.returncode == 0 else 'native GC deferred', 'ok' if out.returncode == 0 else 'skipped', candidate=estimate, freed=max(estimate-after,0))
     except subprocess.TimeoutExpired:
         return category('deferred: cache lock timeout')
 
+# Design §4.1 permits -f solely as non-interactive confirmation for these
+# two fixed age-filtered commands; never --force, --all or other prune targets.
 DOCKER_COMMANDS = [ ['docker', 'image', 'prune', '-f', '--filter', 'until=168h'],
                     ['docker', 'builder', 'prune', '-f', '--filter', 'until=168h'] ]
 JOURNAL_COMMAND = ['journalctl', '--vacuum-size=500M']
@@ -310,9 +383,10 @@ def main():
         cats = {x: category('root_helper_missing') for x in ['var_tmp', 'journald', 'docker']}
     else:
         opened, complete = holders()
-        cats['user_tmp'] = scan('/tmp', policy, opened, complete, tier['user_tmp_min_days'], APPLY)
+        budget = {'remaining': policy['scan_budgets']['max_items']}
+        cats['user_tmp'] = scan('/tmp', policy, opened, complete, tier['user_tmp_min_days'], APPLY, budget)
         for name, path in [('user_cache_tmp', home+'/.cache/tmp'), ('user_local_tmp', home+'/.local/tmp')]:
-            cats[name] = scan(path, policy, opened, complete, tier['user_tmp_min_days'], APPLY) if os.path.isdir(path) else category('temporary directory absent')
+            cats[name] = scan(path, policy, opened, complete, tier['user_tmp_min_days'], APPLY, budget) if os.path.isdir(path) else category('temporary directory absent')
         cats['uv'] = native('uv', home + '/.cache/uv', ['uv', 'cache', 'prune'], policy, opened, complete)
         cats['npm'] = native('npm', home + '/.npm', ['npm', 'cache', 'verify'], policy, opened, complete)
         cats['cargo'] = category('unsupported: tested native age-aware GC unavailable')

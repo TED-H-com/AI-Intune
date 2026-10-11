@@ -384,3 +384,12 @@ Safety fixtures: `bash ops/test-disk-safe-v2.sh`. UI fixture export/render:
 `bash ops/screenshots/phase2-safe-disk.sh`; output is under
 `docs/screenshots/phase2/p2-02/`. If the sandbox prevents headless Chromium, the
 same script retains fixture HTML for rendering outside the sandbox.
+
+Safe-tier observations and unlinks stop before exceeding the policy `max_items`
+budget; incomplete results retain bounded counts and freed-byte evidence. Descriptor
+protection uses device/inode identity, including held-directory descendants, and is
+rechecked immediately before unlink. uv/npm inherit an anchored, no-follow cache
+directory descriptor; cache replacement causes a deferred result. Disk-v2 job
+evidence is human-only even for read scripts because output and pinned policy specs
+contain private paths. MCP status remains a path-safe digest/category projection.
+Docker keeps only the two fixed §4.1 age-filtered commands, including confirmation `-f`.

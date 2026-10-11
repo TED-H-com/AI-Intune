@@ -360,10 +360,18 @@ func TestDiskMachineScreenshotFixtures(t *testing.T) {
 	status := store.DiskOpsStatus{MachineID: "machine-fixture", Mounts: []store.DiskMountUsage{{Mount: "/", TotalBytes: 100000000000, AvailableBytes: 12000000000, Percent: 88}}, Thresholds: store.DefaultDiskPolicy().Thresholds, WritesEnabled: true}
 	var summary store.DiskSafeEnvelope
 	summary.Summary.FreedBytes = 524288000
+	summary.Summary.CandidateBytes = 537919488
 	summary.Summary.TS = "2026-10-01T12:00:00Z"
-	summary.Summary.Categories = map[string]maintenance.SummaryCategory{"uv": {Status: "skipped", Note: "deferred: cache lock held by 2"}, "npm": {Status: "ok", Note: "native GC completed"}, "cargo": {Status: "skipped", Note: "unsupported: native age-aware GC unavailable"}}
+	summary.Summary.Categories = map[string]maintenance.SummaryCategory{"uv": {Status: "skipped", CandidateBytes: 1048576, Note: "deferred: cache lock held by 2"}, "npm": {Status: "ok", CandidateBytes: 536870912, FreedBytes: 524288000, Note: "native GC completed"}, "cargo": {Status: "skipped", Note: "unsupported: native age-aware GC unavailable"}, "docker": {Status: "error", Note: "native tool reported an error; retained for review"}}
 	status.LastSafeTier = &summary
-	status.Preview = &summary
+	preview := summary
+	preview.Summary.FreedBytes = 0
+	preview.Summary.Categories = map[string]maintenance.SummaryCategory{}
+	for name, category := range summary.Summary.Categories {
+		category.FreedBytes = 0
+		preview.Summary.Categories[name] = category
+	}
+	status.Preview = &preview
 	for _, f := range []struct {
 		name string
 		view *diskMachinePage
@@ -432,6 +440,33 @@ func TestDiskMachineWebCleanupPreviewApplyAndReplay(t *testing.T) {
 		w = diskWebRequest(t, s, "POST", path, apply, p, false)
 		if w.Code != 303 {
 			t.Fatal("apply", w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestDiskMachinePolishedSizesBadgesAndEmptyStates(t *testing.T) {
+	s, _ := newServer(t)
+	r := operatorauth.WithPrincipal(httptest.NewRequest("GET", "/machines/fixture/disk", nil), diskWebPrincipal(true, false, ""))
+	status := store.DiskOpsStatus{MachineID: "fixture", Thresholds: store.DefaultDiskPolicy().Thresholds, Mounts: []store.DiskMountUsage{{Mount: "/", TotalBytes: 1073741824, AvailableBytes: 1048576, Percent: 99}}}
+	evidence := &store.DiskSafeEnvelope{}
+	evidence.Summary.FreedBytes = 2048
+	evidence.Summary.Categories = map[string]maintenance.SummaryCategory{"uv": {Status: "skipped", Note: "cache lock held"}, "npm": {Status: "ok"}, "docker": {Status: "error"}}
+	status.LastSafeTier, status.Preview = evidence, evidence
+	for _, review := range []string{"", "Run safe cleanup"} {
+		w := httptest.NewRecorder()
+		s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: status, Review: review}})
+		body := w.Body.String()
+		for _, want := range []string{`title="1073741824 bytes">1.0 GiB`, `title="1048576 bytes">1.0 MiB`, `title="2048 bytes">2.0 KiB`, `disk-badge disk-ok`, `disk-badge disk-skipped`, `disk-badge disk-error`, `<fieldset>`, `disk-button-row`} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("review %q lacks %s", review, want)
+			}
+		}
+	}
+	w := httptest.NewRecorder()
+	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: store.DiskOpsStatus{MachineID: "fixture"}}})
+	for _, want := range []string{"No mount measurement yet", "No observation result yet", "No safe-tier cleanup", "Create a disk policy first", "No safe cleanup schedules", "No safe cleanup jobs"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatal("missing empty state", want)
 		}
 	}
 }
