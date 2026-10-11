@@ -469,6 +469,9 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"GET /v1/operator/disk-ops/policies/{id}", "/v1/operator/disk-ops/policies/disk-default", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/disk-ops/policies/preview", "/v1/operator/disk-ops/policies/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/disk-ops/policies", "/v1/operator/disk-ops/policies", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"GET /v1/operator/disk-ops/reports", "/v1/operator/disk-ops/reports", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
+		{"GET /v1/operator/disk-ops/reports/{id}", "/v1/operator/disk-ops/reports/report-fixture", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
+		{"GET /disk-reports/{id}", "/disk-reports/report-fixture", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/disk-ops/approvals", "/v1/operator/disk-ops/approvals", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/disk-clean/summaries", "/v1/operator/disk-clean/summaries", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/disk-clean/summaries/{id}", "/v1/operator/disk-clean/summaries/machine-1", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
@@ -2362,5 +2365,16 @@ func TestNavigationLanguageRefusesCrossSitePostAndAcceptsSameOriginView(t *testi
 	}
 	if entries, err := st.Audit("", 10); err != nil || len(entries) != 1 {
 		t.Fatalf("same-origin switch changed the audit log: %+v err=%v", entries, err)
+	}
+}
+
+func TestDiskReportUploadRoutesRequireMachineAuthority(t *testing.T) {
+	for _, route := range []string{"POST /v1/disk-reports/{job_id}/chunks", "POST /v1/disk-reports/{job_id}/complete"} {
+		if policy, ok := nonOperatorRoutePolicies[route]; !ok || policy != (nonOperatorRoutePolicy{nonOperatorAgent}) {
+			t.Fatalf("upload route %q lacks exact machine authority: %+v", route, policy)
+		}
+		if _, ok := operatorRoutePolicies[route]; ok {
+			t.Fatalf("machine upload %q exposed on operator plane", route)
+		}
 	}
 }

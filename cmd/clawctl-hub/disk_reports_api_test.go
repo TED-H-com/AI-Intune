@@ -47,14 +47,23 @@ func TestDiskReportMachineHTTPAuthLimitsAndSafeViews(t *testing.T) {
 		return w
 	}
 	path := "/v1/disk-reports/" + job
-	for _, token := range []string{"", "invalid"} {
-		if w := post(token, path+"/chunks", chunk); w.Code != 401 {
-			t.Fatal("auth bypass", w.Code)
+	complete := diskreport.Complete{Digest: diskreport.Digest(raw), ItemCount: 1}
+	for _, endpoint := range []struct {
+		suffix string
+		body   any
+	}{{"/chunks", chunk}, {"/complete", complete}} {
+		for _, token := range []string{"", "invalid"} {
+			if w := post(token, path+endpoint.suffix, endpoint.body); w.Code != 401 {
+				t.Fatal("auth bypass", endpoint.suffix, w.Code)
+			}
 		}
 	}
 	other := enrollViaHTTP(t, f.mux, f.store, "another-device")
 	if w := post(other.token, path+"/chunks", chunk); w.Code != 403 {
 		t.Fatal("job binding bypass", w.Code, w.Body.String())
+	}
+	if w := post(other.token, path+"/complete", complete); w.Code != 403 {
+		t.Fatal("complete job binding bypass", w.Code, w.Body.String())
 	}
 	oversized := diskreport.Chunk{Data: make([]byte, 65537)}
 	oversized.Digest = diskreport.Digest(oversized.Data)
@@ -66,7 +75,6 @@ func TestDiskReportMachineHTTPAuthLimitsAndSafeViews(t *testing.T) {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
-	complete := diskreport.Complete{Digest: diskreport.Digest(raw), ItemCount: 1}
 	var receipt diskreport.Receipt
 	for n := 0; n < 2; n++ {
 		w := post(f.machine.token, path+"/complete", complete)
@@ -81,6 +89,27 @@ func TestDiskReportMachineHTTPAuthLimitsAndSafeViews(t *testing.T) {
 		f.mux.ServeHTTP(w, r)
 		if w.Code != 200 || strings.Contains(w.Body.String(), "private-account") || strings.Contains(w.Body.String(), "private_path") || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal("unsafe projection", w.Code, w.Body.String())
+		}
+	}
+	// These two exact view reads are token-eligible only through their public
+	// projection. Exercise the real bearer boundary, not a synthetic principal.
+	account, err := f.store.CreateFirstAdmin("report-view-admin", usersPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []string{"GET /v1/operator/disk-ops/reports", "GET /v1/operator/disk-ops/reports/{id}"}
+	_, secret, err := f.store.CreateServiceToken(store.ServiceToken{Name: "report-view", Scope: "view", ExpiresAt: time.Now().Add(time.Hour), Allowlist: routes}, account.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := newOperatorBoundary(f.mux, nil, f.store, operatorRoutePolicies, testOperatorAuthority)
+	for _, url := range []string{"/v1/operator/disk-ops/reports", "/v1/operator/disk-ops/reports/" + receipt.ID} {
+		request := newBoundaryRequest("GET", url, nil)
+		request.Header.Set("Authorization", "Bearer "+secret)
+		response := httptest.NewRecorder()
+		boundary.ServeHTTP(response, request)
+		if response.Code != 200 || strings.Contains(response.Body.String(), "private-account") || strings.Contains(response.Body.String(), "private_path") {
+			t.Fatal("token report projection", response.Code, response.Body.String())
 		}
 	}
 	for _, pattern := range []string{"GET /v1/operator/disk-ops/reports", "GET /v1/operator/disk-ops/reports/{id}"} {
