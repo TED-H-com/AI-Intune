@@ -57,3 +57,17 @@ func TestBATSweepArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSpecDecodeExecutionModeAndLegacyCompatibility(t *testing.T) {
+	for _, mode := range []string{"", "read", "write"} {
+		spec := Spec{Kind: Kind, ScriptID: "fleet-probe-v1", Args: json.RawMessage(`{}`), ExecutionMode: mode}
+		raw, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := Decode(raw)
+		if err != nil || decoded.ExecutionMode != mode {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+	}
+}
