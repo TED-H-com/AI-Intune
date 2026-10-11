@@ -670,4 +670,32 @@ Read times describe evaluation, not a cross-table atomic snapshot.
 
 `GET /account/service-tokens` lists metadata; POST `/account/service-tokens/create` and `/revoke` require a human admin session, enrolled MFA, current password and authenticator code. Creation shows the plaintext once; listing never includes a secret or hash. Only SHA-256 is stored. Expiry is required and limited to 90 days.
 
-Bearer `cst_` tokens authorize only `/v1/operator/*` JSON routes using the route capability map, required nonempty exact method/route-pattern allowlist, and optional source CIDRs against the configured client-IP resolver. `view` and `operate` are the only scopes; only explicitly eligible read-only view routes currently accept service tokens. Admin routes and all existing human preview/apply routes deny. Revocation is checked on every request. Audit principal is `service:<name>`. Browser CSRF and human session paths retain their existing checks.
+Bearer `cst_` tokens authorize only `/v1/operator/*` JSON routes using the route capability map, required nonempty exact method/route-pattern allowlist, and optional source CIDRs against the configured client-IP resolver. `view` and `operate` are the only scopes; explicitly eligible read-only view routes and the two read-script routes described below accept service tokens. Other preview/apply and admin routes deny. Revocation is checked on every request. Audit principal is `service:<name>`. Browser CSRF and human session paths retain their existing checks.
+
+
+### Service tokens and ad hoc catalog scripts
+
+Hermes service tokens with `operate` scope may allowlist exactly
+`POST /v1/operator/script-runs/preview` (`script_run_preview`) and
+`POST /v1/operator/script-runs` (`script_run_apply`). The manifest uses
+`serviceEligibleReadScriptsOnly`; view-scope tokens cannot include these routes.
+Both handler and store re-check the current embedded catalog on every preview
+and apply, before digest validation or idempotency replay. The script must exist
+with mode `read`. Unknown scripts and every other mode return 403
+`SERVICE_TOKEN_READ_SCRIPTS_ONLY` with a denial audit row. Write scripts,
+including the admin-approved write-equivalent `bat-sweep-report-v1`, remain
+human admin only. A human write preview cannot authorize a token apply, and a
+token preview cannot authorize an apply after the script becomes write-class.
+The catalog includes read-class `fleet-probe-v1` and write-class
+`bat-sweep-report-v1`.
+
+Script request rate limits still apply to service tokens, shared across preview
+and apply by stable `service:<name>` subject. Success and denial audits retain
+that service identity. Existing bounded rate-limit denial auditing still applies.
+
+Schedule configuration is human-only: upsert and set-enabled preview/apply
+(`POST /v1/operator/schedules/{operation}/{phase}`) and run-now
+(`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
+Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
+Schedule list/get eligibility remains unchanged (currently human-only).
+No routes or capability tallies changed.

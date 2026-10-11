@@ -39,16 +39,16 @@ func TestServiceTokenBoundary(t *testing.T) {
 	}
 	policies := map[string]operatorRoutePolicy{}
 	for _, route := range []string{"GET /v1/operator/machines", "GET /v1/operator/jobs", "POST /v1/operator/test", "POST /v1/operator/admin", "GET /account/service-tokens"} {
-		policy := operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, true}
+		policy := operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}
 		if strings.HasPrefix(route, "POST") {
 			policy.Permission = operatorauth.Operate
 		}
 		if strings.Contains(route, "admin") {
-			policy.ServiceTokenEligible = false
+			policy.ServiceTokenEligible = serviceIneligible
 			policy.Permission = operatorauth.Admin
 		}
 		if strings.Contains(route, "/account/") {
-			policy.ServiceTokenEligible = false
+			policy.ServiceTokenEligible = serviceIneligible
 			policy.Representation = operatorHTML
 			policy.SourceKind = operator.SourceKindWeb
 			policy.Permission = operatorauth.Admin
@@ -112,7 +112,7 @@ func TestServiceTokenFailureRateLimit(t *testing.T) {
 	mux := http.NewServeMux()
 	route := "GET /v1/operator/machines"
 	mux.HandleFunc(route, func(http.ResponseWriter, *http.Request) { t.Fatal("invalid token reached handler") })
-	policy := operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, true}
+	policy := operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}
 	b := newOperatorBoundary(mux, nil, st, map[string]operatorRoutePolicy{route: policy}, testOperatorAuthority)
 	for i := 0; i < 6; i++ {
 		r := newBoundaryRequest("GET", "/v1/operator/machines", nil)
@@ -215,32 +215,39 @@ func TestServiceTokenManagementRejectsAdminScope(t *testing.T) {
 }
 
 func TestServiceTokenManifestEligibility(t *testing.T) {
-	for _, route := range []string{
-		"GET /v1/operator/jobs-summary",
-		"GET /v1/operator/approvals-summary",
-		"GET /v1/operator/hub-status",
-	} {
-		policy, ok := operatorRoutePolicies[route]
-		if !ok || !policy.ServiceTokenEligible {
-			t.Errorf("read-only supervision route must be service-token eligible: %s", route)
+	for _, route := range []string{"GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status"} {
+		policy, exists := operatorRoutePolicies[route]
+		if !exists || policy.Permission != operatorauth.View || policy.ServiceTokenEligible != serviceEligible || !operatorPolicyAdmissible(route, policy) {
+			t.Errorf("supervision view route lost token eligibility: %s", route)
 		}
 	}
 	count := 0
+	scriptCount := 0
 	for route, policy := range operatorRoutePolicies {
-		if !policy.ServiceTokenEligible {
+		if !policy.ServiceTokenEligible.eligible() {
 			continue
 		}
 		count++
+		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly {
+			scriptCount++
+			if (route != "POST /v1/operator/script-runs/preview" && route != "POST /v1/operator/script-runs") || policy.Permission != operatorauth.Operate || !operatorPolicyAdmissible(route, policy) {
+				t.Errorf("unexpected read-script eligibility: %s", route)
+			}
+			continue
+		}
 		if policy.Permission != operatorauth.View || policy.Representation != operatorJSON || policy.SourceKind != operator.SourceKindOperatorAPI || !strings.HasPrefix(route, "GET /v1/operator/") {
 			t.Errorf("human-approval or non-read route eligible: %s", route)
 		}
+	}
+	if scriptCount != 2 {
+		t.Fatalf("read script routes=%d", scriptCount)
 	}
 	if count == 0 {
 		t.Fatal("no read routes eligible")
 	}
 	// Leaving eligibility out of a new route must not confer token authority.
 	future := operatorRoutePolicy{Permission: operatorauth.View, Representation: operatorJSON, SourceKind: operator.SourceKindOperatorAPI, SecurityProfile: operatorSecurityLocked}
-	if future.ServiceTokenEligible {
+	if future.ServiceTokenEligible.eligible() {
 		t.Fatal("new route eligible by default")
 	}
 	st := boundaryStore(t)
@@ -285,7 +292,7 @@ func TestServiceTokenCannotSelfApproveExistingRoutes(t *testing.T) {
 	}
 	b := newOperatorBoundary(mux, nil, st, operatorRoutePolicies, testOperatorAuthority)
 	for route, policy := range operatorRoutePolicies {
-		if policy.Representation != operatorJSON || policy.ServiceTokenEligible {
+		if policy.Representation != operatorJSON || policy.ServiceTokenEligible.eligible() {
 			continue
 		}
 		method, path, _ := strings.Cut(route, " ")
@@ -423,7 +430,7 @@ func TestServiceTokenAuditUsesFinalStatusOnce(t *testing.T) {
 			if tc.method == "POST" {
 				permission = operatorauth.Operate
 			}
-			policy := operatorRoutePolicy{permission, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, true}
+			policy := operatorRoutePolicy{permission, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}
 			b := newOperatorBoundary(mux, nil, st, map[string]operatorRoutePolicy{route: policy}, testOperatorAuthority)
 			req := newBoundaryRequest(tc.method, "/v1/operator/test", nil)
 			req.Header.Set("Authorization", "Bearer "+secret)
@@ -845,6 +852,43 @@ func TestServiceTokenManagementCapabilityDenialsAudited(t *testing.T) {
 			}
 			if count != 1 {
 				t.Fatalf("denial count = %d", count)
+			}
+		})
+	}
+}
+
+func TestServiceTokenManagementScriptAllowlistScope(t *testing.T) {
+	for _, scope := range []string{"view", "operate"} {
+		t.Run(scope, func(t *testing.T) {
+			h, st := localAccountHandler(t)
+			actor, err := st.CreateFirstAdmin("alice", usersPassword)
+			if err != nil {
+				t.Fatal(err)
+			}
+			factor, err := st.BeginTOTPEnrollment(actor.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			enroll, _ := totp.Code(factor, time.Now().Unix()/30-1)
+			if _, err = st.ConfirmTOTP(actor.AccountID, enroll); err != nil {
+				t.Fatal(err)
+			}
+			cookie := adminSession(t, st)
+			code, _ := totp.Code(factor, time.Now().Unix()/30)
+			fields := url.Values{"name": {"hermes"}, "scope": {scope}, "expires_at": {time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, "password": {usersPassword}, "code": {code}, "allowlist": {"POST /v1/operator/script-runs/preview,POST /v1/operator/script-runs"}}
+			rec := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), cookie)
+			want := 200
+			wantTokens := 1
+			if scope == "view" {
+				want = 400
+				wantTokens = 0
+			}
+			if rec.Code != want {
+				t.Fatalf("creation status=%d", rec.Code)
+			}
+			tokens, err := st.ListServiceTokens()
+			if err != nil || len(tokens) != wantTokens {
+				t.Fatalf("tokens=%d err=%v", len(tokens), err)
 			}
 		})
 	}
