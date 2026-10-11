@@ -920,6 +920,15 @@ func addMissingColumns(db *sql.DB) error {
 			"source_plan": "TEXT NOT NULL DEFAULT '' CHECK (length(CAST(source_plan AS BLOB)) <= 8192)",
 		},
 	}
+	want["service_tokens"] = map[string]string{
+		"rotation_chain_id":      "TEXT NOT NULL DEFAULT ''",
+		"rotated_from":           "TEXT NOT NULL DEFAULT ''",
+		"rotated_at":             "TEXT",
+		"overlap_deadline":       "TEXT",
+		"chain_created_at":       "TEXT NOT NULL DEFAULT ''",
+		"issue_lifetime_seconds": "INTEGER NOT NULL DEFAULT 0",
+		"max_lifetime_seconds":   "INTEGER NOT NULL DEFAULT 0",
+	}
 	legacyFailureOpenAdded := false
 	verificationTablePresent := false
 	jobEventTablePresent := false
@@ -947,6 +956,27 @@ func addMissingColumns(db *sql.DB) error {
 			}
 			if table == "canary_silent_failures" && col == "open" {
 				legacyFailureOpenAdded = true
+			}
+		}
+	}
+	if _, err := tx.Exec(`UPDATE service_tokens SET rotation_chain_id=id,chain_created_at=created_at,issue_lifetime_seconds=CAST(round((julianday(expires_at)-julianday(created_at))*86400) AS INTEGER) WHERE rotation_chain_id=''`); err != nil {
+		return err
+	}
+	// Legacy schemas made names unique; rotations intentionally retain the name.
+	var tokenSchema string
+	if err := tx.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='service_tokens'").Scan(&tokenSchema); err != nil {
+		return err
+	}
+	if strings.Contains(tokenSchema, "name TEXT NOT NULL UNIQUE") {
+		definitionStart := strings.Index(tokenSchema, "(")
+		if definitionStart < 0 {
+			return fmt.Errorf("invalid service token schema")
+		}
+		replacement := "CREATE TABLE service_tokens_rotation_migration " + tokenSchema[definitionStart:]
+		replacement = strings.Replace(replacement, "name TEXT NOT NULL UNIQUE", "name TEXT NOT NULL", 1)
+		for _, stmt := range []string{replacement, "INSERT INTO service_tokens_rotation_migration SELECT * FROM service_tokens", "DROP TABLE service_tokens", "ALTER TABLE service_tokens_rotation_migration RENAME TO service_tokens"} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate service token names: %w", err)
 			}
 		}
 	}

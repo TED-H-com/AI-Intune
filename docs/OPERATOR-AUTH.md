@@ -171,11 +171,11 @@ example.com/cap/clawctl-admin
 
 此 Tailscale surface 不含另列於 [API-SURFACE.md](API-SURFACE.md) 的 6 條公開 account operations；包含新的 Admin keyed-installer download。
 
-目前 code route manifest 固定為 247 operations：18 條 non-operator，加上 229 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=89`、`operate=28`、`admin=112`，
-其中 `/v1/operator/*` JSON routes 共 117 條、HTML/BFF/CSV/download 共 112 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 249 operations：18 條 non-operator，加上 231 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=91`、`operate=28`、`admin=112`，
+其中 `/v1/operator/*` JSON routes 共 119 條、HTML/BFF/CSV/download 共 112 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-247-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+249-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 operator route manifest 與實際註冊清單在 Hub 啟動時做雙向比對。繞過 operator
 boundary 的 18 條 route 也有另一份完整 manifest；兩份不能
@@ -668,4 +668,40 @@ Schedule configuration is human-only: upsert and set-enabled preview/apply
 (`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
 Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
 Schedule list/get eligibility remains unchanged (currently human-only).
-No routes or capability tallies changed.
+Rotation adds two service-token-only JSON routes; both use the view admission capability and a dedicated self-only eligibility class.
+
+## Service token rotation
+
+The admin service-token page offers labeled inputs, 30/60/90-day expiries,
+manifest-derived route checkboxes, optional source CIDRs, and the Hermes default
+preset. Names use 1–64 letters, digits, hyphens or underscores. Scope `view`
+permits read routes; `operate` additionally permits READ-only catalog scripts.
+Creation and chain revocation require the local admin session, password and
+authenticator code. Non-secret form fields are validated before reauthentication;
+factor failures and internal post-factor failures share the same generic 400 response. Plaintext appears
+only in the creation response; all token responses use `Cache-Control: no-store`.
+
+`GET /v1/operator/service-tokens/self` and
+`POST /v1/operator/service-tokens/rotate` accept only a valid Bearer service token,
+including its source CIDR checks, independently of its route allowlist. Human
+sessions cannot use these routes. Rotation preserves scope, routes, CIDRs and
+name, with the original issue lifetime capped at 90 days. The old token overlaps
+for 10 minutes. During that original window, an unused successor may be revoked
+and replaced by re-rotating the predecessor, audited as `service-token-reissue`.
+No successor plaintext is persisted. Once the successor authenticates, predecessor
+rotation returns 409. The newest member cannot rotate until its predecessor's
+overlap ends. Rotation immediately revokes all older members except its immediate
+predecessor. Revoking any member revokes the entire chain. Rotation and re-issue
+share three successes/hour per chain and normalized client-IP limiter key
+(IPv6 /64), with persisted budgets. Audit records identify `service:<name>`
+and the old/new IDs without credentials.
+
+An optional maximum chain lifetime (none, 180 or 365 days) bounds rotation.
+New expiry is clamped to that deadline; once reached, rotation fails with 403
+(the normal expiry check may first reject the expired token with 401).
+The CLI checks its own expiry and replaces its mode-0600 non-symlink token file
+atomically, with file and directory fsync, then authenticates the installed token
+through GET self before reporting success. Failed rename/file fsync preserves a
+0600 recovery file and reports its path; failed directory fsync reports the
+installed destination. Retry during overlap or install the recovery file promptly.
+See [Hermes timer](../ops/hermes/README.md).

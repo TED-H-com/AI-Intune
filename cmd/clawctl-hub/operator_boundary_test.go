@@ -126,12 +126,12 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		t.Fatalf("non-operator registered=%d policies=%d, want 24/24",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 229 || len(operatorRoutePolicies) != 229 {
-		t.Fatalf("operator registered=%d policies=%d, want 229/229",
+	if len(operatorRegistered) != 231 || len(operatorRoutePolicies) != 231 {
+		t.Fatalf("operator registered=%d policies=%d, want 231/231",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 253 {
-		t.Fatalf("all registered routes=%d, 預期 253", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 255 {
+		t.Fatalf("all registered routes=%d, 預期 255", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -141,14 +141,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 89 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 112 {
-		t.Fatalf("permission counts=%v, want view=89 operate=28 admin=112", counts)
+	if counts[operatorauth.View] != 91 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 112 {
+		t.Fatalf("permission counts=%v, want view=91 operate=28 admin=112", counts)
 	}
-	if representations[operatorJSON] != 117 || representations[operatorHTML] != 111 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=117 HTML=111 plain=1", representations)
+	if representations[operatorJSON] != 119 || representations[operatorHTML] != 111 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=119 HTML=111 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 228 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=228 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 230 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=230 terminal=1", profiles)
 	}
 }
 
@@ -490,7 +490,10 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"GET /v1/operator/jobs-summary", "/v1/operator/jobs-summary", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/approvals-summary", "/v1/operator/approvals-summary", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/hub-status", "/v1/operator/hub-status", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
+		{"GET /v1/operator/service-tokens/self", "/v1/operator/service-tokens/self", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf}},
+		{"POST /v1/operator/service-tokens/rotate", "/v1/operator/service-tokens/rotate", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf}},
 	}
+
 	casePatterns := make(map[string]struct{}, len(tests))
 	for _, test := range tests {
 		if _, duplicate := casePatterns[test.pattern]; duplicate {
@@ -525,7 +528,14 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := newBoundaryRequest(method, test.path, strings.NewReader("{}"))
 		req.RemoteAddr = "100.100.10.20:4321"
+		beforeCalls := len(authorizer.snapshotCalls())
 		handler.ServeHTTP(rec, req)
+		if test.policy.ServiceTokenEligible == serviceEligibleSelf {
+			if rec.Code != 401 || len(authorizer.snapshotCalls()) != beforeCalls {
+				t.Fatal("self route accepted human authorization")
+			}
+			continue
+		}
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("%s status=%d body=%s", test.pattern, rec.Code, rec.Body.String())
 		}
@@ -2216,7 +2226,7 @@ func TestDeploymentWritesCostTheirExactCapabilityOnEveryPlane(t *testing.T) {
 	}
 }
 
-func TestNavigationLanguageIsTheOnlyUnsafeViewRoute(t *testing.T) {
+func TestUnsafeViewRoutesAreNavigationLanguageAndServiceTokenRotation(t *testing.T) {
 	registered := make([]string, 0, len(operatorRoutePolicies))
 	for pattern := range operatorRoutePolicies {
 		registered = append(registered, pattern)
@@ -2239,7 +2249,7 @@ func TestNavigationLanguageIsTheOnlyUnsafeViewRoute(t *testing.T) {
 	unsafeRoutes := 0
 	for _, pattern := range registered {
 		method, _, _ := strings.Cut(pattern, " ")
-		if isSafeMethod(method) || pattern == navigationLanguagePattern {
+		if isSafeMethod(method) || pattern == navigationLanguagePattern || (pattern == "POST /v1/operator/service-tokens/rotate" && operatorRoutePolicies[pattern].ServiceTokenEligible == serviceEligibleSelf) {
 			continue
 		}
 		unsafeRoutes++

@@ -58,11 +58,12 @@ const (
 	serviceIneligible serviceTokenEligibility = iota
 	serviceEligible
 	serviceEligibleReadScriptsOnly
+	serviceEligibleSelf
 )
 
 // Unknown classes fail closed.
 func (e serviceTokenEligibility) eligible() bool {
-	return e == serviceEligible || e == serviceEligibleReadScriptsOnly
+	return e == serviceEligible || e == serviceEligibleReadScriptsOnly || e == serviceEligibleSelf
 }
 
 type operatorSecurityProfile uint8
@@ -158,6 +159,8 @@ var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
 // A newly registered control route therefore fails closed until somebody
 // classifies that exact ServeMux pattern in review.
 var operatorRoutePolicies = map[string]operatorRoutePolicy{
+	"GET /v1/operator/service-tokens/self":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
+	"POST /v1/operator/service-tokens/rotate":          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
 	"GET /account/service-tokens":                      {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"POST /account/service-tokens/create":              {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"POST /account/service-tokens/revoke":              {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
@@ -586,7 +589,7 @@ func validateOperatorRoutePolicies(registered []string, policies map[string]oper
 		if !valid || !validRouteMethod(method) || path == "" {
 			return fmt.Errorf("operator route %q is not a supported method/path pattern", pattern)
 		}
-		if !isSafeMethod(method) && policy.Permission == operatorauth.View && pattern != navigationLanguagePattern {
+		if !isSafeMethod(method) && policy.Permission == operatorauth.View && pattern != navigationLanguagePattern && !(pattern == "POST /v1/operator/service-tokens/rotate" && policy.ServiceTokenEligible == serviceEligibleSelf) {
 			return fmt.Errorf("unsafe operator route %q must not be classified as view", pattern)
 		}
 		if policy.Permission < operatorauth.View || policy.Permission > operatorauth.Admin ||
@@ -642,6 +645,11 @@ func (b *operatorBoundary) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeOperatorBoundaryError(w, policy.Representation, http.StatusMisdirectedRequest,
 			operatorAuthorityDecisionCode, detail)
+		return
+	}
+	if policy.ServiceTokenEligible == serviceEligibleSelf && !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer cst_") {
+		b.observeAuthDenial(r, pattern, policy, "UNAUTHENTICATED", "service_token_required", operatorauth.Principal{}, nil)
+		writeOperatorBoundaryError(w, operatorJSON, 401, "UNAUTHENTICATED", "Service token required")
 		return
 	}
 	if policy.Representation == operatorJSON && strings.HasPrefix(r.URL.Path, "/v1/operator/") && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer cst_") && b.store != nil {
@@ -859,7 +867,14 @@ func canonicalLiteralAuthority(authority string) (string, bool) {
 }
 
 func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
-	if policy.ServiceTokenEligible > serviceEligibleReadScriptsOnly {
+	if (pattern == "GET /v1/operator/service-tokens/self" || pattern == "POST /v1/operator/service-tokens/rotate") && policy.ServiceTokenEligible != serviceEligibleSelf {
+		return false
+	}
+
+	if policy.ServiceTokenEligible > serviceEligibleSelf {
+		return false
+	}
+	if policy.ServiceTokenEligible == serviceEligibleSelf && pattern != "GET /v1/operator/service-tokens/self" && pattern != "POST /v1/operator/service-tokens/rotate" {
 		return false
 	}
 	if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly &&
