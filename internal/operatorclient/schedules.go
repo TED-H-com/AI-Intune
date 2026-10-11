@@ -70,18 +70,28 @@ func (c *Client) ScheduleManage(ctx context.Context, body store.ScheduleRequest,
 	}
 	return out, e
 }
-func (c *Client) ScheduleRunNow(ctx context.Context, id string) (any, error) {
-	r, e := c.postSettingJSON(ctx, "/v1/operator/schedules/"+url.PathEscape(id)+"/run-now", "", struct{}{})
+func (c *Client) ScheduleRunNow(ctx context.Context, id, key string) (any, error) {
+	if !validSettingIdempotencyKey(key) {
+		return nil, errors.New("idempotency key required")
+	}
+	r, e := c.postSettingJSON(ctx, "/v1/operator/schedules/"+url.PathEscape(id)+"/run-now", key, struct{}{})
 	if e != nil {
 		return nil, e
 	}
 	if r.status != 200 {
 		return nil, errors.New("schedule run failed")
 	}
-	if e = validateSettingReadHeaders(r.header); e != nil {
+	if e = validateJSONNoStoreResponse(r.header); e != nil {
+		return nil, e
+	}
+	replayed, e := responseReplayEvidenceFromHeader(r.header)
+	if e != nil {
 		return nil, e
 	}
 	var out store.ScheduleRunNowResponse
 	e = decodeStrictJSONDocument(r.body, "schedule run", &out)
+	if e == nil && out.Replayed != replayed {
+		e = errors.New("schedule replay receipt mismatch")
+	}
 	return out, e
 }

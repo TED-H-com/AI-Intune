@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (h *hub) handleScheduleList(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +36,9 @@ func (h *hub) handleScheduleGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, v)
 }
 func (h *hub) handleScheduleManage(w http.ResponseWriter, r *http.Request) {
+	if !h.admitScheduleMutation(w, r) {
+		return
+	}
 	actor := operatorActor(r)
 	op := r.PathValue("operation")
 	phase := r.PathValue("phase")
@@ -84,6 +88,9 @@ func (h *hub) handleScheduleManage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (h *hub) handleScheduleRunNow(w http.ResponseWriter, r *http.Request) {
+	if !h.admitScheduleMutation(w, r) {
+		return
+	}
 	actor := operatorActor(r)
 	action := store.AuditAction("schedule-run-now")
 	if !h.requireAuditedJSON(w, r, actor, action) {
@@ -108,16 +115,16 @@ func (h *hub) handleScheduleRunNow(w http.ResponseWriter, r *http.Request) {
 		}
 		actor.AuthCapability = p.GrantedCapabilities.Admin
 	}
-	jobs, e := operator.New(h.store).ScheduleRunNow(v.ID, actor)
+	result, e := operator.New(h.store).ScheduleRunNow(v.ID, r.Header.Get("Idempotency-Key"), actor)
 	if e != nil {
 		writeSettingErr(w, "schedule", e)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	if jobs == nil {
-		jobs = []string{}
+	if result.Replayed {
+		w.Header().Set("Idempotency-Replayed", "true")
 	}
-	writeJSON(w, 200, store.ScheduleRunNowResponse{JobIDs: jobs})
+	writeJSON(w, 200, result)
 }
 
 // The registry and stored schedule select the boundary scope, never a caller mode.
@@ -157,4 +164,19 @@ func scheduleRequestPermission(r *http.Request, st *store.Store) operatorauth.Pe
 		}
 	}
 	return operatorauth.Operate
+}
+
+func (h *hub) admitScheduleMutation(w http.ResponseWriter, r *http.Request) bool {
+	p, ok := operatorauth.PrincipalFromContext(r.Context())
+	if !ok || p.StableSubject() == "" {
+		writeErr(w, 403, "SCRIPT_SCOPE_REQUIRED", "authenticated script principal required")
+		return false
+	}
+	if !h.scriptRunLimiter.allow(p.StableSubject(), time.Now()) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Retry-After", "2")
+		writeErr(w, 429, "RATE_LIMITED", "script request rate limit exceeded; retry shortly")
+		return false
+	}
+	return true
 }

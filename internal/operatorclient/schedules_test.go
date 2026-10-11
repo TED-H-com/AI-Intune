@@ -60,12 +60,22 @@ func testScheduleClient(t *testing.T, makeClient func(http.HandlerFunc) *Client)
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(store.ScheduleResult{PreviewDigest: digest, Schedule: schedule})
 		case r.URL.Path == "/v1/operator/schedules/s-1/run-now":
-			jobs := []string{}
-			if runs == 0 {
-				jobs = append(jobs, "job-a")
+			key := r.Header.Get("Idempotency-Key")
+			if key == "" {
+				t.Error("missing manual key")
 			}
-			runs++
-			json.NewEncoder(w).Encode(store.ScheduleRunNowResponse{JobIDs: jobs})
+			jobs := []string{}
+			replayed := false
+			if key == "manual-run" {
+				jobs = []string{"job-a"}
+				replayed = runs > 0
+				runs++
+			}
+			if replayed {
+				w.Header().Set("Idempotency-Replayed", "true")
+			}
+			json.NewEncoder(w).Encode(store.ScheduleRunNowResponse{JobIDs: jobs, Replayed: replayed})
+
 		default:
 			t.Error(r.URL.Path)
 		}
@@ -95,8 +105,12 @@ func testScheduleClient(t *testing.T, makeClient func(http.HandlerFunc) *Client)
 			t.Fatal(e)
 		}
 	}
-	for _, want := range []int{1, 0} {
-		out, e := client.ScheduleRunNow(ctx, "s-1")
+	for i, want := range []int{1, 1, 0} {
+		key := "manual-run"
+		if i == 2 {
+			key = "manual-empty-run"
+		}
+		out, e := client.ScheduleRunNow(ctx, "s-1", key)
 		if e != nil {
 			t.Fatal(e)
 		}

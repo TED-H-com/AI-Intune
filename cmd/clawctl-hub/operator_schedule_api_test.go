@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOperatorScheduleAPI(t *testing.T) {
@@ -88,7 +90,7 @@ func TestOperatorScheduleAPI(t *testing.T) {
 	if w.Code != 403 {
 		t.Fatalf("view %d", w.Code)
 	}
-	rec = diagnosticOperatorRequest(t, f.mux, "/v1/operator/schedules/"+result.Schedule.ID+"/run-now", "", `{}`)
+	rec = diagnosticOperatorRequest(t, f.mux, "/v1/operator/schedules/"+result.Schedule.ID+"/run-now", "manual-api", `{}`)
 	if rec.Code != 200 {
 		t.Fatalf("run-now %d %s", rec.Code, rec.Body.String())
 	}
@@ -96,11 +98,11 @@ func TestOperatorScheduleAPI(t *testing.T) {
 	if e := json.Unmarshal(rec.Body.Bytes(), &run); e != nil || len(run.JobIDs) != 1 {
 		t.Fatalf("run shape %+v %v", run, e)
 	}
-	rec = diagnosticOperatorRequest(t, f.mux, "/v1/operator/schedules/"+result.Schedule.ID+"/run-now", "", `{}`)
+	rec = diagnosticOperatorRequest(t, f.mux, "/v1/operator/schedules/"+result.Schedule.ID+"/run-now", "manual-api", `{}`)
 	if rec.Code != 200 {
 		t.Fatalf("duplicate run %d", rec.Code)
 	}
-	if e := json.Unmarshal(rec.Body.Bytes(), &run); e != nil || run.JobIDs == nil || len(run.JobIDs) != 0 {
+	if e := json.Unmarshal(rec.Body.Bytes(), &run); e != nil || run.JobIDs == nil || len(run.JobIDs) != 1 || !run.Replayed {
 		t.Fatalf("empty run shape %+v %v", run, e)
 	}
 
@@ -116,5 +118,58 @@ func TestOperatorScheduleEmptyListEnvelope(t *testing.T) {
 	var out store.ScheduleListResponse
 	if e := json.Unmarshal(w.Body.Bytes(), &out); e != nil || out.Items == nil || len(out.Items) != 0 {
 		t.Fatalf("empty envelope %+v %v", out, e)
+	}
+}
+
+func TestScheduleMutationsRateLimitBeforeAudit(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		t.Run(fmt.Sprintf("global-%t", global), func(t *testing.T) {
+			f := observedOperatorFixture(t)
+			h := &hub{store: f.store}
+			now := time.Now().Add(time.Hour)
+			probe := verifiedOperatorRequest(httptest.NewRequest(http.MethodPost, "/v1/operator/schedules/upsert/preview", nil), operatorauth.Operate)
+			p, _ := operatorauth.PrincipalFromContext(probe.Context())
+			if global {
+				for i := 0; i < scriptRunGlobalBurst; i++ {
+					if !h.scriptRunLimiter.allow(fmt.Sprintf("tailscale-user:%d", i), now) {
+						t.Fatal("global exhaustion")
+					}
+				}
+			} else {
+				for i := 0; i < scriptRunSubjectBurst; i++ {
+					if !h.scriptRunLimiter.allow(p.StableSubject(), now) {
+						t.Fatal("subject exhaustion")
+					}
+				}
+			}
+			var before int
+			if e := f.store.DB().QueryRow(`SELECT COUNT(*) FROM audit_log`).Scan(&before); e != nil {
+				t.Fatal(e)
+			}
+			for _, op := range []string{"upsert", "set-enabled", "run-now"} {
+				for _, phase := range []string{"preview", "apply"} {
+					if op == "run-now" && phase == "apply" {
+						continue
+					}
+					req := verifiedOperatorRequest(httptest.NewRequest(http.MethodPost, "/v1/operator/schedules/"+op+"/"+phase, strings.NewReader(`not JSON`)), operatorauth.Operate)
+					req.SetPathValue("operation", op)
+					req.SetPathValue("phase", phase)
+					req.SetPathValue("id", "s-1")
+					w := httptest.NewRecorder()
+					if op == "run-now" {
+						h.handleScheduleRunNow(w, req)
+					} else {
+						h.handleScheduleManage(w, req)
+					}
+					if w.Code != 429 || w.Header().Get("Retry-After") == "" || w.Header().Get("Cache-Control") != "no-store" {
+						t.Fatalf("%s %s: %d %s", op, phase, w.Code, w.Body.String())
+					}
+				}
+			}
+			var after int
+			if e := f.store.DB().QueryRow(`SELECT COUNT(*) FROM audit_log`).Scan(&after); e != nil || after != before {
+				t.Fatalf("audit amplified %d -> %d %v", before, after, e)
+			}
+		})
 	}
 }

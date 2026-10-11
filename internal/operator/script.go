@@ -9,6 +9,6 @@ func (s *Service) ScriptRun(req store.ScriptRunRequest, apply bool, key string, 
 func (s *Service) ScheduleManage(req store.ScheduleRequest, op string, apply bool, key string, actor Actor) (store.ScheduleResult, error) {
 	return s.store.ScheduleManage(req, op, apply, key, auditFromActor(actor))
 }
-func (s *Service) ScheduleRunNow(id string, actor Actor) ([]string, error) {
-	return s.store.ScheduleRunNow(id, auditFromActor(actor))
+func (s *Service) ScheduleRunNow(id, key string, actor Actor) (store.ScheduleRunNowResponse, error) {
+	return s.store.ScheduleRunNow(id, key, auditFromActor(actor))
 }

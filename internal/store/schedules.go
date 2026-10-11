@@ -39,7 +39,8 @@ type ScheduleListResponse struct {
 	Items []Schedule `json:"items"`
 }
 type ScheduleRunNowResponse struct {
-	JobIDs []string `json:"job_ids"`
+	JobIDs   []string `json:"job_ids"`
+	Replayed bool     `json:"replayed"`
 }
 
 type ScheduleRequest struct {
@@ -336,14 +337,11 @@ func (s *Store) ResumeSchedules(now time.Time) error {
 		return e
 	}
 	for _, v := range all {
-		c, e := schedulecron.Parse(v.Cron)
-		if e != nil {
-			return e
-		}
-		if _, e = tx.Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(c.Next(now)), v.ID); e != nil {
+		if e = s.recordScheduleSkipTx(tx, v, now, "skipped_restart"); e != nil {
 			return e
 		}
 	}
+
 	return tx.Commit()
 }
 func (s *Store) TickSchedules(now time.Time) error {
@@ -353,15 +351,20 @@ func (s *Store) TickSchedules(now time.Time) error {
 	}
 	for _, v := range all {
 		if v.Enabled && !v.NextRunAt.After(now) {
-			if _, e = s.runSchedule(v.ID, now, false, AuditEntry{}); e != nil {
+			if _, e = s.runSchedule(v.ID, now, false, AuditEntry{}, nil); e != nil {
 				return e
 			}
 		}
 	}
 	return nil
 }
-func (s *Store) ScheduleRunNow(id string, a AuditEntry) (jobs []string, err error) {
-	jobs, err = s.runSchedule(id, s.now().UTC(), true, a)
+func (s *Store) ScheduleRunNow(id, key string, a AuditEntry) (out ScheduleRunNowResponse, err error) {
+	a.IdempotencyKey = key
+	out.JobIDs = []string{}
+	out.JobIDs, err = s.runSchedule(id, s.now().UTC(), true, a, &out)
+	if out.JobIDs == nil {
+		out.JobIDs = []string{}
+	}
 	if err != nil {
 		a.Action = AuditScheduleRunNow
 		a.Subject = id
@@ -371,7 +374,7 @@ func (s *Store) ScheduleRunNow(id string, a AuditEntry) (jobs []string, err erro
 	}
 	return
 }
-func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry) (jobs []string, err error) {
+func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry, receipt *ScheduleRunNowResponse) (jobs []string, err error) {
 	tx, err := s.beginWrite(context.Background(), "schedule_run")
 	if err != nil {
 		return
@@ -389,12 +392,57 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry)
 		if err = scheduleScope(entry, a); err != nil {
 			return
 		}
+
+	}
+	if !manual && (!v.Enabled || v.NextRunAt.After(now)) {
+		return nil, nil
+	}
+
+	requestDigest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(struct{ ID, Principal string }{id, a.AuthSubject}))
+	if manual {
+		if a.IdempotencyKey == "" || len(a.IdempotencyKey) > 200 {
+			return nil, scriptBad("idempotency key required")
+		}
+		var op, digest, raw string
+		e := tx.QueryRow(`SELECT operation,request_digest,COALESCE(response_json,'') FROM operator_idempotency WHERE idempotency_key=?`, a.IdempotencyKey).Scan(&op, &digest, &raw)
+		if e == nil {
+			if op != "schedule-run-now" || digest != requestDigest {
+				return nil, scriptBad("idempotency conflict")
+			}
+			if e = json.Unmarshal([]byte(raw), receipt); e != nil {
+				return nil, e
+			}
+			receipt.Replayed = true
+			a.At = now
+			a.Action = AuditScheduleRunNow
+			a.Subject = v.Name
+			a.RequestDigest = requestDigest
+			a.OK = true
+			a.Detail = OperatorIdempotencyReplayPrefix + "manual schedule receipt"
+			if e = s.recordAuditTx(tx, a); e != nil {
+				return nil, e
+			}
+			return receipt.JobIDs, tx.Commit()
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return nil, e
+		}
 		if v.PausedReason != "" {
 			return nil, scriptBad("schedule paused")
 		}
 	}
-	if !manual && (!v.Enabled || v.NextRunAt.After(now)) {
-		return nil, nil
+	commit := func() error {
+		if manual {
+			receipt.JobIDs = jobs
+			if receipt.JobIDs == nil {
+				receipt.JobIDs = []string{}
+			}
+			_, e := tx.Exec(`INSERT INTO operator_idempotency(idempotency_key,operation,request_digest,outcome,response_json,created_at) VALUES (?,'schedule-run-now',?,'ok',?,?)`, a.IdempotencyKey, requestDigest, string(mustScriptJSON(receipt)), fmtTime(now))
+			if e != nil {
+				return e
+			}
+		}
+		return tx.Commit()
 	}
 	originalPrincipal := a.AuthSubject
 	a.At = now
@@ -411,7 +459,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry)
 		if err = s.recordAuditTx(tx, a); err != nil {
 			return
 		}
-		err = tx.Commit()
+		err = commit()
 		return
 	}
 	if manual {
@@ -425,24 +473,38 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry)
 	}
 	slot := v.NextRunAt
 	if manual {
-		slot = now.UTC().Truncate(time.Minute)
+		slot = time.Time{}
 	}
 	if !manual && now.Sub(slot) >= time.Minute {
-		c, _ := schedulecron.Parse(v.Cron)
-		_, err = tx.Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(c.Next(now)), id)
-		if err != nil {
+		if err = s.recordScheduleSkipTx(tx, v, now, "skipped_late"); err != nil {
 			return
 		}
 		err = tx.Commit()
 		return
 	}
-	result, err := tx.Exec(`INSERT OR IGNORE INTO schedule_slots(schedule_id,slot,outcome) VALUES (?,?,'pending')`, id, fmtTime(slot))
-	if err != nil {
-		return
+	if !manual {
+		result, e := tx.Exec(`INSERT OR IGNORE INTO schedule_slots(schedule_id,slot,outcome) VALUES (?,?,'pending')`, id, fmtTime(slot))
+		if e != nil {
+			return nil, e
+		}
+		n, e := result.RowsAffected()
+		if e != nil {
+			return nil, e
+		}
+		if n == 0 {
+			c, e := schedulecron.Parse(v.Cron)
+			if e != nil {
+				return nil, e
+			}
+			if _, e = tx.Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(c.Next(now)), id); e != nil {
+				return nil, e
+			}
+			return nil, tx.Commit()
+		}
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return nil, nil
+	slotKey := fmtTime(slot)
+	if manual {
+		slotKey = "manual:" + a.IdempotencyKey
 	}
 	var active int
 	err = tx.QueryRow(`SELECT COUNT(*) FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id WHERE sj.schedule_id=? AND j.state NOT IN (?,?,?,?,?)`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention).Scan(&active)
@@ -468,7 +530,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry)
 				return nil, e
 			}
 			jobs = append(jobs, job)
-			if _, e = tx.Exec(`INSERT INTO schedule_jobs VALUES (?,?,?,?)`, job, id, v.Name, fmtTime(slot)); e != nil {
+			if _, e = tx.Exec(`INSERT INTO schedule_jobs VALUES (?,?,?,?)`, job, id, v.Name, slotKey); e != nil {
 				return nil, e
 			}
 			row := a
@@ -487,7 +549,9 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry)
 			return
 		}
 	}
-	_, err = tx.Exec(`UPDATE schedule_slots SET outcome=? WHERE schedule_id=? AND slot=?`, outcome, id, fmtTime(slot))
+	if !manual {
+		_, err = tx.Exec(`UPDATE schedule_slots SET outcome=? WHERE schedule_id=? AND slot=?`, outcome, id, fmtTime(slot))
+	}
 	if err != nil {
 		return
 	}
@@ -504,7 +568,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry)
 	if err != nil {
 		return
 	}
-	err = tx.Commit()
+	err = commit()
 	return
 }
 
@@ -513,4 +577,30 @@ func scheduleScope(e scriptcatalog.Entry, a AuditEntry) error {
 		a.AuthCapability = "operate"
 	}
 	return scriptScope(e, a)
+}
+
+// One receipt represents the first missed slot; the bounded audit names the
+// discarded range, avoiding unbounded work after a long outage.
+func (s *Store) recordScheduleSkipTx(tx dbTx, v Schedule, now time.Time, outcome string) error {
+	c, e := schedulecron.Parse(v.Cron)
+	if e != nil {
+		return e
+	}
+	next := c.Next(now)
+	result, e := tx.Exec(`INSERT OR IGNORE INTO schedule_slots(schedule_id,slot,outcome) VALUES (?,?,?)`, v.ID, fmtTime(v.NextRunAt), outcome)
+	if e != nil {
+		return e
+	}
+	n, e := result.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if n > 0 {
+		detail := outcome + ": " + fmtTime(v.NextRunAt) + " through " + fmtTime(now) + "; next " + fmtTime(next)
+		if e = s.recordAuditTx(tx, AuditEntry{At: now, Action: AuditScheduleRun, Subject: v.Name, AuthSubject: "scheduler:" + v.Name, OK: true, Detail: detail}); e != nil {
+			return e
+		}
+	}
+	_, e = tx.Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(next), v.ID)
+	return e
 }

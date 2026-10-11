@@ -133,7 +133,7 @@ func TestScheduleScopeRevisionAndDigest(t *testing.T) {
 	if _, e = s.ScheduleManage(r, "set-enabled", false, "", a); e == nil {
 		t.Fatal("stale revision")
 	}
-	if _, e = s.ScheduleRunNow(v.ID, view); e == nil {
+	if _, e = s.ScheduleRunNow(v.ID, "view-run", view); e == nil {
 		t.Fatal("view run-now")
 	}
 }
@@ -264,5 +264,112 @@ func TestScheduleTargetLimitMatchesScriptRun(t *testing.T) {
 	var count int
 	if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM schedules`).Scan(&count); e != nil || count != 1 {
 		t.Fatalf("rejected create changed schedules: %d %v", count, e)
+	}
+}
+
+func TestScheduleManualNamespaceReplayAndCronProgress(t *testing.T) {
+	s, v, a, _ := createTestSchedule(t)
+	now := v.NextRunAt
+	s.nowFn = func() time.Time { return now }
+	first, e := s.ScheduleRunNow(v.ID, "manual-request", a)
+	if e != nil || len(first.JobIDs) != 1 {
+		t.Fatalf("manual %+v %v", first, e)
+	}
+	var n int
+	if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM schedule_slots`).Scan(&n); e != nil || n != 0 {
+		t.Fatalf("manual claimed cron slot %d %v", n, e)
+	}
+	if e = s.TickSchedules(now.Add(30 * time.Second)); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := s.ScheduleGet(v.ID)
+	if !got.NextRunAt.After(now) {
+		t.Fatal("cron wedged")
+	}
+	s.DB().Exec(`UPDATE jobs SET state='succeeded' WHERE job_id=?`, first.JobIDs[0])
+	now = now.Add(2 * time.Minute)
+	replay, e := s.ScheduleRunNow(v.ID, "manual-request", a)
+	if e != nil || !replay.Replayed || len(replay.JobIDs) != 1 || replay.JobIDs[0] != first.JobIDs[0] {
+		t.Fatalf("replay %+v %v", replay, e)
+	}
+	if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM schedule_jobs`).Scan(&n); e != nil || n != 1 {
+		t.Fatalf("duplicate manual jobs %d %v", n, e)
+	}
+	if _, e = s.ScheduleRunNow(v.ID, "", a); e == nil {
+		t.Fatal("missing key accepted")
+	}
+	other := a
+	other.AuthSubject = "another-operator"
+	if _, e = s.ScheduleRunNow(v.ID, "manual-request", other); e == nil {
+		t.Fatal("other principal replayed receipt")
+	}
+	// A legacy/preexisting receipt must also advance the pointer on duplicates.
+	s.DB().Exec(`INSERT INTO schedule_slots VALUES (?,?,'enqueued')`, v.ID, fmtTime(got.NextRunAt))
+	if e = s.TickSchedules(got.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	after, _ := s.ScheduleGet(v.ID)
+	if !after.NextRunAt.After(got.NextRunAt) {
+		t.Fatal("duplicate cron wedged")
+	}
+}
+func TestScheduleSkippedLateAndRestartEvidence(t *testing.T) {
+	for _, outcome := range []string{"skipped_late", "skipped_restart"} {
+		t.Run(outcome, func(t *testing.T) {
+			s, v, _, _ := createTestSchedule(t)
+			now := v.NextRunAt.Add(time.Hour)
+			var e error
+			if outcome == "skipped_late" {
+				e = s.TickSchedules(now)
+			} else {
+				e = s.ResumeSchedules(now)
+			}
+			if e != nil {
+				t.Fatal(e)
+			}
+			var saved string
+			if e = s.rdb.QueryRow(`SELECT outcome FROM schedule_slots WHERE schedule_id=? AND slot=?`, v.ID, fmtTime(v.NextRunAt)).Scan(&saved); e != nil || saved != outcome {
+				t.Fatalf("receipt %s %v", saved, e)
+			}
+			var n int
+			if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE auth_subject=? AND action='schedule-run' AND detail LIKE ?`, "scheduler:"+v.Name, outcome+"%").Scan(&n); e != nil || n != 1 {
+				t.Fatalf("audit %d %v", n, e)
+			}
+			after, _ := s.ScheduleGet(v.ID)
+			if !after.NextRunAt.After(now) {
+				t.Fatal("skip did not advance")
+			}
+			if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&n); e != nil || n != 0 {
+				t.Fatalf("catch-up jobs %d %v", n, e)
+			}
+		})
+	}
+}
+
+func TestScheduleSkippedEvidenceAtomic(t *testing.T) {
+	for _, outcome := range []string{"skipped_late", "skipped_restart"} {
+		t.Run(outcome, func(t *testing.T) {
+			s, v, _, _ := createTestSchedule(t)
+			if _, e := s.DB().Exec(`CREATE TRIGGER reject_skip_audit BEFORE INSERT ON audit_log WHEN NEW.action='schedule-run' BEGIN SELECT RAISE(ABORT,'test audit failure'); END`); e != nil {
+				t.Fatal(e)
+			}
+			var e error
+			if outcome == "skipped_late" {
+				e = s.TickSchedules(v.NextRunAt.Add(time.Hour))
+			} else {
+				e = s.ResumeSchedules(v.NextRunAt.Add(time.Hour))
+			}
+			if e == nil {
+				t.Fatal("audit failure ignored")
+			}
+			got, _ := s.ScheduleGet(v.ID)
+			if !got.NextRunAt.Equal(v.NextRunAt) {
+				t.Fatal("pointer committed without audit")
+			}
+			var n int
+			if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM schedule_slots`).Scan(&n); e != nil || n != 0 {
+				t.Fatalf("partial receipt %d %v", n, e)
+			}
+		})
 	}
 }

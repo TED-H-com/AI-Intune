@@ -20,7 +20,7 @@ func (f *fakeScheduleHub) ScheduleManage(context.Context, store.ScheduleRequest,
 	f.callsSchedule++
 	return store.ScheduleResult{}, nil
 }
-func (f *fakeScheduleHub) ScheduleRunNow(context.Context, string) (any, error) {
+func (f *fakeScheduleHub) ScheduleRunNow(context.Context, string, string) (any, error) {
 	f.callsSchedule++
 	return nil, nil
 }
@@ -32,6 +32,9 @@ func TestScheduleTools(t *testing.T) {
 		if callErr(t, e).Code != "preview_digest_required" || f.callsSchedule != 0 {
 			t.Fatal(e)
 		}
+	}
+	if _, e := s.Call(context.Background(), "schedule_run_now", json.RawMessage(`{"id":"s-1"}`)); e == nil || f.callsSchedule != 0 {
+		t.Fatal("manual run missing key called Hub")
 	}
 	for _, tool := range scheduleTools() {
 		if tool.InputSchema["additionalProperties"] != false {

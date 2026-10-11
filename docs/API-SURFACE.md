@@ -562,7 +562,8 @@ exit code, timeout, truncation flags and full-stream hashes. Audit contains iden
 argument/output digests and status, never raw output. Catalog scripts are trusted reviewed
 code; phase 1 does not introduce an OS filesystem sandbox or arbitrary command input.
 
-Script preview and apply share a process-local token bucket: 30 requests/minute per
+Script preview/apply, schedule upsert/set-enabled preview/apply, and schedule
+run-now share a process-local token bucket: 30 requests/minute per
 verified authenticated subject (burst 30), plus 300 requests/minute globally (burst 300).
 Changing node, source address, forwarded headers, action, or idempotency key does not
 reset a subject's allowance. Admission runs before decoding or auditing and includes
@@ -586,8 +587,12 @@ Both require view.
 `targets`, `cron`, and `enabled`. `catch_up` must be false.
 Preview and apply return a `ScheduleResult` object with `schedule`,
 `preview_digest`, and `replayed`.
-`POST /v1/operator/schedules/{id}/run-now` accepts `{}` and returns
-`{"job_ids":[...]}` (an empty array when no jobs are enqueued). Mutations require operate
+`POST /v1/operator/schedules/{id}/run-now` requires `Idempotency-Key`, accepts `{}`,
+and returns `{"job_ids":[...],"replayed":false}` (an empty array when no jobs are enqueued). Replays return the saved job IDs,
+`replayed:true`, and `Idempotency-Replayed: true`, without enqueueing. Manual
+receipts are separate from cron slots. Missed cron runs record `skipped_late` or
+`skipped_restart`; one receipt marks the first missed slot and its bounded audit
+describes the discarded interval. Mutations require operate
 for read catalog scripts and admin for write catalog scripts. Jobs expose
 `schedule_name` for supervision grouping. Numeric five-field cron uses UTC,
 including lists, ranges, and steps; consecutive occurrences must be at least
