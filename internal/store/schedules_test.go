@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"strings"
 	"sync"
@@ -213,5 +214,55 @@ func TestScheduleReapprovalAndTerminalResume(t *testing.T) {
 	second, _ := s.ScheduleGet(v.ID)
 	if len(second.LastJobIDs) != 1 || second.LastJobIDs[0] == first.LastJobIDs[0] {
 		t.Fatal(second)
+	}
+}
+
+// Disabled schedules must obey the same fanout limit before they are enabled.
+func TestScheduleTargetLimitMatchesScriptRun(t *testing.T) {
+	s, v, a, _ := createTestSchedule(t)
+	targets := make([]string, 51)
+	for i := range targets {
+		targets[i] = fmt.Sprintf("machine-%02d", i)
+	}
+	base := ScheduleRequest{Name: "target-limit", ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: targets, Cron: v.Cron, Reason: "check target bounds"}
+	script := ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: targets, Reason: base.Reason}
+	if _, _, e := normalizeScript(script); e == nil {
+		t.Fatal("script_run accepted 51 targets")
+	}
+	script.Targets = targets[:50]
+	if _, _, e := normalizeScript(script); e != nil {
+		t.Fatalf("script_run rejected 50 targets: %v", e)
+	}
+	valid := base
+	valid.Targets = targets[:50]
+	if _, e := s.ScheduleManage(valid, "upsert", false, "", a); e != nil {
+		t.Fatalf("disabled schedule rejected 50 targets: %v", e)
+	}
+	for _, update := range []bool{false, true} {
+		for _, enabled := range []bool{false, true} {
+			for _, apply := range []bool{false, true} {
+				req := base
+				req.Enabled = enabled
+				if update {
+					req.ID = v.ID
+					req.Name = v.Name
+					req.ExpectedRevision = v.Revision
+				}
+				req.PreviewDigest = "sha256:" + strings.Repeat("0", 64)
+				key := fmt.Sprintf("target-limit-%t-%t-%t", update, enabled, apply)
+				_, e := s.ScheduleManage(req, "upsert", apply, key, a)
+				if e == nil || !strings.Contains(e.Error(), "1 to 50") {
+					t.Fatalf("update=%t enabled=%t apply=%t: %v", update, enabled, apply, e)
+				}
+			}
+		}
+	}
+	got, e := s.ScheduleGet(v.ID)
+	if e != nil || got.Revision != v.Revision || len(got.Targets) != len(v.Targets) {
+		t.Fatalf("rejected update changed schedule: %+v %v", got, e)
+	}
+	var count int
+	if e = s.rdb.QueryRow(`SELECT COUNT(*) FROM schedules`).Scan(&count); e != nil || count != 1 {
+		t.Fatalf("rejected create changed schedules: %d %v", count, e)
 	}
 }
