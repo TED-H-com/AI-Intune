@@ -50,6 +50,7 @@ type JobReadStateCount struct {
 // fields. Store.Job is a machine-protocol persistence shape and is unsafe to
 // marshal on an operator surface.
 type JobReadItem struct {
+	ScheduleName        string
 	JobID               string
 	MachineID           string
 	DisplayName         string
@@ -303,7 +304,7 @@ func jobReadWhere(filter JobReadFilter, ceiling int64, includeAfter bool) (strin
 	return strings.Join(clauses, " AND "), args
 }
 
-const jobReadItemColumns = `j.job_id,j.machine_id,m.display_name,j.desired_id,
+const jobReadItemColumns = `COALESCE((SELECT schedule_name FROM schedule_jobs sj WHERE sj.job_id=j.job_id),''),j.job_id,j.machine_id,m.display_name,j.desired_id,
  d.scope_type,d.scope_id,d.resource_kind,d.resource_id,d.revision,j.revision,j.state,j.lease_expires_at,
  j.execution_timeout,j.artifact_digest,j.irreversible,j.created_at,j.terminal_at,
  (SELECT MIN(dt.deployment_id) FROM deployment_targets dt WHERE dt.job_id=j.job_id),
@@ -331,7 +332,7 @@ func scanJobReadItem(row jobReadScanner) (JobReadItem, error) {
 	var desiredRevision sql.NullInt64
 	var deploymentLinks, verificationMachineMismatches int
 	if err := row.Scan(
-		&item.JobID, &item.MachineID, &displayName, &desiredID,
+		&item.ScheduleName, &item.JobID, &item.MachineID, &displayName, &desiredID,
 		&desiredScopeType, &desiredScopeID, &resourceKind, &resourceID,
 		&desiredRevision, &item.Revision, &state, &leaseExpires,
 		&item.ExecutionTimeout, &digest, &item.Irreversible, &createdAt, &terminalAt,

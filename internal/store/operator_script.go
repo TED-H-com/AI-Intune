@@ -157,24 +157,8 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 			return reject("preview digest mismatch")
 		}
 	}
-	for _, id := range req.Targets {
-		var osName string
-		var retired sql.NullString
-		var enabled, capable sql.NullBool
-		var active int
-		ge := tx.QueryRow(`SELECT COALESCE(m.os,''),m.retired_at,c.jobs_enabled,cap.supported,
-   (SELECT COUNT(*) FROM jobs j WHERE j.machine_id=m.machine_id AND j.state NOT IN (?,?,?,?,?))
-   FROM machine_registry m LEFT JOIN machine_checkins c ON c.rowid=(SELECT rowid FROM machine_checkins WHERE machine_id=m.machine_id ORDER BY received_at DESC,rowid DESC LIMIT 1)
-   LEFT JOIN machine_job_capabilities cap ON cap.machine_id=c.machine_id AND cap.sent_at=c.sent_at AND cap.capability=? WHERE m.machine_id=?`, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, scriptcatalog.Kind, id).Scan(&osName, &retired, &enabled, &capable, &active)
-		if errors.Is(ge, sql.ErrNoRows) {
-			return reject("target not found")
-		}
-		if ge != nil {
-			return out, ge
-		}
-		if retired.Valid || !enabled.Valid || !enabled.Bool || !capable.Valid || !capable.Bool || !e.AllowsOS(osName) || active != 0 {
-			return reject("target unavailable, unsupported, execution disabled or active job")
-		}
+	if err := validateScriptTargetsTx(tx, req, e); err != nil {
+		return reject("target unavailable")
 	}
 	if apply {
 		spec := scriptcatalog.Spec{Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: req.Args}
@@ -293,4 +277,27 @@ func (s *Store) scriptEvidenceReady(jobID string) (required, ready bool, err err
 	var result scriptcatalog.Result
 	ready = json.Unmarshal([]byte(metadata), &result) == nil && validLowerSHA256(result.StdoutSHA256) && validLowerSHA256(result.StderrSHA256) && result.Stdout == "" && result.Stderr == "" && result.ExitCode == 0 && !result.TimedOut && result.DurationMS >= 0
 	return true, ready, nil
+}
+
+func validateScriptTargetsTx(tx dbTx, req ScriptRunRequest, e scriptcatalog.Entry) error {
+	for _, id := range req.Targets {
+		var osName string
+		var retired sql.NullString
+		var enabled, capable sql.NullBool
+		var active int
+		ge := tx.QueryRow(`SELECT COALESCE(m.os,''),m.retired_at,c.jobs_enabled,cap.supported,
+   (SELECT COUNT(*) FROM jobs j WHERE j.machine_id=m.machine_id AND j.state NOT IN (?,?,?,?,?))
+   FROM machine_registry m LEFT JOIN machine_checkins c ON c.rowid=(SELECT rowid FROM machine_checkins WHERE machine_id=m.machine_id ORDER BY received_at DESC,rowid DESC LIMIT 1)
+   LEFT JOIN machine_job_capabilities cap ON cap.machine_id=c.machine_id AND cap.sent_at=c.sent_at AND cap.capability=? WHERE m.machine_id=?`, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, scriptcatalog.Kind, id).Scan(&osName, &retired, &enabled, &capable, &active)
+		if errors.Is(ge, sql.ErrNoRows) {
+			return scriptBad("target not found")
+		}
+		if ge != nil {
+			return ge
+		}
+		if retired.Valid || !enabled.Valid || !enabled.Bool || !capable.Valid || !capable.Bool || !e.AllowsOS(osName) || active != 0 {
+			return scriptBad("target unavailable, unsupported, execution disabled or active job")
+		}
+	}
+	return nil
 }

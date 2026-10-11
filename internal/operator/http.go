@@ -31,7 +31,7 @@ func HTTPError(err error) (status int, code, detail string) {
 		store.OperatorCodeCompliancePolicyNotFound,
 		store.OperatorCodeMaintenanceNotFound:
 		status = http.StatusNotFound
-	case store.OperatorCodeIdempotencyConflict, store.OperatorCodeNeverObserved,
+	case "REVISION_CONFLICT", store.OperatorCodeIdempotencyConflict, store.OperatorCodeNeverObserved,
 		store.OperatorCodeMachinePlatformUnknown, store.OperatorCodeMachinePlatformUnsupported,
 		store.OperatorCodeMachineActiveJob, store.OperatorCodeMachineRetired,
 		store.OperatorCodeAgentExecutionUnknown, store.OperatorCodeAgentExecutionDisabled,

@@ -224,3 +224,13 @@ Each admitted preview/apply request records one bounded audit row: script/hash a
 digest, counts and digests of the full ordered target/job lists. Apply receipts retain
 all job IDs; completion audit remains per job. Job fanout, receipt, and request audit
 still commit atomically.
+
+Schedule tools: `schedule_list`, `schedule_get` (view),
+`schedule_upsert_preview` / `schedule_upsert_apply`,
+`schedule_set_enabled_preview` / `schedule_set_enabled_apply`, and
+`schedule_run_now` (operate for read scripts; admin for write scripts).
+Apply requires the matching preview digest, idempotency key, and current
+`expected_revision`; use zero for a new schedule. Cron is five-field UTC with a
+five-minute minimum. Missed runs are discarded, overlaps are audited and skipped.
+A changed catalog hash pauses the schedule until an upsert approves the new hash.
+Run-now uses the same overlap guard and deduplicates within the current UTC minute.

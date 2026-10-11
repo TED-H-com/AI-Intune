@@ -573,3 +573,17 @@ Each admitted preview/apply request records one bounded audit row: script/hash a
 digest, counts and digests of the full ordered target/job lists. Apply receipts retain
 all job IDs; completion audit remains per job. Job fanout, receipt, and request audit
 still commit atomically.
+
+### Catalog schedules
+
+`GET /v1/operator/schedules` and `GET /v1/operator/schedules/{id}` require view.
+`POST /v1/operator/schedules/{operation}/{phase}` uses operations `upsert` and
+`set-enabled`, phases `preview` and `apply`. Apply requires `preview_digest`,
+`Idempotency-Key`, and `expected_revision` (zero for creation). The request includes
+`reason`; upsert includes `name`, `script_id`, `script_sha256`, `args`, explicit
+`targets`, `cron`, and `enabled`. `catch_up` must be false.
+`POST /v1/operator/schedules/{id}/run-now` accepts `{}`. Mutations require operate
+for read catalog scripts and admin for write catalog scripts. Jobs expose
+`schedule_name` for supervision grouping. Numeric five-field cron uses UTC,
+including lists, ranges, and steps; consecutive occurrences must be at least
+five minutes apart. Results and read responses use `Cache-Control: no-store`.

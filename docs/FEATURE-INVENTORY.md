@@ -674,3 +674,9 @@ tracking 與 malformed/unplaceable timestamp 都列入 coverage；未被 filter 
 每個新的 operator mutation 在進 UI 前，都必須具備共用 validation、preview/impact、權限、
 必要確認、idempotency/revision、structured audit，以及 API/UI/CLI parity tests。詳細 Definition
 of Done 維持單一來源於 `docs/API-SURFACE.md`，本文件不重複實作規格。
+
+Catalog scheduler: durable SQLite schedules and unique slot receipts; Hub ticks
+at 30 seconds, skips overlap and unavailable targets, discards missed slots on
+restart, and pauses changed script hashes with `script_changed`. Configuration
+uses revision checks and preview/apply receipts. Scheduled jobs remain normal
+`script_v1` jobs, audited as `scheduler:<name>` and attributed by schedule name.

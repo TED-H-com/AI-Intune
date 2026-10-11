@@ -28,6 +28,12 @@ import (
 type AuditAction string
 
 const (
+	AuditScheduleUpsertPreview     AuditAction = "schedule-upsert-preview"
+	AuditScheduleUpsertApply       AuditAction = "schedule-upsert-apply"
+	AuditScheduleEnabledPreview    AuditAction = "schedule-set-enabled-preview"
+	AuditScheduleEnabledApply      AuditAction = "schedule-set-enabled-apply"
+	AuditScheduleRun               AuditAction = "schedule-run"
+	AuditScheduleRunNow            AuditAction = "schedule-run-now"
 	AuditScriptPreview             AuditAction = "script-run-preview"
 	AuditScriptApply               AuditAction = "script-run-apply"
 	AuditScriptComplete            AuditAction = "script-run-complete"

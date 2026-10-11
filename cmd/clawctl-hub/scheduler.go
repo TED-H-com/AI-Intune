@@ -1,0 +1,31 @@
+package main
+
+import (
+	"context"
+	"log"
+	"time"
+)
+
+func (h *hub) scheduleLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	resumed := h.store.ResumeSchedules(jobNow()) == nil
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !resumed {
+				if err := h.store.ResumeSchedules(jobNow()); err != nil {
+					log.Print("scheduler resume failed")
+					continue
+				}
+				resumed = true
+				continue
+			}
+			if err := h.store.TickSchedules(jobNow()); err != nil {
+				log.Print("scheduler tick failed")
+			}
+		}
+	}
+}
