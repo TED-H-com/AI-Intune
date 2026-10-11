@@ -3,13 +3,13 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 243 個 HTTP operations（24 non-operator＋219 operator；110 條 operator JSON）、
+> 逐一對照 247 個 HTTP operations（24 non-operator＋223 operator；114 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 243-operation tally above (24 non-operator + 219 operator). The inventory/contract excludes these six public account operations and totals 237. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 247-operation tally above (24 non-operator + 223 operator). The inventory/contract excludes these six public account operations and totals 241. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -562,7 +562,8 @@ exit code, timeout, truncation flags and full-stream hashes. Audit contains iden
 argument/output digests and status, never raw output. Catalog scripts are trusted reviewed
 code; phase 1 does not introduce an OS filesystem sandbox or arbitrary command input.
 
-Script preview and apply share a process-local token bucket: 30 requests/minute per
+Script preview/apply, schedule upsert/set-enabled preview/apply, and schedule
+run-now share a process-local token bucket: 30 requests/minute per
 verified authenticated subject (burst 30), plus 300 requests/minute globally (burst 300).
 Changing node, source address, forwarded headers, action, or idempotency key does not
 reset a subject's allowance. Admission runs before decoding or auditing and includes
@@ -573,3 +574,26 @@ Each admitted preview/apply request records one bounded audit row: script/hash a
 digest, counts and digests of the full ordered target/job lists. Apply receipts retain
 all job IDs; completion audit remains per job. Job fanout, receipt, and request audit
 still commit atomically.
+
+### Catalog schedules
+
+`GET /v1/operator/schedules` returns `{"items":[...]}` (an empty list is
+`{"items":[]}`); `GET /v1/operator/schedules/{id}` returns a schedule object.
+Both require view.
+`POST /v1/operator/schedules/{operation}/{phase}` uses operations `upsert` and
+`set-enabled`, phases `preview` and `apply`. Apply requires `preview_digest`,
+`Idempotency-Key`, and `expected_revision` (zero for creation). The request includes
+`reason`; upsert includes `name`, `script_id`, `script_sha256`, `args`, explicit
+`targets`, `cron`, and `enabled`. `catch_up` must be false.
+Preview and apply return a `ScheduleResult` object with `schedule`,
+`preview_digest`, and `replayed`.
+`POST /v1/operator/schedules/{id}/run-now` requires `Idempotency-Key`, accepts `{}`,
+and returns `{"job_ids":[...],"replayed":false}` (an empty array when no jobs are enqueued). Replays return the saved job IDs,
+`replayed:true`, and `Idempotency-Replayed: true`, without enqueueing. Manual
+receipts are separate from cron slots. Missed cron runs record `skipped_late` or
+`skipped_restart`; one receipt marks the first missed slot and its bounded audit
+describes the discarded interval. Mutations require operate
+for read catalog scripts and admin for write catalog scripts. Jobs expose
+`schedule_name` for supervision grouping. Numeric five-field cron uses UTC,
+including lists, ranges, and steps; consecutive occurrences must be at least
+five minutes apart. Results and read responses use `Cache-Control: no-store`.

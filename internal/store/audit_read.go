@@ -57,6 +57,7 @@ var allAuditActions = [...]AuditAction{
 	AuditMachineLifecycle,
 	AuditMachineRename,
 	AuditMachineNotes,
+	AuditScheduleUpsertPreview, AuditScheduleUpsertApply, AuditScheduleEnabledPreview, AuditScheduleEnabledApply, AuditScheduleRun, AuditScheduleRunNow,
 	AuditScriptPreview,
 	AuditScriptApply,
 	AuditScriptComplete,

@@ -350,6 +350,10 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"POST /deployments/{id}/skip-failed-batch":                            {operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked},
 	"POST /v1/operator/deployments/{id}/skip-failed-batch-preview":        {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
 	"POST /v1/operator/deployments/{id}/skip-failed-batches":              {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
+	"GET /v1/operator/schedules":                                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
+	"GET /v1/operator/schedules/{id}":                                     {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
+	"POST /v1/operator/schedules/{operation}/{phase}":                     {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
+	"POST /v1/operator/schedules/{id}/run-now":                            {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
 	"GET /v1/operator/script-catalog":                                     {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
 	"POST /v1/operator/script-runs/preview":                               {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
 	"POST /v1/operator/script-runs":                                       {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked},
@@ -622,6 +626,9 @@ func (b *operatorBoundary) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if pattern == "POST /v1/operator/script-runs/preview" || pattern == "POST /v1/operator/script-runs" {
 		policy.Permission = scriptRequestPermission(r)
+	}
+	if pattern == "POST /v1/operator/schedules/{operation}/{phase}" || pattern == "POST /v1/operator/schedules/{id}/run-now" {
+		policy.Permission = scheduleRequestPermission(r, b.store)
 	}
 	before := routingOf(r)
 	authed, decision := b.authorizer.Authorize(r, policy.Permission)

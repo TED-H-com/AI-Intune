@@ -28,6 +28,12 @@ import (
 type AuditAction string
 
 const (
+	AuditScheduleUpsertPreview     AuditAction = "schedule-upsert-preview"
+	AuditScheduleUpsertApply       AuditAction = "schedule-upsert-apply"
+	AuditScheduleEnabledPreview    AuditAction = "schedule-set-enabled-preview"
+	AuditScheduleEnabledApply      AuditAction = "schedule-set-enabled-apply"
+	AuditScheduleRun               AuditAction = "schedule-run"
+	AuditScheduleRunNow            AuditAction = "schedule-run-now"
 	AuditScriptPreview             AuditAction = "script-run-preview"
 	AuditScriptApply               AuditAction = "script-run-apply"
 	AuditScriptComplete            AuditAction = "script-run-complete"
@@ -162,6 +168,7 @@ func IsCanonicalOperatorAction(action AuditAction) bool {
 		action == AuditDeploymentCreate || action == AuditDeploymentRetry ||
 		action == AuditDeploymentContinue || action == AuditDeploymentSkipFailedBatch || action == AuditDeploymentAbandon ||
 		action == AuditArtifactFetch || action == AuditCatalogManifest || action == AuditMachineProfile ||
+		action == AuditScheduleUpsertPreview || action == AuditScheduleUpsertApply || action == AuditScheduleEnabledPreview || action == AuditScheduleEnabledApply || action == AuditScheduleRun || action == AuditScheduleRunNow ||
 		action == AuditScriptPreview || action == AuditScriptApply || action == AuditScriptComplete || action == AuditMachineProfileAssign || action == AuditDiagnosticNoop || action == AuditDeviceSync || action == AuditTailnetPeerIgnore ||
 		action == AuditRetentionPrune || action == AuditRestoreDrill ||
 		action == AuditVerifierRegister || action == AuditVerifierRevoke ||

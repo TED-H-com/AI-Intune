@@ -59,6 +59,7 @@ func (r JobListResult) StorePage() (page store.JobReadPage, ok bool) {
 }
 
 type JobSummary struct {
+	ScheduleName            string                  `json:"schedule_name,omitempty"`
 	JobID                   string                  `json:"job_id"`
 	MachineID               string                  `json:"machine_id"`
 	DisplayName             string                  `json:"display_name"`
@@ -325,7 +326,7 @@ func projectJobSummary(item store.JobReadItem, evaluatedAt time.Time) (JobSummar
 	summary := JobSummary{
 		JobID: item.JobID, MachineID: item.MachineID, DisplayName: item.DisplayName,
 		DesiredID: item.DesiredID, DeploymentID: item.DeploymentID,
-		ResourceKind: item.ResourceKind, ResourceID: item.ResourceID,
+		ScheduleName: item.ScheduleName, ResourceKind: item.ResourceKind, ResourceID: item.ResourceID,
 		Revision: item.Revision, State: item.State, Irreversible: item.Irreversible,
 		ExecutionTimeoutSeconds: item.ExecutionTimeout, ArtifactDigest: item.ArtifactDigest,
 		CreatedAt: item.CreatedAt.UTC(), TerminalAt: utcJobTime(item.TerminalAt),

@@ -1557,3 +1557,22 @@ CREATE TABLE IF NOT EXISTS hub_login_failures (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hub_login_failures_age ON hub_login_failures(last_failed_at);
+
+-- Durable scheduler configuration, slot receipts, and job attribution.
+CREATE TABLE IF NOT EXISTS schedules (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+ script_id TEXT NOT NULL, script_sha256 TEXT NOT NULL, args TEXT NOT NULL,
+ targets TEXT NOT NULL, cron TEXT NOT NULL, enabled INTEGER NOT NULL,
+ catch_up INTEGER NOT NULL DEFAULT 0 CHECK(catch_up=0),
+ created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ revision INTEGER NOT NULL, last_run_at TEXT, last_job_ids TEXT NOT NULL DEFAULT '[]',
+ next_run_at TEXT NOT NULL, paused_reason TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS schedule_slots (
+ schedule_id TEXT NOT NULL REFERENCES schedules(id), slot TEXT NOT NULL,
+ outcome TEXT NOT NULL, PRIMARY KEY(schedule_id,slot)
+);
+CREATE TABLE IF NOT EXISTS schedule_jobs (
+ job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+ schedule_id TEXT NOT NULL REFERENCES schedules(id), schedule_name TEXT NOT NULL, slot TEXT NOT NULL
+);
