@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"strings"
@@ -416,5 +417,32 @@ func TestScheduleManualPauseRequiresInitiatorAudit(t *testing.T) {
 	got, _ := s.ScheduleGet(v.ID)
 	if !got.Enabled || got.PausedReason != "" || got.Revision != v.Revision {
 		t.Fatal("pause partially committed")
+	}
+}
+
+func TestBATReportScheduleRequiresAdmin(t *testing.T) {
+	st, script, actor, _ := scriptFixture(t)
+	entry, _ := scriptcatalog.Lookup("bat-sweep-report-v1")
+	req := ScheduleRequest{Name: "bat-report", ScriptID: entry.ID, ScriptSHA256: entry.SHA256, Args: json.RawMessage(`{"hosts":["sample-host"],"connector_tree_sha256":"` + strings.Repeat("a", 64) + `"}`), Targets: script.Targets, Cron: "17 * * * *", Enabled: false, Reason: "report pilot"}
+	if _, err := st.ScheduleManage(req, "upsert", false, "", actor); err == nil {
+		t.Fatal("operate scheduled admin-approved connector")
+	}
+	actor.AuthCapability = "admin"
+	preview, err := st.ScheduleManage(req, "upsert", false, "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	result, err := st.ScheduleManage(req, "upsert", true, "bat-schedule", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor.AuthCapability = "operate"
+	if _, err := st.ScheduleRunNow(result.Schedule.ID, "bat-run-operate", actor); err == nil {
+		t.Fatal("operate ran admin-approved connector")
+	}
+	actor.AuthCapability = "admin"
+	if run, err := st.ScheduleRunNow(result.Schedule.ID, "bat-run-admin", actor); err != nil || len(run.JobIDs) != 1 {
+		t.Fatalf("admin run %+v %v", run, err)
 	}
 }

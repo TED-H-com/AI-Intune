@@ -10,6 +10,7 @@ import (
 	"hash"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -75,9 +76,23 @@ func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error)
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "/bin/sh", path)
+	interpreter := "/bin/sh"
+	home := dir
+	if e.ID == "bat-sweep-report-v1" {
+		interpreter = "/usr/bin/python3"
+		account, err := user.Current()
+		if err != nil || account.HomeDir == "" {
+			return result, fmt.Errorf("resolve agent user home")
+		}
+		home = account.HomeDir
+	}
+	argv := []string{path}
+	if e.ID == "bat-sweep-report-v1" {
+		argv = []string{"-I", "-S", "-B", path}
+	}
+	cmd := exec.CommandContext(ctx, interpreter, argv...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + dir, "TMPDIR=" + dir}
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + home, "TMPDIR=" + dir, "PYTHONDONTWRITEBYTECODE=1"}
 	cmd.Stdin = bytes.NewReader(canonical)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }

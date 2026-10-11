@@ -38,7 +38,7 @@ func TestScriptClientCatalogPreviewApply(t *testing.T) {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 	})
-	if entries, err := client.ScriptCatalog(context.Background()); err != nil || len(entries) != 1 {
+	if entries, err := client.ScriptCatalog(context.Background()); err != nil || len(entries) != len(scriptcatalog.List()) {
 		t.Fatalf("catalog %v %v", entries, err)
 	}
 	preview, err := client.ScriptRun(context.Background(), body, false, "")
@@ -57,7 +57,7 @@ func TestScriptCatalogResponseIsStrict(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, err := decodeScriptCatalog(raw)
-	if err != nil || len(items) != 1 || items[0].ID != "fleet-probe-v1" {
+	if err != nil || len(items) != len(scriptcatalog.List()) || !hasScript(items, "fleet-probe-v1") || !hasScript(items, "bat-sweep-report-v1") {
 		t.Fatalf("catalog %v %v", items, err)
 	}
 	if items, err := decodeScriptCatalog([]byte(`{"items":[]}`)); err != nil || items == nil || len(items) != 0 {
@@ -68,4 +68,13 @@ func TestScriptCatalogResponseIsStrict(t *testing.T) {
 			t.Errorf("accepted invalid catalog: %s", raw)
 		}
 	}
+}
+
+func hasScript(items []scriptcatalog.Entry, id string) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
 }

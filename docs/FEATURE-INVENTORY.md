@@ -684,3 +684,9 @@ at 30 seconds, skips overlap and unavailable targets, discards missed slots on
 restart, and pauses changed script hashes with `script_changed`. Configuration
 uses revision checks and preview/apply receipts. Scheduled jobs remain normal
 `script_v1` jobs, audited as `scheduler:<name>` and attributed by schedule name.
+
+BAT sweep report pilot: embedded `bat-sweep-report-v1`, read-only connector
+calls from an admin-approved digest-pinned connector tree, structured JSON
+classifications (excerpts off by default), bounded reads, fixed no-symlink mapping
+and explicit unknown cleanup/Jev gates; disabled
+hourly schedule example and [comparison runbook](runbooks/BAT-SWEEP-PILOT.md).

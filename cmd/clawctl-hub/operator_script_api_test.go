@@ -88,7 +88,7 @@ func TestScriptCatalogAPIObjectEnvelope(t *testing.T) {
 	if err := decoder.Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Items) != 1 || response.Items[0].ID != "fleet-probe-v1" {
+	if len(response.Items) != 2 {
 		t.Fatalf("catalog %+v", response)
 	}
 }
@@ -194,5 +194,49 @@ func TestScriptRunGlobalLimitAndMissingPrincipal(t *testing.T) {
 	h.handleScriptRun(rec, r, false)
 	if rec.Code != 403 {
 		t.Fatalf("missing principal response %d", rec.Code)
+	}
+}
+
+func TestBATReportAPI(t *testing.T) {
+	f := observedOperatorFixture(t)
+	enabled := true
+	if err := f.store.RecordCheckin(f.machine.id, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: jobsTestNow, JobsEnabled: &enabled, ScriptV1: true}, jobsTestNow); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := scriptcatalog.Lookup("bat-sweep-report-v1")
+	body := store.ScriptRunRequest{ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: json.RawMessage(`{"hosts":["sample-host"],"connector_tree_sha256":"` + strings.Repeat("a", 64) + `"}`), Targets: []string{f.machine.id}, TimeoutSeconds: 600, Reason: "BAT report pilot"}
+	call := func(path, key, raw string, permission operatorauth.Permission) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(raw))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", key)
+		rec := httptest.NewRecorder()
+		r = verifiedOperatorRequest(r, permission)
+		principal, _ := operatorauth.PrincipalFromContext(r.Context())
+		if permission == operatorauth.Admin {
+			principal.GrantedCapabilities.Admin = testOperatorCapability(operatorauth.Admin)
+		}
+		f.mux.ServeHTTP(rec, operatorauth.WithPrincipal(r, principal))
+		return rec
+	}
+	raw, _ := json.Marshal(body)
+	if rec := call("/v1/operator/script-runs/preview", "", string(raw), operatorauth.Operate); rec.Code != 403 {
+		t.Fatalf("operate response %d", rec.Code)
+	}
+	preview := call("/v1/operator/script-runs/preview", "", string(raw), operatorauth.Admin)
+	if preview.Code != 200 {
+		t.Fatalf("preview %d %s", preview.Code, preview.Body.String())
+	}
+	var result store.ScriptRunResult
+	if err := json.Unmarshal(preview.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	body.PreviewDigest = result.PreviewDigest
+	raw, _ = json.Marshal(body)
+	if rec := call("/v1/operator/script-runs", "bat-rejected", string(raw), operatorauth.Operate); rec.Code != 403 {
+		t.Fatalf("operate apply %d", rec.Code)
+	}
+	applied := call("/v1/operator/script-runs", "bat-api", string(raw), operatorauth.Admin)
+	if applied.Code != 201 {
+		t.Fatalf("apply %d %s", applied.Code, applied.Body.String())
 	}
 }
