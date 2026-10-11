@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 241 個 production operations 基線
+## 244 個 production operations 基線
 
-此數字按 HTTP method + route 計數：18 個 non-operator operations、223 個 operator
-operations；其中 114 個為 operator JSON、109 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=86`、`operate=28`、`admin=109`。這組數字由 route/API/service/Web/CLI
-合約測試固定；241-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：18 個 non-operator operations、226 個 operator
+operations；其中 117 個為 operator JSON、109 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=89`、`operate=28`、`admin=109`。這組數字由 route/API/service/Web/CLI
+合約測試固定；244-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -84,7 +84,7 @@ Machine bearer 與 operator auth 不互相繼承；實作邊界見
 `cmd/clawctl-hub/api.go`、`cmd/clawctl-hub/operator_boundary.go`。Verifier bearer 與這兩者也不互相繼承，
 resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 
-### Operator HTML/BFF 與 JSON（223）
+### Operator HTML/BFF 與 JSON（226）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -312,12 +312,15 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 239 | `GET /v1/operator/schedules/{id}` | JSON | Read | `view`; stored schedule configuration and run metadata |
 | 240 | `POST /v1/operator/schedules/{operation}/{phase}` | JSON | Preview / Mutation | `operate` for read scripts, `admin` for write scripts; `upsert` / `set-enabled`, `preview` / `apply`; apply binds preview digest, expected revision and idempotency key |
 | 241 | `POST /v1/operator/schedules/{id}/run-now` | JSON | Mutation | `operate` for read scripts, `admin` for write scripts; required Idempotency-Key, saved job-ID replay, approved hash and overlap guard |
+| 242 | `GET /v1/operator/jobs-summary` | JSON | 讀取 | `view`; bounded supervision counts, latency and Hub threshold flags |
+| 243 | `GET /v1/operator/approvals-summary` | JSON | 讀取 | `view`; observed approvals; unpersisted preview/pending metrics are null |
+| 244 | `GET /v1/operator/hub-status` | JSON | 讀取 | `view`; uptime, storage sizes, restore evidence and machine coverage; no paths or secrets |
 
 HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-114 條 operator JSON 路由見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+117 條 operator JSON 路由見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
