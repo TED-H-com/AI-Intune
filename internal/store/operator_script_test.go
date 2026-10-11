@@ -252,3 +252,33 @@ func TestScriptRunFanoutHasOneBoundedRequestAudit(t *testing.T) {
 		t.Fatalf("replay changed fanout: %d %v", jobs, err)
 	}
 }
+
+func TestBATReportJobPreviewApply(t *testing.T) {
+	st, req, actor, _ := scriptFixture(t)
+	entry, _ := scriptcatalog.Lookup("bat-sweep-report-v1")
+	req.ScriptID, req.ScriptSHA256 = entry.ID, entry.SHA256
+	req.Args = json.RawMessage(`{"hosts":["sample-host"],"connector_tree_sha256":"` + strings.Repeat("a", 64) + `"}`)
+	if _, err := st.ScriptRun(req, false, "", actor); err == nil {
+		t.Fatal("operate principal accepted")
+	}
+	actor.AuthCapability = "admin"
+	req.TimeoutSeconds = 600
+	preview, err := st.ScriptRun(req, false, "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	result, err := st.ScriptRun(req, true, "bat-pilot", actor)
+	if err != nil || len(result.JobIDs) != 1 {
+		t.Fatalf("apply %+v %v", result, err)
+	}
+	req.TimeoutSeconds = 601
+	if _, err := st.ScriptRun(req, false, "", actor); err == nil {
+		t.Fatal("unbounded BAT timeout")
+	}
+	req.TimeoutSeconds = 600
+	req.Args = json.RawMessage(`{"hosts":["bad.host"]}`)
+	if _, err := st.ScriptRun(req, false, "", actor); err == nil {
+		t.Fatal("invalid host accepted")
+	}
+}

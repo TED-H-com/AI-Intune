@@ -238,3 +238,12 @@ Run-now requires an `idempotency_key` and replays the original job IDs across
 minutes and restarts. Manual receipts use a separate operation namespace from
 cron slots. Late ticks and startup record `skipped_late` / `skipped_restart`
 receipts and bounded scheduler audit entries describing the discarded range.
+
+For the report-only BAT pilot, use `bat-sweep-report-v1` from
+`script_catalog_list` with connector host keys in `args.hosts` and the connector
+runtime machine in `targets`. Supply the reviewed `connector_tree_sha256`;
+admin scope is required to run/schedule this report-only, write-equivalent entry.
+`include_excerpts` defaults to false; the mapping filename is fixed. Its timeout
+is bounded at 600 seconds. The
+[runbook](runbooks/BAT-SWEEP-PILOT.md) includes the disabled schedule example,
+preview/apply workflow and one-week comparison criteria.

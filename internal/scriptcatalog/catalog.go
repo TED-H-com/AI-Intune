@@ -19,14 +19,20 @@ const Kind = "script_v1"
 //go:embed fleet-probe-v1.sh
 var probe []byte
 
+//go:embed bat-sweep-report-v1.py
+var batSweep []byte
+
 type Property struct {
-	Type      string   `json:"type"`
-	Enum      []string `json:"enum,omitempty"`
-	Pattern   string   `json:"pattern,omitempty"`
-	MinLength int      `json:"minLength,omitempty"`
-	MaxLength int      `json:"maxLength,omitempty"`
-	Minimum   *int     `json:"minimum,omitempty"`
-	Maximum   *int     `json:"maximum,omitempty"`
+	Items     *Property `json:"items,omitempty"`
+	MinItems  int       `json:"minItems,omitempty"`
+	MaxItems  int       `json:"maxItems,omitempty"`
+	Type      string    `json:"type"`
+	Enum      []string  `json:"enum,omitempty"`
+	Pattern   string    `json:"pattern,omitempty"`
+	MinLength int       `json:"minLength,omitempty"`
+	MaxLength int       `json:"maxLength,omitempty"`
+	Minimum   *int      `json:"minimum,omitempty"`
+	Maximum   *int      `json:"maximum,omitempty"`
 }
 type Schema struct {
 	Type                 string              `json:"type"`
@@ -57,6 +63,7 @@ type Entry struct {
 // Each additional embedded script is one registry entry. Hashes are constants,
 // never computed from potentially changed bytes when accepting a job.
 var registry = []Entry{
+	{"bat-sweep-report-v1", "1", "8a38c3be5c3c0e9cf69fcd19225753db8ffcd70e9bc77e72d9739a9011d11a31", Schema{Type: "object", Required: []string{"hosts", "connector_tree_sha256"}, Properties: map[string]Property{"hosts": {Type: "array", MinItems: 1, MaxItems: 8, Items: &Property{Type: "string", Pattern: "^[a-z0-9-]{1,32}$", MinLength: 1, MaxLength: 32}}, "connector_tree_sha256": {Type: "string", Pattern: "^[a-f0-9]{64}$", MinLength: 64, MaxLength: 64}, "include_excerpts": {Type: "boolean"}}}, 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, batSweep},
 	{"fleet-probe-v1", "1", "0c242784f162df0489571fa0ac901e0e583f54afa3d121d0b033e8dff2bad924", Schema{Type: "object", Properties: map[string]Property{}}, 15, 60, 64 << 10, "read", "agent-user", []string{"linux"}, probe},
 }
 
@@ -88,7 +95,7 @@ func (e Entry) AllowsOS(os string) bool {
 }
 
 // Validate returns canonical args, rejecting duplicate and unknown fields.
-// This deliberately small closed schema supports only bounded scalars.
+// This deliberately small closed schema supports bounded scalars and string arrays.
 func (e Entry) Validate(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 || len(raw) > 4096 || !utf8.Valid(raw) {
 		return nil, errors.New("args must be a JSON object of at most 4096 bytes")
@@ -139,6 +146,21 @@ func (e Entry) Validate(raw json.RawMessage) (json.RawMessage, error) {
 				match, err := regexp.MatchString(p.Pattern, s)
 				if err != nil || !match {
 					return nil, errors.New("args pattern mismatch")
+				}
+			}
+		case "array":
+			a, ok := v.([]any)
+			if !ok || len(a) < p.MinItems || p.MaxItems <= 0 || len(a) > p.MaxItems || p.Items == nil || p.Items.Type != "string" {
+				return nil, errors.New("args array outside bounds")
+			}
+			for _, item := range a {
+				str, ok := item.(string)
+				if !ok || len(str) < p.Items.MinLength || len(str) > p.Items.MaxLength {
+					return nil, errors.New("args array item outside bounds")
+				}
+				match, err := regexp.MatchString(p.Items.Pattern, str)
+				if err != nil || !match {
+					return nil, errors.New("args array item pattern mismatch")
 				}
 			}
 		case "integer":

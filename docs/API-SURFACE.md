@@ -597,3 +597,9 @@ for read catalog scripts and admin for write catalog scripts. Jobs expose
 `schedule_name` for supervision grouping. Numeric five-field cron uses UTC,
 including lists, ranges, and steps; consecutive occurrences must be at least
 five minutes apart. Results and read responses use `Cache-Control: no-store`.
+
+The catalog also exposes `bat-sweep-report-v1`: bounded connector-host arrays,
+required connector tree digest, optional excerpts (default false), admin approval
+(write-equivalent catalog mode), fixed mapping file, agent user, Python 3, 600-second
+maximum/default timeout and 64 KiB output. Existing script/schedule preview and
+apply APIs are reused; see [BAT pilot](runbooks/BAT-SWEEP-PILOT.md).

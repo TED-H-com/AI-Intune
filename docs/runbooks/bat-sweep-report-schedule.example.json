@@ -1,0 +1,21 @@
+{
+  "name": "bat-sweep-report-pilot",
+  "script_id": "bat-sweep-report-v1",
+  "script_sha256": "8a38c3be5c3c0e9cf69fcd19225753db8ffcd70e9bc77e72d9739a9011d11a31",
+  "args": {
+    "hosts": [
+      "sample-host-a",
+      "sample-host-b"
+    ],
+    "connector_tree_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "include_excerpts": false
+  },
+  "targets": [
+    "connector-node"
+  ],
+  "cron": "17 * * * *",
+  "enabled": false,
+  "catch_up": false,
+  "expected_revision": 0,
+  "reason": "One-week BAT report-only comparison"
+}
