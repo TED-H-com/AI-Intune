@@ -1,26 +1,27 @@
 # Hub Phase 2: Standard Operations
 
 Status: DRAFT — proposed implementation, not authorization to deploy.
-Owner: Ted. Scope: Linux fleet operations after Phase 1. Language: English.
+Owner: The admin. Scope: Linux fleet operations after Phase 1. Language: English.
 Implementation order: disk cleanup, AI login, then application management.
 
 ## 1. Operating principle
 
-Use three layers, escalating in this order:
+The reference deployment uses three layers, escalating in this order:
 
 1. SaaS (Intune Hub): deterministic policy, schedules, execution and evidence.
 2. Hermes: AI assistant agent on C4; uses Hub MCP through a scoped service token
    for judgment, diagnosis, recommendations and narrowly delegated decisions.
-3. Grok Bot by hand: treated as people, explicitly tasked and supervised by Ted.
+3. Grok Bot by hand: treated as people, explicitly tasked and supervised by
+   the reference deployment's owner.
    SSH and Tailscale always remain available for recovery and exceptional work.
 
 The two big tools are **Intune for operations** and **bat-agent-connector for
 development**. Hub actions must not become arbitrary development shell sessions.
 BAT's report-only sweep remains a pilot, not authorization for development writes.
-Hermes never inherits Ted's admin session, sudo authority or browser credentials.
+Hermes never inherits the admin's session, sudo authority or browser credentials.
 Grok Bot receives a concrete task, not standing authority to repair every finding.
 
-Public documents use only these host labels:
+Reference-deployment examples use these host labels:
 
 | Label | Meaning |
 | --- | --- |
@@ -33,6 +34,39 @@ Public documents use only these host labels:
 The real mapping, addresses, users and notification destinations live only in the
 private overlay. APIs authorize immutable machine IDs, never display labels.
 Examples, reports committed to this repository and fixtures contain no real hostnames.
+
+## 1A. Human-first, agent-optional
+
+AI-Intune is a public product. Everyone who installs it must be able to run every
+feature by hand in the Hub web UI, with no AI agent, no chat notifier and none of the
+reference fleet's hosts or conventions. AI agents (Hermes, Grok Bots, any MCP client)
+are an optional layer. They call the same operator services through MCP that the UI
+calls, under the same scopes, approvals and audit.
+
+Rules for every Phase 2 PR:
+
+- **UI first.** Each feature ships a complete, clear web UI in the same delivery as
+  its API:
+  - schedules: list, create/edit with preview, enable/disable, run now, history;
+  - disk: usage and thresholds per machine, safe-tier summaries, a deep-report
+    viewer with approve/reject per item, and the quarantine list with restore and
+    expiry countdown;
+  - login: credential status, warnings, and a **Start re-login** button whose
+    session page shows the verification URL and code;
+  - apps: desired vs observed, upgrade, rollback, and the adopt-or-remove queue.
+- **Same action, any caller.** UI, JSON and MCP share one canonical service, preview/apply
+  binding and ledger. An agent never gets a capability that a human in the UI lacks.
+- **Optional integrations.** Telegram/Discord notifiers, Hermes and service tokens
+  are opt-in. Every alert and login challenge is also visible in the Hub UI.
+  Disabling every integration leaves the product fully usable.
+- **Generic public defaults.** Fleet-specific choices (canary names, freeze dates,
+  notifier recipients, key custody, host labels) live in private deployment
+  configuration (§9), never in public code, fixtures or defaults.
+- **Evidence.** Each UI PR includes screenshots of the new pages (fixture data, no
+  real hostnames) and tests that render them.
+
+The three-layer model in §1 describes how the reference deployment chooses to run
+the product. It is not a requirement of the product.
 
 ## 2. Baseline and references
 
@@ -110,7 +144,7 @@ Return typed safe JSON rather than raw command output. Paginate deep-report deta
 through a bounded structured endpoint; unseen truncated items cannot be approved.
 Execution success and the Hub's post-action health verdict remain separate facts.
 
-### 3.2 Scopes, approvals and Hermes delegation
+### 3.2 Scopes, approvals and optional agent delegation
 
 Human `view`, `operate`, `admin` are exact grants, without implied inheritance.
 Service tokens remain view/operate plus exact method/route-pattern admission.
@@ -119,16 +153,17 @@ Schedule create/update/enable/run-now remains human-only; current schedule reads
 are also human-only unless a separate route-policy change is reviewed.
 
 A safe cleanup schedule is an admin-approved standing authorization with pinned
-policy and script bytes. The scheduler, not Hermes, creates its write jobs.
+policy and script bytes. The scheduler creates its write jobs.
 Add an explicit service-eligibility class only for the new low-risk disk preview
 and decision routes. Require operate scope, exact allowlist, allowed machines,
 category/byte budgets and an unexpired report digest. Default delegation is off.
 No generic write-script route becomes token eligible.
 
-The Hub evaluates policy, records a constrained decision and creates its job in
-one transaction. Hermes cannot supply executable args or edit the delegated policy.
-Until this boundary is implemented and reviewed, Ted approves every deep action.
-All other Phase 2 mutations remain human-admin-only unless explicitly stated.
+The Hub evaluates policy, records a constrained decision and creates its job in one
+transaction. An optional agent (for example Hermes) cannot supply executable args or
+edit the delegated policy. Until this boundary is implemented and reviewed, the
+admin approves every deep action. All other Phase 2 mutations remain
+human-admin-only unless explicitly stated.
 
 Proposed `ops_approvals` records pending/approved/rejected/expired/consumed,
 actor, machine, operation, policy revision, item digest, deadline and job linkage.
@@ -164,17 +199,18 @@ local fallback; current per-schedule overlap checks alone are insufficient.
 ### 3.4 Notifications, audit and secrets
 
 Reuse the Hub notifier and `notifications` ledger; implementation entry point is
-`cmd/clawctl-hub/notify_builtin.go`. Private config chooses Telegram or Discord.
-Also show authenticated UI banners. Normal alerts contain label, operation ID,
-severity, safe reason and authenticated detail link, never private host mapping.
-Reuse per-condition deduplication and failed-send backoff of 1/2/4/8/16/32/60 minutes.
-Send recovery once. Warn after 15 minutes of failed critical-alert delivery.
+`cmd/clawctl-hub/notify_builtin.go`. Authenticated UI banners are always available.
+Private config may opt into a notifier such as Telegram or Discord. Normal alerts
+contain label, operation ID, severity, safe reason and authenticated detail link,
+never private host mapping. Reuse per-condition deduplication and failed-send
+backoff of 1/2/4/8/16/32/60 minutes. Send recovery once. Warn after 15 minutes of
+failed critical-alert delivery.
 
 Login challenge delivery is a separate sensitive payload, not a normal notification
 body. Persist session ID, keyed hash, expiry and outcome only. Default delivery is
-an authenticated link to a no-store Hub banner containing URL/code.
-Direct URL/code delivery is optional to Ted's private configured recipient only,
-with explicit acknowledgment of chat retention. Do not persist or log the payload
+an authenticated link to a no-store Hub banner containing URL/code. Direct URL/code
+delivery is optional to the operator's private configured recipient only, with
+explicit acknowledgment of chat retention. Do not persist or log the payload
 locally, retry expired challenges, or deliver after success/cancel.
 
 Audit actor/layer, capability, source, policy revision, preview digest, approval ID,
@@ -185,6 +221,14 @@ still contain no token hash; service-token authentication storage remains separa
 Private rollback configs stay on-host in 0700 directories with 0600 files.
 
 ## 4. Feature 1 — disk cleanup
+
+### 4.0 UI
+
+- Machine disk page: usage/threshold view and safe-tier summaries.
+- Schedules page: list, create/edit with preview, enable/disable, run now and history.
+- Deep-report viewer: per-item approve/reject and bulk select of reviewed items;
+  apply binds exact selected items and evidence under §3.
+- Quarantine list: restore with preview and expiry countdown per item.
 
 ### 4.1 Safe tier
 
@@ -230,14 +274,14 @@ Policy IDs resolve immutable revisions, checked against the supplied policy dige
 | `disk-safe-clean-v2` | write | Same as preview | Existing summary + job/policy identity / 1800s |
 | `disk-deep-report-v1` | read | `policy_id`, `policy_digest`, `max_items:1..500` | Ranked candidates, completeness / 600s |
 | `disk-approved-quarantine-v1` | write | `manifest_id`, `manifest_digest`, `approval_id` | Per-item moved/skipped/rejected / 900s |
-| `disk-approved-delete-v1` | write | `manifest_id`, `manifest_digest`, `approval_id` | Exact irreversible deletions, Ted only / 900s |
+| `disk-approved-delete-v1` | write | `manifest_id`, `manifest_digest`, `approval_id` | Exact irreversible deletions, human admin only / 900s |
 | `disk-quarantine-expire-v1` | write | `policy_id`, `policy_digest` | Approved TTL deletions/skips / 600s |
 | `disk-quarantine-restore-v1` | write | `manifest_id`, `manifest_digest`, `approval_id` | Restored/conflicted items / 600s |
 
 Generic script apply rejects action scripts without their approval/job binding.
 Knowing a manifest ID grants nothing. Safe-clean needs a standing schedule grant
 or human preview/apply. Root cleanup uses a fixed policy-verifying helper installed
-by Ted; today's agent-user executor cannot simply run root scope.
+by the admin; today's agent-user executor cannot simply run root scope.
 Without that helper retain the local root timer and mark it `local-owned`.
 Root deep inventory needs a fixed read-only helper or returns incomplete/unknown.
 Do not label the existing cleaner dry-run read-class without adapting it: current
@@ -276,7 +320,7 @@ Required discovery categories:
   bind immutable image digest, not mutable tag alone.
 - Large caches and ML models, with last-access evidence and model/service leases.
 - Orphaned processes holding temp/locks, including a stuck `codex-linux-sandbox`
-  holding temp on W1; report PID, boot ID/start time, owner and holder count only.
+  holding temp (e.g. on reference-deployment W1); report PID, boot ID/start time, owner and holder count only.
 - Old agent session stores, e.g. `~/.codex/sessions`, grouped by age.
 - Duplicate archives, verified by bounded content hashing; equal name/size is weak
   evidence and cannot alone establish duplication.
@@ -322,14 +366,16 @@ Reads need view. Human preview/decision/restore needs admin. Delegated preview a
 decision need operate plus explicit route eligibility and identical low-risk checks
 on both calls. Restore and direct deletion are never delegated. No raw paths/commands.
 
-Optional Hermes policy (NOT enabled; Ted decided 2026-10-11 that all cleanup approvals go to him, see §9): quarantine only, agent-user-owned installer staging >14 days
-or reproducible cache artifacts >30 days; high confidence, complete holder evidence,
+Optional agent policy (NOT implemented in Phase 2; all cleanup approvals are human,
+see §9): quarantine only, agent-user-owned installer staging >14 days or
+reproducible cache artifacts >30 days; high confidence, complete holder evidence,
 known owner app, same-filesystem rename, no secrets/user data or active references.
 At most 100 items/1 GiB per decision and 2 GiB per machine per UTC day; one active
-decision per machine. Budgets span all Hermes token chains to prevent splitting.
-Exclude root files, backups, session stores, models, tagged Docker images and PIDs.
-Ted approves everything outside this policy; prohibited paths remain prohibited.
-Process termination is separate Ted-supervised work, never a cleanup action.
+decision per machine. Budgets span all optional-agent token chains to prevent
+splitting. Exclude root files, backups, session stores, models, tagged Docker images
+and PIDs. The admin approves everything outside this policy; prohibited paths remain
+prohibited. Process termination is separate admin-supervised work, never a cleanup
+action.
 
 Approval expires after 30 minutes; source report must be <=6 hours old.
 Digest binds sorted exact item identities, action, TTL, target, report and policy.
@@ -343,22 +389,23 @@ trash preserves identity; root trash stays root-owned. Durably journal each move
 Quarantine does **not** free blocks: report quarantined bytes separately from disk
 space recovered. Pressure never authorizes shortening TTL automatically.
 Cross-filesystem operations, image deletion and other non-reversible actions need
-Ted's explicit delete approval; offer export/restore proof where feasible.
+the admin's explicit delete approval; offer export/restore proof where feasible.
 TTL expiry is covered by original approval but rechecks holds, protections, manifest
 identity and policy revocation. Restore refuses occupied destinations, never overwrites.
 
 ### 4.5 Supervision, security, tests and transition
 
-Warn at >=85% usage; critical at >=93%; deep report triggers strictly >80%.
-Measure `/` and configured data mounts independently. Clear after two readings
-five minutes apart below threshold minus two percentage points. Missing is unknown.
-Require fresh post-clean evidence to claim recovery. Today's local daily-check
-uses 95% critical: migrate it to 93% explicitly and disclose interim disagreement.
-Warn at summary age >48h, two consecutive lock skips, truncated scans or approvals
-pending >24h. Critical pressure alerts immediately and repeats unresolved at 6h.
-Track freed/quarantined bytes, skips, holders, runtime, protection denials, TTL backlog
-and restore success. Hermes reviews evidence; Grok Bot investigates exceptional
-locks/processes through Ted's explicit task, using SSH when needed.
+Warn at >=85% usage; critical at >=93%; deep report triggers strictly >80%. Measure
+`/` and configured data mounts independently. Clear after two readings five minutes
+apart below threshold minus two percentage points. Missing is unknown. Require fresh
+post-clean evidence to claim recovery. Today's local daily-check uses 95% critical:
+migrate it to 93% explicitly and disclose interim disagreement. Warn at summary age
+>48h, two consecutive lock skips, truncated scans or approvals pending >24h.
+Critical pressure alerts immediately and repeats unresolved at 6h. Track
+freed/quarantined bytes, skips, holders, runtime, protection denials, TTL backlog
+and restore success. An optional agent (for example Hermes) reviews evidence; a
+human operator (or a Grok Bot acting for one) investigates exceptional
+locks/processes through the admin's explicit task, using SSH when needed.
 
 Security focus: path races, bind mounts, symlinks/hardlinks, incomplete holder views,
 manifest replay, privileged helper boundary, cache side effects and model leases.
@@ -380,6 +427,12 @@ Keep existing maintenance routes usable until each host's v2 migration succeeds.
 
 ## 5. Feature 2 — AI login and credential continuity
 
+### 5.0 UI
+
+- Credential page: per-machine/provider status, warnings and **Start re-login**.
+- Session page: authenticated no-store verification URL/code, state, expiry and
+  cancel; unsupported flows show private manual steps. Start uses §3 preview/apply.
+
 ### 5.1 Observation and early warning policy
 
 Preserve provider/status/expires_at/source and the renewal-stopped history heuristic.
@@ -399,7 +452,7 @@ refreshability and optional human-recorded renewal deadline, without token data.
 | agy without refresh token | 24 hours / 1 hour before known expiry |
 | claude-automation | Remind day 60 after recorded setup; urgent day 75; unknown age asks baseline |
 | Claude actual recorded deadline | Additionally 14 days / 3 days before deadline |
-| Hermes service token | Rotate <=14 days remaining; warn <=7 days, urgent <=24h if unsuccessful |
+| Optional agent service token | Rotate <=14 days remaining; warn <=7 days, urgent <=24h if unsuccessful |
 
 Claude age reminders are policy, not invented token expiry. An earlier actual
 recorded deadline takes precedence. Warn at unknown credential state >24h;
@@ -407,20 +460,20 @@ confirmed auth failure affecting scheduled work alerts immediately.
 Renewal-stopped remains advisory; an approved bounded auth check confirms failure.
 No paid periodic live prompts by default. Metadata alone does not prove login success.
 When live verification is required, login preview discloses the single bounded
-provider request and possible usage cost; Ted's start approval must include it.
+provider request and possible usage cost; the admin's start approval must include it.
 If not approved and no supported status command proves auth, return
 `verification_required` as a verifying substate until manual confirmation or timeout,
 not succeeded. Generic read scripts cannot opt into that request.
 
 ### 5.2 Detached re-login protocol
 
-Ted selects machine/provider and authorizes start re-login. Hermes recommends and
-monitors, but its existing token cannot start or cancel login sessions.
-Proposed `login_sessions` holds machine, provider, adapter version, state, deadline,
-job link, challenge HMAC/expiry, safe error and final probe timestamp.
-States: requested -> starting -> awaiting_user -> verifying -> succeeded;
-alternatives failed/timed_out/cancelled. One active session per machine/provider;
-idempotency retries return the same session.
+The admin selects machine/provider and authorizes start re-login. An optional agent
+(for example Hermes) recommends and monitors, but its existing token cannot start or
+cancel login sessions. Proposed `login_sessions` holds machine, provider, adapter
+version, state, deadline, job link, challenge HMAC/expiry, safe error and final
+probe timestamp. States: requested -> starting -> awaiting_user -> verifying ->
+succeeded; alternatives failed/timed_out/cancelled. One active session per
+machine/provider; idempotency retries return the same session.
 
 Agent starts a fixed transient systemd user unit with private 0700/0600 runtime
 state and bounded lifetime. A supervised PTY parser owns provider output; disable
@@ -437,15 +490,15 @@ logging/history disabled and no surviving interactive shell after completion.
 
 These are adapter requirements, not a claim every installed version supports them.
 Unsupported agy/device flow returns `manual_required`, never invented flags or a
-public tunnel to a loopback callback. Ted completes that flow privately on-host.
-Automation never completes consent or enters credentials on Ted's behalf.
+public tunnel to a loopback callback. The admin completes that flow privately on-host.
+Automation never completes consent or enters credentials on the admin's behalf.
 
 Proposed machine route `POST /v1/login-sessions/{id}/challenge` binds authenticated
 machine, session and job. Accept bounded codes and HTTPS URLs matching the adapter's
 exact provider host/path/query allowlist; reject arbitrary links and redirects.
 Raw challenge lives only in agent/Hub memory until expiry; database stores HMAC.
 Hub restart invalidates the challenge, cancels session and requires a fresh start.
-Ted's authenticated human UI reveals it with no-store, no analytics, no referrer
+The admin's authenticated human UI reveals it with no-store, no analytics, no referrer
 leakage, no browser persistence and no challenge embedded in the page URL.
 
 Default deadline is 15 minutes; hard maximum is 20 minutes or provider expiry,
@@ -458,13 +511,13 @@ cancel queued sensitive deliveries. Agent restart reconciles scopes and expires
 stale sessions; it never automatically starts login or deletes valid credentials.
 
 `claude setup-token` may output a long-lived token: do not use the generic URL/code
-relay. Initial adapter returns guided manual completion. Ted runs it in a private
-host terminal and writes `~/.config/claude-automation/oauth-token` privately at
-0600 without token values in command arguments. A future local-only capture
-adapter requires separate review; Hub would still receive metadata only.
-Never promise silent Claude token rotation. Never run bare `claude -p` on Oracle/C
-hosts; use `~/.local/bin/claude-automation`. Apply that wrapper rule to all automation.
-Never export tokens in rc files, job args, notifications or persisted PTY logs.
+relay. Initial adapter returns guided manual completion. The admin runs it in a
+private host terminal and writes `~/.config/claude-automation/oauth-token` privately
+at 0600 without token values in command arguments. A future local-only capture
+adapter requires separate review; Hub would still receive metadata only. Never
+promise silent Claude token rotation. All Claude automation uses
+`~/.local/bin/claude-automation`, never bare `claude -p`. Never export tokens in rc
+files, job args, notifications or persisted PTY logs.
 
 ### 5.3 Catalog, tools, scopes and schedules
 
@@ -489,41 +542,49 @@ Proposed prefix `/v1/operator/ai-login`:
 | `ai_login_status` | Session ID | Safe state/expiry/next step; GET `/sessions/{id}` |
 | `ai_login_cancel_preview` / `ai_login_cancel_apply` | Session, common write bindings | Plan/receipt; POST `/cancel/preview`, `/cancel` |
 
-View reads may be allowlisted for Hermes; start/cancel require human admin.
-No MCP output includes codes/URLs/tokens. Proposed GET
-`/v1/operator/ai-login/sessions/{id}/challenge` is human-admin-only with no-store,
-matching the initiating human or Ted's explicit recovery authority. It returns
-URL/code/expiry from memory, never from evidence; service tokens are ineligible.
-Metadata reports run `17 */6 * * *`; CLI hygiene runs `20 7 * * *`, with offsets.
-Check-in probes stay primary; Hub evaluates warnings each minute. Never schedule login.
-Hermes self-rotation uses `ops/hermes/README.md` and existing GET
+View reads may be allowlisted for an optional agent (for example Hermes);
+start/cancel require human admin. No MCP output includes codes/URLs/tokens. Proposed
+GET `/v1/operator/ai-login/sessions/{id}/challenge` is human-admin-only with
+no-store, matching the initiating human or the admin's explicit recovery authority.
+It returns URL/code/expiry from memory, never from evidence; service tokens are
+ineligible. Metadata reports run `17 */6 * * *`; CLI hygiene runs `20 7 * * *`, with
+offsets. Check-in probes stay primary; Hub evaluates warnings each minute. Never
+schedule login. Optional agent self-rotation uses existing GET
 `/v1/operator/service-tokens/self`, POST `/v1/operator/service-tokens/rotate`.
 Preserve 10-minute predecessor overlap, chain deadlines, rate limits and atomic
-private-file replacement; warn before a chain deadline needs Ted's reissuance.
+private-file replacement; warn before a chain deadline needs the admin's reissuance.
 
 ### 5.4 Supervision, tests, migration and rollback
 
 Track completion latency, timeout/cancel rate, stale observations, provider auth
-failures, renewal reminders and rotation failures, without challenge contents.
-Warn after 10m awaiting user, two failed starts or report age >24h; urgent for
-expired required credentials or failed Hermes rotation within 24h of expiry.
-Three failed starts per provider/machine/hour blocks more starts pending Ted review.
-Hermes triages/reminds; Grok Bot helps private host setup only when explicitly
-asked and never copies token output into its conversation transcript.
-Security focus: PTY isolation, phishing URLs, short-code disclosure, cross-machine
-access, chat retention, restart cleanup and credential overwrite races.
-Tests include split prompts/ANSI escapes, tokens adjacent to codes, malformed URLs,
-no raw error output, cancel/expiry races, Hub/agent restart, invalid permissions,
-agy refreshability, unknown Claude expiry and existing rotation recovery cases.
-Assert secret fixtures absent from logs, audit, evidence, notifications and DB dumps.
-Migration records existing metadata and renewal dates, leaving unknown dates unknown.
-Keep manual private login until each adapter passes; pilot one provider/host then
-W2 proxy behavior. Reuse wrapper and sanitized rc-hygiene checks.
+failures, renewal reminders and rotation failures, without challenge contents. Warn
+after 10m awaiting user, two failed starts or report age >24h; urgent for expired
+required credentials or failed optional-agent token rotation within 24h of expiry.
+Three failed starts per provider/machine/hour blocks more starts pending admin
+review. An optional agent (for example Hermes) triages/reminds; a human operator (or
+a Grok Bot acting for one) helps private host setup only when explicitly asked and
+never copies token output into its conversation transcript. Security focus: PTY
+isolation, phishing URLs, short-code disclosure, cross-machine access, chat
+retention, restart cleanup and credential overwrite races. Tests include split
+prompts/ANSI escapes, tokens adjacent to codes, malformed URLs, no raw error output,
+cancel/expiry races, Hub/agent restart, invalid permissions, agy refreshability,
+unknown Claude expiry and existing rotation recovery cases. Assert secret fixtures
+absent from logs, audit, evidence, notifications and DB dumps. Migration records
+existing metadata and renewal dates, leaving unknown dates unknown. Keep manual
+private login until each adapter passes; pilot one provider/host then a proxy cohort
+(e.g. reference-deployment W2). Reuse wrapper and sanitized rc-hygiene checks.
 Rollback disables starts/advisories, cancels sessions and retains valid credentials;
-return to private manual login. Revoke suspected leaks separately, never restore
-an old credential copy automatically.
+return to private manual login. Revoke suspected leaks separately, never restore an
+old credential copy automatically.
 
 ## 6. Feature 3 — managed apps and agent self-upgrade
+
+### 6.0 UI
+
+- Apps page: desired vs observed state, upgrade/rollback with preview, canary and
+  window selection, rollout progress and explicit continuation controls.
+- Adopt-or-remove queue: evidence, adopt/remove/ignore decisions and impact preview.
+  All mutations use §3 bindings, approvals and the shared ledger.
 
 ### 6.1 Per-host desired state
 
@@ -539,31 +600,31 @@ execution never resolves latest. Secret configs stay local, referenced by identi
 | `claude`, `codex` | Pinned npm in versioned prefix | Version/wrapper/PATH; prior prefix | Hub |
 | `agy`, `grok` | Verified pinned release adapter | Version/probe; prior binary/tree | Hub |
 | `openclaw` | Existing artifact deployment | Existing independent gate; prior artifact/config | Hub |
-| `bat-server`, `bat` | Pinned release/package adapter | Endpoint/session continuity; prior release | Ted/development |
-| `bat-agent-connector` | Pinned reviewed tree digest | Connector read probe; prior tree | Ted/development |
-| `hermes` | Pinned package/image on C4 | Process/Hub MCP read; prior package/config | Ted |
-| `cloudflared` | Pinned binary/package | Tunnel health; prior binary/config | Ted |
-| `tailscale` | Pinned package with recovery window | Independent connectivity; prior package/config | Ted |
+| `bat-server`, `bat` | Pinned release/package adapter | Endpoint/session continuity; prior release | Admin/development |
+| `bat-agent-connector` | Pinned reviewed tree digest | Connector read probe; prior tree | Admin/development |
+| `hermes` (optional agent example) | Pinned package/image on a configured host | Process/Hub MCP read; prior package/config | Admin |
+| `cloudflared` | Pinned binary/package | Tunnel health; prior binary/config | Admin |
+| `tailscale` | Pinned package with recovery window | Independent connectivity; prior package/config | Admin |
 
-Declare only apps needed on that host, not the entire list everywhere.
-W2 references private proxy config; C3 has explicit production windows.
-Owner layer defines responsibility, not approval bypass. Hermes cannot upgrade its
-own runtime, connector, service-token policy or Hub.
-Durably back up previous binary/config before every mutation. Keep two successful
-generations for >=14 days plus pinned rollback generations; protect them from cleanup.
-Temporary installer backups do not satisfy this contract.
+Declare only apps needed on that host, not the entire list everywhere. Proxy
+settings and production windows are per-host deployment configuration. Owner layer
+defines responsibility, not approval bypass. An optional agent (for example Hermes)
+cannot upgrade its own runtime, connector, service-token policy or Hub. Durably back
+up previous binary/config before every mutation. Keep two successful generations for
+>=14 days plus pinned rollback generations; protect them from cleanup. Temporary
+installer backups do not satisfy this contract.
 
 Unmanaged discovery adapts sanitized `ops/fleet/tool-removal/inventory.sh` sources:
 packages, system/user units, containers and ports. No arbitrary regex scans via MCP.
 `app_decisions` stores immutable evidence, owner/confidence and pending/adopted/
-remove_approved/ignored state. Ted chooses adopt or remove; unknown provenance blocks
-mutation. Adoption snapshots actual state and rollback feasibility before enforcement.
-Removal needs exact manifest, dependency/service impact and separate approval;
-retain user data by default.
+remove_approved/ignored state. The admin chooses adopt or remove; unknown provenance
+blocks mutation. Adoption snapshots actual state and rollback feasibility before
+enforcement. Removal needs exact manifest, dependency/service impact and separate
+approval; retain user data by default.
 
 Orca is retired: immutable canonical `orca` denylist applies at desired-state write,
 dependency resolution, adapter execution and post-install inventory. Reviewed aliases
-cover package identities. Detection alerts Ted and creates a removal decision;
+cover package identities. Detection alerts the admin and creates a removal decision;
 never auto-adopt or reinstall it, even as a rollback dependency. An ignore decision
 cannot suppress its alert or override the denylist.
 
@@ -596,11 +657,12 @@ Proposed operator prefix `/v1/operator/apps`:
 | `apps_decisions` | Machine, cursor | Decision queue; GET `/decisions` |
 | `apps_decision_preview` / `apps_decision_apply` | Item, adopt/remove/ignore, evidence digest, common bindings | Plan/receipt; POST `/decisions/preview`, `/decisions` |
 
-Reads are view/token-allowlist eligible; mutations stay human-admin-only.
-Hermes proposes timing/explains drift; Grok Bot handles Ted-approved exceptions.
-Inventory runs `45 7 * * *`; health runs `*/15 * * * *` with host offsets.
-Upgrades are not scheduled by default. Any later standing rollout must approve
-exact artifact, targets and window, never unlimited moving-channel updates.
+Reads are view/token-allowlist eligible; mutations stay human-admin-only. An
+optional agent (for example Hermes) proposes timing/explains drift; a human operator
+(or a Grok Bot acting for one) handles admin-approved exceptions. Inventory runs `45
+7 * * *`; health runs `*/15 * * * *` with host offsets. Upgrades are not scheduled
+by default. Any later standing rollout must approve exact artifact, targets and
+window, never unlimited moving-channel updates.
 
 ### 6.3 Canary-to-fleet and rollback
 
@@ -608,27 +670,28 @@ States: planned -> canary_running -> canary_soaking -> awaiting_continue ->
 fleet_running -> complete; alternatives paused/rolling_back/rolled_back/
 manual_intervention. Persist `app_rollouts` separately from OpenClaw deployments;
 OpenClaw entries reference their existing ledger and independent verifier gate.
-Snapshot targets/exact versions; select low-impact C1 or C2 only after private role
-review, never default C3/C4. Require healthy preflight, backup, disk and mutation lock.
-Run one canary, verify functional health/version, soak 24h, then Ted continues with
-fresh evidence/control revision. Add representative arch/proxy cohort canaries.
-Proceed one host at a time, C3/C4 last in separate supervised windows.
-Health checks at 30s/2m/5m require fresh post-upgrade check-in and two passes >=60s
-apart, plus app-specific independent evidence. Failed health blocks promotion;
-unavailable evidence retries to the 5m deadline then rolls back. Any rollback pauses
-fleet. No automatic retry of that release. Original approval binds rollback authority
-and exact prior generation. Incompatible data-schema downgrades remain manual.
+Snapshot targets/exact versions; the operator selects a low-impact canary in the UI
+after reviewing host roles; never default to production or agent-runtime hosts.
+Require healthy preflight, backup, disk and mutation lock. Run one canary, verify
+functional health/version, soak 24h, then the admin continues with fresh
+evidence/control revision. Add representative arch/proxy cohort canaries. Proceed
+one host at a time, production-tagged hosts last in supervised windows. Health
+checks at 30s/2m/5m require fresh post-upgrade check-in and two passes >=60s apart,
+plus app-specific independent evidence. Failed health blocks promotion; unavailable
+evidence retries to the 5m deadline then rolls back. Any rollback pauses fleet. No
+automatic retry of that release. Original approval binds rollback authority and
+exact prior generation. Incompatible data-schema downgrades remain manual.
 
 ### 6.4 Narrow agent upgrade helper
 
-Today Ted downloads an admin-only bootstrap bundle, verifies SHA256 and runs
+Today the admin downloads an admin-only bootstrap bundle, verifies SHA256 and runs
 `ops/install-agent.sh` per host. Without podman use `--no-container-runtime`;
-unmanaged OpenClaw units stay alone. W1/W2 require Ted's sudo password.
+unmanaged OpenClaw units stay alone. Some hosts require a human admin’s sudo password.
 Normal upgrades have no durable rollback guarantee; inspected staging uses temporary
 files for re-enrollment recovery. Durable backup support must precede automation.
 Self-upgrade never re-enrolls or changes Hub URL/machine identity.
 
-1. Ted installs root-owned helper once on W1/W2 and other eligible hosts.
+1. The admin installs root-owned helper once on eligible hosts.
    Sudoers allows exactly `/usr/local/libexec/clawctl-agent-upgrade ""`, meaning
    no arguments, no preserved environment, shell or editor. Test actual sudo
    empty-argument matching and reject wildcard rules.
@@ -653,11 +716,11 @@ Self-upgrade never re-enrolls or changes Hub URL/machine identity.
    fresh check-in, returning a signed transaction health receipt within five minutes.
 9. Missing/failed receipt makes helper restore prior binary and changed managed
    unit/config and restart, including on Hub outage. Recovery depends on neither
-   Hermes nor the new agent. One failed recovery becomes manual intervention.
+   an optional agent (for example Hermes) nor the new agent. One failed recovery becomes manual intervention.
 10. Persist outcome for next check-in; reconcile interrupted job lease by transaction
     ID, never repeat a completed swap because final acknowledgment was lost.
 
-Helper updates and signing-key rotation are separate Ted-approved operations.
+Helper updates and signing-key rotation are separate admin-approved operations.
 Tailscale/cloudflared upgrades need independent watchdog/out-of-band access too;
 never upgrade both access paths in the same window.
 
@@ -665,49 +728,56 @@ never upgrade both access paths in the same window.
 
 Track drift age, unmanaged count, canary wait, rollback rate, backup health,
 check-in delay and denylist detection. Warn drift >24h, queue age >7d or missing
-backup; critical for production health failure, no check-in >5m after swap,
-rollback failure or any Orca detection. One canary failure halts rollout;
->=2 upgrade failures/24h across rollouts disables automatic writes pending Ted review.
-Security focus: cross-machine downloads, signatures, downgrade/replay, archive paths,
-sudoers matching, staging races, secret backups, package hooks and network lockout.
-Tests exercise wrong arch/digest/signature, expired grants, cross-machine denial,
-symlink/hardlink staging, power loss at every journal step, missing-check-in rollback,
-old/new agent reconciliation, proxy preservation, no-container-runtime behavior,
-unmanaged OpenClaw preservation, Orca aliases/dependencies and promotion gates.
-Migration starts inventory-only; Ted adopts recoverable apps. Add durable installer
-backups before helper upgrades. Pilot a cloud VM, then W1/W2 after helper bootstrap
-and demonstrated restoration. Keep manual installer/SSH recovery available.
-Do not combine Hub migration with upgrade; `docs/MOVE-AGENTS.md` remains authoritative.
-Rollback freezes rollouts, restores pinned generations and independently checks
-health. Preserve audit/transactions; check schema compatibility before Hub downgrade.
-Disable helper admission without removing recovery backups.
-Hermes reviews drift, gates and rollback receipts through view tools only. Grok Bot
-receives a specific repair/recovery task from Ted and reports independent evidence;
-it cannot silently bypass a failed canary or change desired state outside the ledger.
+backup; critical for production health failure, no check-in >5m after swap, rollback
+failure or any Orca detection. One canary failure halts rollout; >=2 upgrade
+failures/24h across rollouts disables automatic writes pending admin review.
+Security focus: cross-machine downloads, signatures, downgrade/replay, archive
+paths, sudoers matching, staging races, secret backups, package hooks and network
+lockout. Tests exercise wrong arch/digest/signature, expired grants, cross-machine
+denial, symlink/hardlink staging, power loss at every journal step, missing-check-in
+rollback, old/new agent reconciliation, proxy preservation, no-container-runtime
+behavior, unmanaged OpenClaw preservation, Orca aliases/dependencies and promotion
+gates. Migration starts inventory-only; the admin adopts recoverable apps. Add
+durable installer backups before helper upgrades. Pilot a low-impact host, then
+representative workstations after helper bootstrap and demonstrated restoration.
+Keep manual installer/SSH recovery available. Do not combine Hub migration with
+upgrade; `docs/MOVE-AGENTS.md` remains authoritative. Rollback freezes rollouts,
+restores pinned generations and independently checks health. Preserve
+audit/transactions; check schema compatibility before Hub downgrade. Disable helper
+admission without removing recovery backups. An optional agent (for example Hermes)
+reviews drift, gates and rollback receipts through view tools only. A human operator
+(or a Grok Bot acting for one) receives a specific repair/recovery task from the
+admin and reports independent evidence; it cannot silently bypass a failed canary or
+change desired state outside the ledger.
 
-## 7. Cross-feature supervision and Fly-outage fallback
+## 7. Cross-feature supervision and Hub-outage fallback
 
-Every 15m Hermes reads existing `jobs_summary({kind,machine_id,window,per_machine})`,
+Expose 15m supervision in the Hub UI; an optional agent (for example Hermes) may
+read `jobs_summary({kind,machine_id,window,per_machine})`,
 `approvals_summary({window})`, `hub_status({})`; supported windows are 24h/7d.
 Extend projections with feature metrics and persisted pending-approval age/counts.
 Today's unavailable metrics stay null until backed by a ledger; null is not zero.
 Keep evidence source/sample count on rates. Warn at >=3 failures among >=10 terminal
-jobs/24h; >=5 security denials/minute or a cross-machine attempt pages Ted and
-suspends delegation. Hermes summarizes daily; Hub sends urgent notifications directly.
+jobs/24h; >=5 security denials/minute or a cross-machine attempt pages the admin and
+suspends delegation. An optional agent (for example Hermes) may summarize daily; Hub
+sends urgent notifications directly.
 
-C4 has an independent watchdog and separate private notifier credentials.
-Three failed one-minute Hub probes raise outage; five healthy probes clear it.
-Use a second observer to distinguish C4 network failure where available, otherwise
-report uncertainty. During Fly outage Hermes reports cached evidence age and starts
-no mutations. Local rollback watchdogs continue; bounded active cleanup may finish.
-Cached grants never authorize new starts; detached login scopes expire locally.
+An independent observer runs a watchdog (reference example: C4); any notifier
+credentials are separate and private. Retain outage status for operator review.
+Three failed one-minute Hub probes raise outage; five healthy probes clear it. Use a
+second observer to distinguish observer network failure where available, otherwise
+report uncertainty. During Hub outage an optional agent (for example Hermes) reports
+cached evidence age and starts no mutations. Local rollback watchdogs continue;
+bounded active cleanup may finish. Cached grants never authorize new starts;
+detached login scopes expire locally.
 
-Ted may activate retained local cleanup timers via SSH during prolonged outage,
+The admin may activate retained local cleanup timers via SSH during prolonged outage,
 recording a local ownership epoch and disabling Hub execution admission on-host.
 On reconnect reconcile that epoch before enqueueing work; never blindly re-enable
 schedules or replay missed slots. Backfill summaries with original timestamps and
-mark evidence gaps. C4 is not a second Hub writer or approval authority.
-If C4 also fails, Ted uses SSH/Tailscale with Grok Bot by hand. Private recovery
+mark evidence gaps. The observer is not a second Hub writer or approval authority.
+If the observer also fails, a human operator (or a Grok Bot acting for one) uses
+configured recovery access, such as SSH/Tailscale. Private recovery
 instructions and address mappings remain outside the public repository.
 
 ## 8. Delivery milestones and PR breakdown
@@ -717,62 +787,60 @@ instructions and address mappings remain outside the public repository.
 | P2-01 | Policies, approval ledger, capabilities/runtime profiles | Denial/replay/revocation tests; writes disabled |
 | P2-02 | Safe disk adapters/root helper/summary compatibility | Safety fixtures and canary dry-run parity |
 | P2-03 | Deep report and conditional pressure trigger | No-write proof, bounded scan/protection |
-| P2-04 | Manifest/quarantine/restore and optional Hermes decision | Race/budget tests, restore drill, security review |
+| P2-04 | Manifest/quarantine/restore and human decisions (agent delegation deferred, §9) | Race/budget tests, restore drill, security review |
 | P2-05 | Timer handoff and disk alerts | Week canary, 93% critical, one apply owner |
 | P2-06 | Credential advisories and sensitive transport | No-secret persistence; starts disabled |
-| P2-07 | Provider adapters/UI/notifier/cancel recovery | Ted completes supported flows; Claude manual guide |
+| P2-07 | Provider adapters/UI/notifier/cancel recovery | The admin completes supported flows; Claude manual guide |
 | P2-08 | App inventory/desired/adoption/Orca denylist | Coverage complete, unknowns explicit |
 | P2-09 | Durable installer backups/helper/watchdog | Power-loss and missing-check-in recovery |
 | P2-10 | App rollout adapters/gates | Canary soak, automatic rollback, access-path drill |
-| P2-11 | Supervision/outage recovery | Fly/C4 exercises and ownership reconciliation |
+| P2-11 | Supervision/outage recovery | Hub/observer outage exercises and ownership reconciliation |
 
 Review security before enabling delegated approvals, root cleanup, login transport
-or upgrade helper. Ship default-off gates. Each PR updates relevant source docs,
-MCP schemas, route manifest and tests; run focused Go packages/shell fixtures and
-`go test ./internal/scrubguard`. Ted approves concrete policy and canary evidence
+or upgrade helper. Ship default-off gates. Each feature PR ships its UI, fixture
+screenshots and rendering tests (§1A). Each PR updates relevant source docs, MCP
+schemas, route manifest and tests; run focused Go packages/shell fixtures and `go
+test ./internal/scrubguard`. The admin approves concrete policy and canary evidence
 before fleet enablement. Separate implementation from deployment; never merge
-without Ted's request.
+without the admin's request.
 
-## 9. Decisions (Ted, 2026-10-11) and remaining questions
+## 9. Deployment decisions and remaining questions
 
-Decided:
+AI-Intune is a public product. The defaults in code and docs are generic and safe.
+Each deployment records its own choices in its private configuration (for the
+reference fleet, the private overlay repository), never in public code:
 
-- **Cleanup approvals: Ted only.** The bounded Hermes quarantine policy (§4.4) is
-  not enabled. Every deep-analysis action, quarantine, delete and restore needs
-  Ted's human-admin approval. Hermes recommends and summarizes only. Enabling
-  delegation later is a separate reviewed change.
-- **Login challenge delivery: Telegram** to Ted's private recipient (private
-  config). Ted accepts chat retention for short-lived URL/code payloads. The
-  authenticated no-store Hub banner stays available, and the rules in §3.4 still apply:
-  no persistence or logging of the payload, no delivery after success or cancel.
-- **Rollout order: C1 is the canary.** C3 (production web app) and C4 go last, in
-  separate supervised windows. Never roll out to C3 or C4 during the
-  **2026-10-28 to 2026-11-03 settlement freeze** (a recurring production freeze
-  window in private config). The rollout planner rejects targets inside a
-  configured freeze window. Disk safe-tier schedules on C3 keep running; deep
-  actions on C3 wait for the window to end.
-- **Quarantine TTL: 7 days.** No automatic TTL shortening under pressure (§4.4).
-- **Upgrade-bundle signing key lives on C4**, held by a dedicated non-Hermes
-  system user with 0600 key material. Hermes's runtime user and its service token
-  cannot read it or invoke signing. Hosts pin the public key locally in the helper
-  (§6.4 step 3), so a compromised Hub alone cannot authorize a bundle. Key
-  rotation and recovery are a Ted-approved operation, and the key has an offline
-  backup Ted holds. Because C4 is also the outage fallback, signing is never
-  automatic: each signature is a Ted-approved job.
+| Choice | Public default | Deployment config |
+| --- | --- | --- |
+| Who approves cleanup actions | Human admins only; agent delegation is not implemented | May never be relaxed by config in Phase 2 |
+| Login challenge delivery | Hub UI only (authenticated no-store banner and session page) | Optional notifier: Telegram or Discord recipient |
+| Rollout canary and order | Operator picks the canary in the UI; production-tagged machines go last | Named canary, ordering and per-machine windows |
+| Freeze windows | None | Named date ranges; the planner rejects mutating rollouts and deep actions on tagged machines inside a window (safe-tier schedules keep running) |
+| Quarantine TTL | 7 days | Fixed at 7 days in Phase 2 |
+| Upgrade-bundle signing key | Operator-chosen host, dedicated non-agent user, 0600 key, offline backup | Which host holds it |
+
+The reference deployment chose the stricter options throughout: human-only
+approvals, a private notifier, a non-production canary, production machines last
+and outside a recurring settlement freeze, and the signing key on a dedicated user
+that the agent runtime cannot read. The concrete values live in the private overlay.
+
+Signing-key rules for any deployment: signing is never automatic (each signature is an
+approved job), hosts pin the public key locally in the helper (§6.4 step 3), and a
+compromised Hub alone cannot authorize a bundle.
 
 Remaining questions:
 
 - Confirm Claude renewal reminders and record existing setup dates privately.
-- Confirm helper-eligible hosts and one-time W1/W2 sudo bootstrap/recovery access.
+- Confirm helper-eligible hosts and one-time sudo bootstrap/recovery access on hosts that need a sudo password.
 - Confirm pinned app sources/ownership, especially BAT, agy and Grok; unsupported
   adapters remain inventory-only.
 
 ## 10. Summary matrix
 
-| Feature | Catalog scripts | Schedules | MCP tools | Scope | Approval | Hermes role | Grok Bot role |
+| Feature | Catalog scripts | Schedules | MCP tools | Scope | Approval | An optional agent (for example Hermes) | A human operator (or a Grok Bot acting for one) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Disk safe | `disk-safe-preview-v2`, `disk-safe-clean-v2` | Daily root/user | Generic scripts/schedules, `disk_ops_status` | View; admin setup | Ted standing policy after C1 canary | Review pressure/skips | Investigate exceptional locks with Ted |
-| Disk deep | `disk-deep-report-v1`, `disk-approved-quarantine-v1`, `disk-approved-delete-v1`, `disk-quarantine-expire-v1`, `disk-quarantine-restore-v1` | Weekly/>80% report; daily approved TTL | `disk_report_get`, action preview/decide, restore preview/apply | Operate only for explicit low-risk delegation; otherwise admin | Exact digest; Ted outside policy | Rank/recommend only (delegation off, §9) | Supervised recovery/process investigation |
-| AI login | `ai-credential-report-v1`, `ai-cli-check-v1`, `ai-login-start-v1`, `ai-login-cancel-v1` | Six-hour metadata/daily hygiene; no login schedule | Credentials status; login start/status/cancel | View; human admin mutations/reveal | Ted starts/completes provider auth | Remind/diagnose; rotate own service token | Private setup assistance when asked |
-| Managed apps | Inventory/plan/apply/health/rollback/remove scripts | Daily inventory/15m health | Status, desired, rollout, continue, rollback, decisions | View; admin writes | Ted adoption/exact rollout/continuation | Explain drift and gate evidence | Approved repair/recovery |
-| Agent upgrade | `agent-self-upgrade-v1` | Approved windows only | App rollout/status/rollback | Admin rollout; machine-bound fetch | Ted helper bootstrap/target approval | Observe check-in/rollback | Supervised SSH recovery; Ted handles sudo |
+| Disk safe | `disk-safe-preview-v2`, `disk-safe-clean-v2` | Daily root/user | Generic scripts/schedules, `disk_ops_status` | View; admin setup | Admin standing policy after canary | Review pressure/skips | Investigate exceptional locks with the admin |
+| Disk deep | `disk-deep-report-v1`, `disk-approved-quarantine-v1`, `disk-approved-delete-v1`, `disk-quarantine-expire-v1`, `disk-quarantine-restore-v1` | Weekly/>80% report; daily approved TTL | `disk_report_get`, action preview/decide, restore preview/apply | Operate only for explicit low-risk delegation; otherwise admin | Exact digest; the admin outside policy | Rank/recommend only (delegation off, §9) | Supervised recovery/process investigation |
+| AI login | `ai-credential-report-v1`, `ai-cli-check-v1`, `ai-login-start-v1`, `ai-login-cancel-v1` | Six-hour metadata/daily hygiene; no login schedule | Credentials status; login start/status/cancel | View; human admin mutations/reveal | The admin starts/completes provider auth | Remind/diagnose; rotate own service token | Private setup assistance when asked |
+| Managed apps | Inventory/plan/apply/health/rollback/remove scripts | Daily inventory/15m health | Status, desired, rollout, continue, rollback, decisions | View; admin writes | Admin adoption/exact rollout/continuation | Explain drift and gate evidence | Approved repair/recovery |
+| Agent upgrade | `agent-self-upgrade-v1` | Approved windows only | App rollout/status/rollback | Admin rollout; machine-bound fetch | Admin helper bootstrap/target approval | Observe check-in/rollback | Supervised SSH recovery; the admin handles sudo |
