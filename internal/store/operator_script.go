@@ -70,22 +70,25 @@ func scriptScope(e scriptcatalog.Entry, a AuditEntry) error {
 }
 func scriptDetail(req ScriptRunRequest, jobs []string) string {
 	raw, _ := json.Marshal(struct {
-		ID      string   `json:"script_id"`
-		SHA     string   `json:"sha256"`
-		Args    string   `json:"args_digest"`
-		Targets []string `json:"targets"`
-		Jobs    []string `json:"job_ids"`
-	}{req.ScriptID, req.ScriptSHA256, scriptcatalog.Digest(req.Args), req.Targets, jobs})
+		ID            string `json:"script_id"`
+		SHA           string `json:"sha256"`
+		Args          string `json:"args_digest"`
+		TargetCount   int    `json:"target_count"`
+		TargetsDigest string `json:"targets_digest"`
+		JobCount      int    `json:"job_count"`
+		JobsDigest    string `json:"job_ids_digest"`
+	}{req.ScriptID, req.ScriptSHA256, scriptcatalog.Digest(req.Args), len(req.Targets), scriptcatalog.Digest(mustScriptJSON(req.Targets)), len(jobs), scriptcatalog.Digest(mustScriptJSON(jobs))})
 	return string(raw)
 }
 
 // ScriptRun validates and creates the complete fanout in a single writer
-// transaction with idempotency and per-target audit rows. No migration needed.
+// transaction with idempotency and one bounded audit row per request. No migration needed.
 func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit AuditEntry) (out ScriptRunResult, err error) {
 	audit.Action = AuditScriptPreview
 	if apply {
 		audit.Action = AuditScriptApply
 	}
+	audit.MachineID = ""
 	audit.Subject = "script catalog"
 	audit.IdempotencyKey = key
 	original := req
@@ -186,32 +189,18 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 				return out, ce
 			}
 			out.JobIDs = append(out.JobIDs, job)
-			row := audit
-			row.MachineID = id
-			row.OK = true
-			single := req
-			single.Targets = []string{id}
-			row.Detail = scriptDetail(single, []string{job})
-			if ce = s.recordAuditTx(tx, row); ce != nil {
-				return out, ce
-			}
 		}
 		_, err = tx.Exec(`INSERT INTO operator_idempotency (idempotency_key,operation,request_digest,outcome,response_json,created_at) VALUES (?,'script_v1',?,'ok',?,?)`, key, audit.RequestDigest, string(mustScriptJSON(out)), fmtTime(audit.At))
 		if err != nil {
 			return out, err
 		}
-	} else {
-		// One row per target keeps bounded audit Detail complete even at 50 targets.
-		for _, id := range req.Targets {
-			row := audit
-			row.MachineID = id
-			row.OK = true
-			row.Detail = scriptDetail(ScriptRunRequest{ScriptID: req.ScriptID, ScriptSHA256: req.ScriptSHA256, Args: req.Args, Targets: []string{id}}, nil)
-			if err = s.recordAuditTx(tx, row); err != nil {
-				return out, err
-			}
-		}
 	}
+	audit.OK = true
+	audit.Detail = scriptDetail(req, out.JobIDs)
+	if err = s.recordAuditTx(tx, audit); err != nil {
+		return out, err
+	}
+
 	return out, tx.Commit()
 }
 func mustScriptJSON(v any) []byte { raw, _ := json.Marshal(v); return raw }

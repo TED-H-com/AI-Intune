@@ -561,3 +561,15 @@ evidence contains capped stdout/stderr plus a `script_v1_metadata` record with d
 exit code, timeout, truncation flags and full-stream hashes. Audit contains identities,
 argument/output digests and status, never raw output. Catalog scripts are trusted reviewed
 code; phase 1 does not introduce an OS filesystem sandbox or arbitrary command input.
+
+Script preview and apply share a process-local token bucket: 30 requests/minute per
+verified authenticated subject (burst 30), plus 300 requests/minute globally (burst 300).
+Changing node, source address, forwarded headers, action, or idempotency key does not
+reset a subject's allowance. Admission runs before decoding or auditing and includes
+apply replays and rejected requests. Exhaustion returns HTTP 429 with the existing
+JSON `RATE_LIMITED` error, `Cache-Control: no-store`, and `Retry-After: 2`; it does not
+write an audit row. Buckets reset on Hub restart and are not shared across processes.
+Each admitted preview/apply request records one bounded audit row: script/hash and args
+digest, counts and digests of the full ordered target/job lists. Apply receipts retain
+all job IDs; completion audit remains per job. Job fanout, receipt, and request audit
+still commit atomically.

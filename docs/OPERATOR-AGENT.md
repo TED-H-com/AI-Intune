@@ -212,3 +212,15 @@ write scripts require `admin`. Only the harmless
 Linux `fleet-probe-v1` is registered in phase 1. The agent runs without elevation
 and refuses root execution. Output is capped/redacted job evidence; audit stores
 only metadata/digests. Use `job_get` / `job_evidence` to inspect resulting jobs.
+
+Script preview and apply share a process-local token bucket: 30 requests/minute per
+verified authenticated subject (burst 30), plus 300 requests/minute globally (burst 300).
+Changing node, source address, forwarded headers, action, or idempotency key does not
+reset a subject's allowance. Admission runs before decoding or auditing and includes
+apply replays and rejected requests. Exhaustion returns HTTP 429 with the existing
+JSON `RATE_LIMITED` error, `Cache-Control: no-store`, and `Retry-After: 2`; it does not
+write an audit row. Buckets reset on Hub restart and are not shared across processes.
+Each admitted preview/apply request records one bounded audit row: script/hash and args
+digest, counts and digests of the full ordered target/job lists. Apply receipts retain
+all job IDs; completion audit remains per job. Job fanout, receipt, and request audit
+still commit atomically.

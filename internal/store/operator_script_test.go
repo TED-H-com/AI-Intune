@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"strings"
@@ -170,5 +171,84 @@ func TestScriptCompletionRequiresMatchingMetadata(t *testing.T) {
 	}
 	if _, err = st.MarkSucceededIfVerified(id, now); err != ErrNoVerification {
 		t.Fatalf("missing metadata must block success: %v", err)
+	}
+}
+
+func TestScriptRunFanoutHasOneBoundedRequestAudit(t *testing.T) {
+	st, req, actor, now := scriptFixture(t)
+	for i := 1; i < 50; i++ {
+		id := mustEnroll(t, st, fmt.Sprintf("probe-node-%02d", i), now)
+		c := healthyCheckin(now)
+		c.ScriptV1 = true
+		if err := st.RecordCheckin(id, c, now); err != nil {
+			t.Fatal(err)
+		}
+		req.Targets = append(req.Targets, id)
+	}
+	check := func(action AuditAction, wantCount int, result ScriptRunResult, replayed bool) {
+		t.Helper()
+		var count int
+		if err := st.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action=?`, action).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != wantCount {
+			t.Fatalf("request audit count=%d want=%d for %s", count, wantCount, action)
+		}
+		rows, err := st.Audit("", 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			if row.Action != action {
+				continue
+			}
+			detail := row.Detail
+			if replayed {
+				detail = strings.TrimPrefix(detail, OperatorIdempotencyReplayPrefix)
+			}
+			if len(row.Detail) > auditMaxReason || !json.Valid([]byte(detail)) {
+				t.Fatalf("audit is truncated or invalid JSON: %q", row.Detail)
+			}
+			var metadata struct {
+				TargetCount   int    `json:"target_count"`
+				TargetsDigest string `json:"targets_digest"`
+				JobCount      int    `json:"job_count"`
+				JobsDigest    string `json:"job_ids_digest"`
+			}
+			if err := json.Unmarshal([]byte(detail), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if metadata.TargetCount != 50 || metadata.TargetsDigest != scriptcatalog.Digest(mustScriptJSON(result.Targets)) || metadata.JobCount != len(result.JobIDs) || metadata.JobsDigest != scriptcatalog.Digest(mustScriptJSON(result.JobIDs)) {
+				t.Fatalf("audit lost complete fanout correlation: %+v", metadata)
+			}
+			if row.AuthSubject != actor.AuthSubject || row.MachineID != "" {
+				t.Fatalf("request audit provenance %+v", row)
+			}
+			return
+		}
+		t.Fatal("missing request audit")
+	}
+	preview, err := st.ScriptRun(req, false, "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(AuditScriptPreview, 1, preview, false)
+	req.PreviewDigest = preview.PreviewDigest
+	applied, err := st.ScriptRun(req, true, "fanout-key", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied.JobIDs) != 50 {
+		t.Fatalf("fanout created %d jobs", len(applied.JobIDs))
+	}
+	check(AuditScriptApply, 1, applied, false)
+	replay, err := st.ScriptRun(req, true, "fanout-key", actor)
+	if err != nil || !replay.Replayed {
+		t.Fatalf("replay %+v %v", replay, err)
+	}
+	check(AuditScriptApply, 2, replay, true)
+	var jobs int
+	if err := st.rdb.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&jobs); err != nil || jobs != 50 {
+		t.Fatalf("replay changed fanout: %d %v", jobs, err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/store"
 	"io"
 	"net/http"
+	"time"
 )
 
 func (h *hub) handleScriptCatalog(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +27,19 @@ func (h *hub) handleScriptApply(w http.ResponseWriter, r *http.Request) {
 	h.handleScriptRun(w, r, true)
 }
 func (h *hub) handleScriptRun(w http.ResponseWriter, r *http.Request, apply bool) {
+	principal, ok := operatorauth.PrincipalFromContext(r.Context())
+	if !ok || principal.StableSubject() == "" {
+		w.Header().Set("Cache-Control", "no-store")
+		writeErr(w, http.StatusForbidden, "SCRIPT_SCOPE_REQUIRED", "authenticated script principal required")
+		return
+	}
+	if !h.scriptRunLimiter.allow(principal.StableSubject(), time.Now()) {
+		// A rejection must not amplify writes through another audit row.
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Retry-After", "2")
+		writeErr(w, http.StatusTooManyRequests, "RATE_LIMITED", "script request rate limit exceeded; retry shortly")
+		return
+	}
 	actor := operatorActor(r)
 	action := store.AuditScriptPreview
 	if apply {
