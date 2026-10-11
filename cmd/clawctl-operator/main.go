@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/teddashh/AI-Intune/internal/operatoragent"
 	"github.com/teddashh/AI-Intune/internal/operatorclient"
@@ -64,6 +65,42 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	svc := &operatoragent.Service{Hub: client, Version: version}
 	switch rest[0] {
+	case "token":
+		if len(rest) < 2 || rest[1] != "rotate" || tokenFile == "" {
+			fmt.Fprintln(errOut, "Usage: clawctl-operator --hub-url https://HUB token rotate --token-file PATH [--min-remaining 14d] [--force]")
+			return errUsage
+		}
+		threshold := 14 * 24 * time.Hour
+		force := false
+		for i := 2; i < len(rest); i++ {
+			switch rest[i] {
+			case "--force":
+				force = true
+			case "--min-remaining":
+				if i+1 >= len(rest) {
+					return errUsage
+				}
+				i++
+				threshold, err = operatorclient.ParseRotationDuration(rest[i])
+				if err != nil {
+					fmt.Fprintln(errOut, err)
+					return errUsage
+				}
+			default:
+				return errUsage
+			}
+		}
+		rotated, rotateErr := client.RotateTokenFile(context.Background(), tokenFile, threshold, force)
+		if rotateErr != nil {
+			fmt.Fprintln(errOut, rotateErr)
+			return rotateErr
+		}
+		if rotated {
+			fmt.Fprintln(out, "Service token rotated.")
+		} else {
+			fmt.Fprintln(out, "Service token rotation not due.")
+		}
+		return nil
 	case "mcp":
 		if len(rest) != 1 {
 			fmt.Fprintln(errOut, "mcp does not take arguments")
@@ -169,12 +206,14 @@ const usageText = `clawctl-operator — call the Hub operator JSON API from a ta
 
   clawctl-operator [--hub-url http://100.x.y.z:8787] mcp
   clawctl-operator [--hub-url URL] call <tool> [json]
+  clawctl-operator --hub-url HTTPS_ORIGIN token rotate --token-file PATH [--min-remaining 14d] [--force]
   clawctl-operator [--hub-url URL] tools
   clawctl-operator version
 
 Identity is the Tailscale node this process runs on. Hub WhoIs the TCP source.
 Use --token-file PATH with --hub-url https://hub.example.com for service auth.
 The token file must be regular, not a symlink, and mode 0600.
+Rotation exits 0 when rotated or not due, 1 on failure, 2 for invalid usage.
 CLAWCTL_HUB_URL is the same origin when --hub-url is omitted.
 Write tools need preview_digest from a previous preview call.
 `
