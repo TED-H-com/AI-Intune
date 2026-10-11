@@ -1186,6 +1186,11 @@ func credUnparseable(provider, path string, err error) model.Credential {
 
 // privateCredential reads only regular, user-owned private files. Reasons never contain contents.
 func privateCredential(provider, source, path string, exactMode bool) ([]byte, model.Credential, bool) {
+	return privateCredentialWithOpener(provider, source, path, exactMode, openPrivateCredential)
+}
+
+// The opener argument allows deterministic replacement-race regression tests.
+func privateCredentialWithOpener(provider, source, path string, exactMode bool, opener func(string) (*os.File, error)) ([]byte, model.Credential, bool) {
 	c := model.Credential{Provider: provider, Source: source, Status: model.CredFailed}
 	fi, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -1207,20 +1212,39 @@ func privateCredential(provider, source, path string, exactMode bool) ([]byte, m
 	if fi.Mode().Perm()&0077 != 0 || (exactMode && fi.Mode().Perm() != 0600) {
 		return fail(fmt.Sprintf("mode %04o, want 0600", fi.Mode().Perm()))
 	}
-	f, err := os.Open(path)
+	f, err := opener(path)
 	if err != nil {
 		return fail("cannot read credential file")
 	}
 	defer f.Close()
 	opened, err := f.Stat()
-	if err != nil || !os.SameFile(fi, opened) {
+	if err != nil {
+		return fail("cannot inspect opened credential file")
+	}
+	if !opened.Mode().IsRegular() {
+		return fail("credential file is not a regular file")
+	}
+	if !credentialOwnedByUser(opened) {
+		return fail("credential file is not owned by current user")
+	}
+	if opened.Mode().Perm()&0077 != 0 || (exactMode && opened.Mode().Perm() != 0600) {
+		return fail(fmt.Sprintf("mode %04o, want 0600", opened.Mode().Perm()))
+	}
+	if opened.Size() > 64*1024 {
+		return fail("credential file too large; limit 64 KiB")
+	}
+	if !os.SameFile(fi, opened) {
 		return fail("credential file changed during inspection")
 	}
+	if err := credentialBlockingRead(f); err != nil {
+		return fail("cannot prepare credential file for reading")
+	}
+
 	b, err := io.ReadAll(io.LimitReader(f, 64*1024+1))
 	if err != nil || len(b) > 64*1024 {
 		return fail("cannot read credential file or file too large")
 	}
-	mt := fi.ModTime().UTC()
+	mt := opened.ModTime().UTC()
 	c.FileMTime = &mt
 	return b, c, true
 }
