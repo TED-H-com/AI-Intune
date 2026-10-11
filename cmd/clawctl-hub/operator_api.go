@@ -295,8 +295,12 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 	} {
 		mux.HandleFunc(patterns[diskClean+i], handler)
 	}
-	patterns = append(patterns, "GET /v1/operator/script-catalog", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs")
+	patterns = append(patterns, "GET /v1/operator/schedules", "GET /v1/operator/schedules/{id}", "POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now", "GET /v1/operator/script-catalog", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs")
 	mux.HandleFunc("GET /v1/operator/script-catalog", h.handleScriptCatalog)
+	mux.HandleFunc("GET /v1/operator/schedules", h.handleScheduleList)
+	mux.HandleFunc("GET /v1/operator/schedules/{id}", h.handleScheduleGet)
+	mux.HandleFunc("POST /v1/operator/schedules/{operation}/{phase}", h.handleScheduleManage)
+	mux.HandleFunc("POST /v1/operator/schedules/{id}/run-now", h.handleScheduleRunNow)
 	mux.HandleFunc("POST /v1/operator/script-runs/preview", h.handleScriptPreview)
 	mux.HandleFunc("POST /v1/operator/script-runs", h.handleScriptApply)
 	return patterns

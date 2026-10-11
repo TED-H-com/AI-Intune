@@ -213,7 +213,8 @@ Linux `fleet-probe-v1` is registered in phase 1. The agent runs without elevatio
 and refuses root execution. Output is capped/redacted job evidence; audit stores
 only metadata/digests. Use `job_get` / `job_evidence` to inspect resulting jobs.
 
-Script preview and apply share a process-local token bucket: 30 requests/minute per
+Script preview/apply, schedule upsert/set-enabled preview/apply, and schedule
+run-now share a process-local token bucket: 30 requests/minute per
 verified authenticated subject (burst 30), plus 300 requests/minute globally (burst 300).
 Changing node, source address, forwarded headers, action, or idempotency key does not
 reset a subject's allowance. Admission runs before decoding or auditing and includes
@@ -224,3 +225,16 @@ Each admitted preview/apply request records one bounded audit row: script/hash a
 digest, counts and digests of the full ordered target/job lists. Apply receipts retain
 all job IDs; completion audit remains per job. Job fanout, receipt, and request audit
 still commit atomically.
+
+Schedule tools: `schedule_list`, `schedule_get` (view),
+`schedule_upsert_preview` / `schedule_upsert_apply`,
+`schedule_set_enabled_preview` / `schedule_set_enabled_apply`, and
+`schedule_run_now` (operate for read scripts; admin for write scripts).
+Apply requires the matching preview digest, idempotency key, and current
+`expected_revision`; use zero for a new schedule. Cron is five-field UTC with a
+five-minute minimum. Missed runs are discarded, overlaps are audited and skipped.
+A changed catalog hash pauses the schedule until an upsert approves the new hash.
+Run-now requires an `idempotency_key` and replays the original job IDs across
+minutes and restarts. Manual receipts use a separate operation namespace from
+cron slots. Late ticks and startup record `skipped_late` / `skipped_restart`
+receipts and bounded scheduler audit entries describing the discarded range.
