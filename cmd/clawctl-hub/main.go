@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -54,6 +55,11 @@ type hub struct {
 	// this Hub process. The startup recovery worker and runtime queue worker must
 	// share it so they use one fixed fetch policy and artifacts directory.
 	operatorService *operator.Service
+
+	// One process-owned guard/cache for all supervision routes, including
+	// fixtures that do not configure the artifact-aware operator service.
+	supervisionOnce sync.Once
+	supervision     *operator.SupervisionService
 
 	// hubHost 是這個 process 的 --hub-host：Hub 自己那台機器的名字。
 	// Dashboard 用它偵測「Hub 裝在它自己管的機器上」，verifier registration

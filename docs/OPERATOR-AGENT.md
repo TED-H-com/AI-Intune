@@ -247,3 +247,22 @@ admin scope is required to run/schedule this report-only, write-equivalent entry
 is bounded at 600 seconds. The
 [runbook](runbooks/BAT-SWEEP-PILOT.md) includes the disabled schedule example,
 preview/apply workflow and one-week comparison criteria.
+
+## Supervision tools
+
+`jobs_summary`, `approvals_summary`, and `hub_status` call the corresponding
+`GET /v1/operator/{jobs-summary,approvals-summary,hub-status}` APIs with `view`.
+All have `readOnlyHint=true` and closed argument schemas. Jobs accept `kind`,
+`machine_id`, `per_machine`, and `window` (`24h` or `7d`); approvals accept
+`window`; status accepts no arguments. Omit window for both rolling windows.
+Null metrics/flags mean unavailable evidence, not healthy or zero. In particular,
+this branch does not persist successful previews or pending approvals, scheduler
+cadence, or Litestream sync telemetry. Partial scans explicitly return
+`truncated`; clients must not treat their counts as complete. See
+[the supervision contract](API-SURFACE.md#read-only-supervision) for definitions.
+
+Supervision replies include `cached_at`: successful data is reused for up to
+30 seconds. All three tools share the authenticated subject's request budget
+(burst 10, refill 30/minute), including cache hits. Saturated computations or
+exhausted budgets return 429 (`SUPERVISION_BUSY` / `SUPERVISION_RATE_LIMITED`)
+with `Retry-After: 2`; retry after that delay rather than issuing parallel reads.
