@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"path"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -105,21 +106,23 @@ type OpsPolicy struct {
 	SupersededAt *time.Time      `json:"superseded_at,omitempty"`
 }
 type DiskPolicyRequest struct {
-	ID               string          `json:"id"`
-	Body             json.RawMessage `json:"body"`
-	ExpectedRevision *int64          `json:"expected_revision"`
-	ExpiresAt        time.Time       `json:"expires_at,omitempty"`
-	PreviewDigest    string          `json:"preview_digest,omitempty"`
-	Reason           string          `json:"reason"`
+	ID                      string          `json:"id"`
+	Body                    json.RawMessage `json:"body"`
+	ExpectedRevision        *int64          `json:"expected_revision"`
+	ExpiresAt               time.Time       `json:"expires_at,omitempty"`
+	PreviewDigest           string          `json:"preview_digest,omitempty"`
+	Reason                  string          `json:"reason"`
+	AcknowledgeRemovedPaths []string        `json:"acknowledge_removed_paths,omitempty"`
 }
 type DiskPolicyResult struct {
-	Policy           OpsPolicy       `json:"policy"`
-	ExpectedRevision int64           `json:"expected_revision"`
-	ExpiresAt        time.Time       `json:"expires_at"`
-	PreviewDigest    string          `json:"preview_digest"`
-	Replayed         bool            `json:"replayed"`
-	Warnings         []string        `json:"warnings"`
-	PreviousBody     json.RawMessage `json:"previous_body,omitempty"`
+	Policy              OpsPolicy       `json:"policy"`
+	ExpectedRevision    int64           `json:"expected_revision"`
+	ExpiresAt           time.Time       `json:"expires_at"`
+	PreviewDigest       string          `json:"preview_digest"`
+	Replayed            bool            `json:"replayed"`
+	Warnings            []string        `json:"warnings"`
+	PreviousBody        json.RawMessage `json:"previous_body,omitempty"`
+	RemovedProtectPaths []string        `json:"removed_protect_paths,omitempty"`
 }
 
 func humanDiskAdmin(a AuditEntry) error {
@@ -194,7 +197,7 @@ func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, 
 	if !validJobReadStoredIdentifier(req.ID, 128) || req.ExpectedRevision == nil || *req.ExpectedRevision < 0 || strings.TrimSpace(req.Reason) == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
 		return rejectEarly(operatorError("BAD_REQUEST", "id, expected_revision and safe reason required"))
 	}
-	_, body, bodyDigest, err := CanonicalDiskPolicy(req.Body)
+	policy, body, bodyDigest, err := CanonicalDiskPolicy(req.Body)
 	if err != nil {
 		return rejectEarly(err)
 	}
@@ -203,9 +206,8 @@ func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, 
 	if !apply {
 		req.ExpiresAt = now.Add(30 * time.Minute)
 	}
-	binding := req
-	binding.PreviewDigest = ""
-	digest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(binding))
+	req.AcknowledgeRemovedPaths = append([]string(nil), req.AcknowledgeRemovedPaths...)
+	sort.Strings(req.AcknowledgeRemovedPaths)
 	audit.RequestDigest = "sha256:" + scriptcatalog.Digest(mustScriptJSON(struct {
 		Actor   string
 		Request DiskPolicyRequest
@@ -250,7 +252,9 @@ func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, 
 		if !errors.Is(e, sql.ErrNoRows) {
 			return out, e
 		}
-		if req.PreviewDigest != digest || !req.ExpiresAt.After(now) || req.ExpiresAt.After(now.Add(30*time.Minute)) {
+		applyBinding := req
+		applyBinding.PreviewDigest = ""
+		if req.PreviewDigest != "sha256:"+scriptcatalog.Digest(mustScriptJSON(applyBinding)) || !req.ExpiresAt.After(now) || req.ExpiresAt.After(now.Add(30*time.Minute)) {
 			return reject("PRECONDITION_FAILED", "invalid or expired preview binding")
 		}
 	}
@@ -269,7 +273,42 @@ func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, 
 		}
 		previousBody = json.RawMessage(previous)
 	}
-	out = DiskPolicyResult{Policy: OpsPolicy{ID: req.ID, Kind: "disk", Revision: revision + 1, Body: body, Digest: bodyDigest, CreatedBy: audit.AuthSubject, CreatedAt: now}, ExpectedRevision: revision, ExpiresAt: req.ExpiresAt, PreviewDigest: digest, PreviousBody: previousBody, Warnings: []string{"Execution requires reviewed disk adapters and deployment-configured canary evidence."}}
+	var previousPolicy DiskPolicy
+	if len(previousBody) > 0 {
+		if err = json.Unmarshal(previousBody, &previousPolicy); err != nil {
+			return out, err
+		}
+	}
+	removed := []string{}
+	nextPaths := map[string]bool{}
+	for _, v := range policy.ProtectPaths {
+		nextPaths[v] = true
+	}
+	for _, v := range previousPolicy.ProtectPaths {
+		if !nextPaths[v] {
+			removed = append(removed, v)
+		}
+	}
+	sort.Strings(removed)
+	if apply && len(removed) > 0 && !reflect.DeepEqual(req.AcknowledgeRemovedPaths, removed) {
+		return reject("PRECONDITION_FAILED", "explicit acknowledgement of every removed protection required")
+	}
+	if len(removed) == 0 && len(req.AcknowledgeRemovedPaths) > 0 {
+		return reject("BAD_REQUEST", "unexpected removal acknowledgement")
+	}
+	// Preview lists the exact acknowledgement set. Apply must supply the same set;
+	// both the preview digest and the transaction's current revision bind it.
+	binding := req
+	binding.PreviewDigest = ""
+	binding.AcknowledgeRemovedPaths = nil
+	if len(removed) > 0 {
+		binding.AcknowledgeRemovedPaths = removed
+	}
+	digest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(binding))
+	if apply && req.PreviewDigest != digest {
+		return reject("PRECONDITION_FAILED", "invalid preview binding")
+	}
+	out = DiskPolicyResult{Policy: OpsPolicy{ID: req.ID, Kind: "disk", Revision: revision + 1, Body: body, Digest: bodyDigest, CreatedBy: audit.AuthSubject, CreatedAt: now}, ExpectedRevision: revision, ExpiresAt: req.ExpiresAt, PreviewDigest: digest, PreviousBody: previousBody, RemovedProtectPaths: removed, Warnings: []string{"Execution requires reviewed disk adapters and deployment-configured canary evidence."}}
 	if apply {
 		if _, err = tx.Exec(`UPDATE ops_policies SET superseded_at=? WHERE id=? AND superseded_at IS NULL`, fmtTime(now), req.ID); err != nil {
 			return out, err
@@ -292,11 +331,13 @@ func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, 
 	}
 	audit.OK = true
 	audit.Detail = string(mustScriptJSON(struct {
-		PolicyID      string `json:"policy_id"`
-		Revision      int64  `json:"revision"`
-		PolicyDigest  string `json:"policy_digest"`
-		PreviewDigest string `json:"preview_digest"`
-	}{req.ID, out.Policy.Revision, bodyDigest, digest}))
+		PolicyID           string `json:"policy_id"`
+		Revision           int64  `json:"revision"`
+		PolicyDigest       string `json:"policy_digest"`
+		PreviewDigest      string `json:"preview_digest"`
+		RemovedPathCount   int    `json:"removed_path_count"`
+		RemovedPathsDigest string `json:"removed_paths_digest"`
+	}{req.ID, out.Policy.Revision, bodyDigest, digest, len(removed), "sha256:" + scriptcatalog.Digest(mustScriptJSON(removed))}))
 	if err = s.recordAuditTx(tx, audit); err != nil {
 		return out, err
 	}

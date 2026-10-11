@@ -41,6 +41,7 @@ func TestDiskOpsPolicyAPIFlagBindingsAndRead(t *testing.T) {
 			t.Fatalf("apply %d %s", rec.Code, rec.Body.String())
 		}
 	}
+	assertDiskJSONLocalDenied(t, f.mux, "/v1/operator/disk-ops/policies", "disk-create", string(mustDiskOpsJSON(t, req)))
 	for _, path := range []string{"/v1/operator/disk-ops/policies", "/v1/operator/disk-ops/policies/disk-default", "/v1/operator/disk-ops/approvals"} {
 		r := verifiedOperatorRequest(httptest.NewRequest("GET", path, nil), operatorauth.View)
 		w := httptest.NewRecorder()
@@ -87,7 +88,7 @@ func TestDiskOpsRoutesDenyTokenWritesAndPolicyPaths(t *testing.T) {
 
 func diskOpsAdminRequest(t *testing.T, mux *http.ServeMux, path, key, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	r := verifiedOperatorRequest(httptest.NewRequest("POST", path, strings.NewReader(body)), operatorauth.Admin)
+	r := operatorauth.WithPrincipal(httptest.NewRequest("POST", path, strings.NewReader(body)), operatorauth.Principal{AuthMethod: operatorauth.AuthMethodLocalAPI, TailnetUserID: "fixture-human", AuthorizedCapability: "example.com/cap/clawctl-admin", GrantedCapabilities: operatorauth.CapabilityNames{Admin: "example.com/cap/clawctl-admin"}})
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Idempotency-Key", key)
 	w := httptest.NewRecorder()
@@ -215,6 +216,7 @@ func TestDiskApprovalDecisionJSONPreviewApplyReplay(t *testing.T) {
 			t.Fatalf("apply %d %s", w.Code, w.Body.String())
 		}
 	}
+	assertDiskJSONLocalDenied(t, f.mux, path, "approval-decision", raw)
 	r := httptest.NewRequest("POST", path, strings.NewReader(raw))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Idempotency-Key", "approval-decision")
@@ -223,5 +225,35 @@ func TestDiskApprovalDecisionJSONPreviewApplyReplay(t *testing.T) {
 	f.mux.ServeHTTP(w, r)
 	if w.Code != 403 || w.Header().Get("Idempotency-Replayed") != "" {
 		t.Fatal("token received decision replay", w.Code)
+	}
+}
+
+func assertDiskJSONLocalDenied(t *testing.T, mux *http.ServeMux, path, key, body string) {
+	t.Helper()
+	for _, retryKey := range []string{key, "fresh-key-no-receipt"} {
+		r := httptest.NewRequest("POST", path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", retryKey)
+		r = operatorauth.WithPrincipal(r, operatorauth.Principal{AuthMethod: operatorauth.AuthMethodLocalAccountSession, TailnetUserID: "local:fixture-account", AuthorizedCapability: "example.com/cap/clawctl-admin", GrantedCapabilities: operatorauth.CapabilityNames{Admin: "example.com/cap/clawctl-admin"}})
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != 403 || w.Header().Get("Idempotency-Replayed") != "" {
+			t.Fatalf("local session bypassed fresh JSON authorization: %d %s", w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestDiskJSONFreshHumanGatePrecedesLedgerLookup(t *testing.T) {
+	f := newJobsFixture(t, "example-device")
+	h := &hub{store: f.store}
+	h.operatorRoutes(f.mux)
+	f.store.ConfigureDiskOpsV2Writes(true)
+	if _, err := f.store.DB().Exec(`DROP TABLE operator_idempotency`); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v1/operator/disk-ops/policies", "/v1/operator/disk-ops/approvals/example-approval/decision"} {
+		// A missing receipt table would fail any attempted lookup. Local sessions
+		// must instead fail the transport authorization gate, even on a retry.
+		assertDiskJSONLocalDenied(t, f.mux, path, "existing-retry-key", `{"id":"example-approval","decision":"approved","reason":"reviewed manifest"}`)
 	}
 }

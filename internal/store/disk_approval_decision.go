@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -115,6 +116,15 @@ func (s *Store) OpsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 			return out, err
 		}
 	}
+	if len(req.Reason) > 500 {
+		return out, operatorError("BAD_REQUEST", "decision reason exceeds bound")
+	}
+	req.Reason = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, req.Reason))
 	if !validJobReadStoredIdentifier(req.ID, 128) || (req.Decision != "approved" && req.Decision != "rejected") || strings.TrimSpace(req.Reason) == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
 		return out, operatorError("BAD_REQUEST", "approval ID, decision and safe reason required")
 	}
@@ -192,9 +202,10 @@ func (s *Store) OpsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 	out = OpsApprovalDecisionResult{Approval: a, Request: req, PreviewDigest: digest}
 	if apply {
 		out.Approval.State = req.Decision
+		out.Approval.DecisionReason = req.Reason
 		out.Approval.DecisionActor = audit.AuthSubject
 		out.Approval.DecidedAt = &now
-		if _, err = tx.Exec(`UPDATE ops_approvals SET state=?,decision_actor=?,decided_at=? WHERE id=? AND state='pending'`, req.Decision, audit.AuthSubject, fmtTime(now), a.ID); err != nil {
+		if _, err = tx.Exec(`UPDATE ops_approvals SET state=?,decision_actor=?,decided_at=?,decision_reason=? WHERE id=? AND state='pending'`, req.Decision, audit.AuthSubject, fmtTime(now), req.Reason, a.ID); err != nil {
 			return out, err
 		}
 		if _, err = tx.Exec(`INSERT INTO operator_idempotency(idempotency_key,operation,request_digest,outcome,response_json,created_at) VALUES (?,'ops-approval-decision-v1',?,'ok',?,?)`, key, requestDigest, string(mustScriptJSON(out)), fmtTime(now)); err != nil {

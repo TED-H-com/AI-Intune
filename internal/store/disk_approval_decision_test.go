@@ -121,3 +121,43 @@ func TestDiskAdminReauthenticationPasswordMFAAndHumanOnly(t *testing.T) {
 		t.Fatal("credentials in audit")
 	}
 }
+
+func TestDiskApprovalDecisionReasonStoredSanitizedAndBound(t *testing.T) {
+	s, a, _ := approvalFixture(t)
+	req := OpsApprovalDecisionRequest{ID: a.ID, Decision: "approved", Reason: " reviewed\nmanifest\x00\t safely "}
+	p, err := s.OpsApprovalDecision(req, false, "", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Request.Reason != "reviewedmanifest safely" {
+		t.Fatal("control characters retained", p.Request.Reason)
+	}
+	changed := p.Request
+	changed.Reason = "different reason"
+	if _, err = s.OpsApprovalDecision(changed, true, "reason-decision", diskAdmin()); err == nil {
+		t.Fatal("changed reason accepted")
+	}
+	out, err := s.OpsApprovalDecision(p.Request, true, "reason-decision", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.OpsApproval(a.ID, s.now())
+	if err != nil || stored.DecisionReason != p.Request.Reason || out.Approval.DecisionReason != stored.DecisionReason {
+		t.Fatal(stored, err)
+	}
+	var detail string
+	if err = s.db.QueryRow(`SELECT detail FROM audit_log WHERE action=? AND idempotency_key=? ORDER BY audit_id DESC LIMIT 1`, AuditOpsApproval, "reason-decision").Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail, `"decision_reason":"reviewedmanifest safely"`) {
+		t.Fatal("reason absent from success audit", detail)
+	}
+	req.Reason = strings.Repeat("a", 501)
+	if _, err = s.OpsApprovalDecision(req, false, "", diskAdmin()); err == nil {
+		t.Fatal("unbounded reason")
+	}
+	req.Reason = "\x00\n\t"
+	if _, err = s.OpsApprovalDecision(req, false, "", diskAdmin()); err == nil {
+		t.Fatal("empty sanitized reason")
+	}
+}

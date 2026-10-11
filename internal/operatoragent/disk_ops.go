@@ -14,7 +14,7 @@ type diskPolicyHub interface {
 
 func diskPolicyTools() []Tool {
 	id := strField(1, 128, idPattern, "Policy ID")
-	out := []Tool{{Name: "disk_policy_list", Description: "List disk policy revisions. Human view only; includes additive protect paths.", InputSchema: obj(map[string]any{}), Annotations: readAnn("disk_policy_list")}, {Name: "disk_policy_get", Description: "Get latest disk policy revision. Human view only.", InputSchema: obj(map[string]any{"id": id}, "id"), Annotations: readAnn("disk_policy_get")}}
+	out := []Tool{{Name: "disk_policy_list", Description: "List disk policy revisions. Human view only; protected paths are represented by counts and digests.", InputSchema: obj(map[string]any{}), Annotations: readAnn("disk_policy_list")}, {Name: "disk_policy_get", Description: "Get latest disk policy revision. Human view only.", InputSchema: obj(map[string]any{"id": id}, "id"), Annotations: readAnn("disk_policy_get")}}
 	for _, phase := range []string{"preview", "apply"} {
 		name := "disk_policy_upsert_" + phase
 		props := map[string]any{"id": id, "body": diskPolicySchema(), "expected_revision": intBound(0, 2147483647, "Current revision; zero for create"), "reason": strField(1, 500, "", "Reason without secrets")}
@@ -23,6 +23,7 @@ func diskPolicyTools() []Tool {
 		if phase == "apply" {
 			props["preview_digest"] = strField(71, 71, digestPattern, "Matching preview digest")
 			props["expires_at"] = strField(1, 64, "", "Preview expiry")
+			props["acknowledge_removed_paths"] = map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": strField(1, 1024, "^/", "Explicitly acknowledged removal from human preview")}
 			props["idempotency_key"] = strField(1, 200, "", "Durable retry key")
 			required = append(required, "preview_digest", "expires_at", "idempotency_key")
 			ann = writeAnn(name, false)
@@ -51,7 +52,10 @@ func (s *Service) diskPolicyCall(ctx context.Context, name string, raw json.RawM
 			return nil, e
 		}
 		v, e := h.DiskPolicyRead(ctx, "")
-		return v, hubErr(e)
+		if e != nil {
+			return nil, hubErr(e)
+		}
+		return redactedDiskPolicies(v)
 	}
 	if name == "disk_policy_get" {
 		var req struct {
@@ -64,7 +68,10 @@ func (s *Service) diskPolicyCall(ctx context.Context, name string, raw json.RawM
 			return nil, &CallError{Code: "invalid_arguments", Message: "id required"}
 		}
 		v, e := h.DiskPolicyRead(ctx, req.ID)
-		return v, hubErr(e)
+		if e != nil {
+			return nil, hubErr(e)
+		}
+		return redactedDiskPolicies(v)
 	}
 	var req struct {
 		store.DiskPolicyRequest
@@ -85,5 +92,8 @@ func (s *Service) diskPolicyCall(ctx context.Context, name string, raw json.RawM
 		return nil, &CallError{Code: "invalid_arguments", Message: "preview does not accept apply bindings"}
 	}
 	v, e := h.DiskPolicyUpsert(ctx, req.DiskPolicyRequest, apply, req.IdempotencyKey)
-	return v, hubErr(e)
+	if e != nil {
+		return nil, hubErr(e)
+	}
+	return redactedDiskPolicyResult(v)
 }

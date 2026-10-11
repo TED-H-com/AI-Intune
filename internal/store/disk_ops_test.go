@@ -388,3 +388,93 @@ func TestOpsApprovalAuditFailureRollsBackConsumption(t *testing.T) {
 		}
 	}
 }
+
+func TestDiskPolicyRemovalRequiresExactDigestBoundAcknowledgement(t *testing.T) {
+	s, _, current, _ := diskPolicyFixture(t)
+	p := DefaultDiskPolicy()
+	p.ProtectPaths = []string{"/srv/private-a", "/srv/private-b"}
+	rev := current.Policy.Revision
+	req := DiskPolicyRequest{ID: current.Policy.ID, ExpectedRevision: &rev, Body: mustScriptJSON(p), Reason: "add protected data"}
+	preview, err := s.DiskPolicyUpsert(req, false, "", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	req.ExpiresAt = preview.ExpiresAt
+	current, err = s.DiskPolicyUpsert(req, true, "add-protections", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev = current.Policy.Revision
+	p.ProtectPaths = []string{}
+	req = DiskPolicyRequest{ID: current.Policy.ID, ExpectedRevision: &rev, Body: mustScriptJSON(p), Reason: "remove reviewed protections"}
+	preview, err = s.DiskPolicyUpsert(req, false, "", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.RemovedProtectPaths) != 2 || preview.RemovedProtectPaths[0] != "/srv/private-a" {
+		t.Fatal("missing removal preview", preview)
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	req.ExpiresAt = preview.ExpiresAt
+	for _, ack := range [][]string{nil, {"/srv/private-a"}, {"/srv/private-a", "/srv/private-a"}, {"/srv/private-a", "/srv/other"}} {
+		req.AcknowledgeRemovedPaths = ack
+		if _, err = s.DiskPolicyUpsert(req, true, "remove-protections", diskAdmin()); err == nil {
+			t.Fatal("unacknowledged removal accepted", ack)
+		}
+		latest, e := s.DiskPolicy(req.ID)
+		if e != nil || latest.Revision != rev {
+			t.Fatal("failed removal mutated policy", latest, e)
+		}
+	}
+	req.AcknowledgeRemovedPaths = []string{"/srv/private-b", "/srv/private-a"}
+	out, err := s.DiskPolicyUpsert(req, true, "remove-protections", diskAdmin())
+	if err != nil || out.Policy.Revision != rev+1 {
+		t.Fatal(out, err)
+	}
+	retry, err := s.DiskPolicyUpsert(req, true, "remove-protections", diskAdmin())
+	if err != nil || !retry.Replayed {
+		t.Fatal(retry, err)
+	}
+	req.AcknowledgeRemovedPaths = nil
+	if _, err = s.DiskPolicyUpsert(req, true, "remove-protections", diskAdmin()); err == nil {
+		t.Fatal("changed acknowledgement replayed")
+	}
+	var detail string
+	// Select the successful original receipt independently of the later rejection.
+	if err = s.db.QueryRow(`SELECT detail FROM audit_log WHERE action=? AND idempotency_key=? AND detail LIKE ? ORDER BY audit_id DESC LIMIT 1`, AuditDiskPolicyApply, "remove-protections", `%"removed_path_count":2%`).Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(detail, "/srv/") || !strings.Contains(detail, `"removed_paths_digest":"sha256:`) {
+		t.Fatal("unsafe or incomplete removal audit", detail)
+	}
+	if len(p.Protections().ProtectedClasses) == 0 {
+		t.Fatal("built-in protections removed")
+	}
+}
+
+func TestDiskApprovalReasonAdditiveMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`ALTER TABLE ops_approvals DROP COLUMN decision_reason`); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.OpsApprovals(time.Now()); err != nil {
+		t.Fatal("new reason column missing on upgrade", err)
+	}
+	var n int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ops_approvals') WHERE name='decision_reason'`).Scan(&n); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+}

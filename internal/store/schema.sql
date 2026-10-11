@@ -1609,7 +1609,7 @@ CREATE TABLE IF NOT EXISTS ops_approvals (
  operation TEXT NOT NULL, policy_id TEXT NOT NULL, policy_revision INTEGER NOT NULL,
  policy_digest TEXT NOT NULL, item_digest TEXT NOT NULL, created_at TEXT NOT NULL,
  deadline TEXT NOT NULL CHECK(unixepoch(deadline)-unixepoch(created_at)=1800), decision_actor TEXT, decided_at TEXT,
- job_id TEXT REFERENCES jobs(job_id), consumed_at TEXT,
+ job_id TEXT REFERENCES jobs(job_id), consumed_at TEXT, decision_reason TEXT NOT NULL DEFAULT '',
  CHECK(state!='approved' OR (decision_actor IS NOT NULL AND decided_at IS NOT NULL)),
  CHECK(state!='consumed' OR (decision_actor IS NOT NULL AND decided_at IS NOT NULL AND job_id IS NOT NULL AND consumed_at IS NOT NULL)),
  FOREIGN KEY(policy_id,policy_revision) REFERENCES ops_policies(id,revision)

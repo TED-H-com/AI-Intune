@@ -804,3 +804,23 @@ Host and locked CSP. No new inline scripts are introduced. Public defaults are
 generic; canaries, freeze windows and integration destinations come from deployment
 configuration. Fixture screenshots and HTML are generated with
 `ops/screenshots/phase2-disk.sh` into `docs/screenshots/phase2/p2-01/`.
+
+
+Disk JSON policy and approval-decision applies accept only freshly boundary-verified
+human Tailscale admins. Local-account sessions have no action-bound JSON reauthentication
+proof and are rejected before idempotency lookup, including retries; use the Hub UI
+password/TOTP apply flow. Previews remain available to authorized human admins.
+
+A policy preview explicitly lists `removed_protect_paths`. Removing configured
+protections requires the exact `acknowledge_removed_paths` array on apply, included
+in the preview digest and checked against the current revision inside the write
+transaction. The UI requires a separate **Remove protection** checkbox for each
+path. Built-in protections remain unconditional. Success audits record only the
+removed-path count and SHA-256 digest of the sorted removal set, never the paths.
+
+MCP policy list/get and upsert receipts expose protected-path counts and per-path
+SHA-256 digests instead of path strings, including previous policy bodies and
+removed protections. Full policy bodies remain on the human UI/API. Approval
+decision reasons are limited to 500 bytes, stripped of control characters before
+digest binding, stored in `ops_approvals.decision_reason`, and included in the
+success audit. Upgrades add this column without replacing existing ledger rows.

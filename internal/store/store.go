@@ -887,6 +887,7 @@ func addMissingColumns(db *sql.DB) error {
 		},
 		// generation=1 讓舊 DB 的 active row 有一個可持久化的起點；新 token
 		// 格式包含 generation，因此升級前的 witness 仍會自然失效。
+		"ops_approvals": {"decision_reason": "TEXT NOT NULL DEFAULT ''"},
 		"active_workload_policy": {
 			"generation": "INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0)",
 		},

@@ -713,3 +713,9 @@ calls from an admin-approved digest-pinned connector tree, structured JSON
 classifications (excerpts off by default), bounded reads, fixed no-symlink mapping
 and explicit unknown cleanup/Jev gates; disabled
 hourly schedule example and [comparison runbook](runbooks/BAT-SWEEP-PILOT.md).
+
+P2-01 disk policy security: JSON applies reject local-account sessions before
+replay (local users apply through the reauthenticated UI); protection removals
+require per-path digest-bound acknowledgement; MCP projects only path counts and
+digests; sanitized decision reasons are retained on the approval ledger and audit.
+See `docs/API-SURFACE.md` for the exact request fields and transport restrictions.

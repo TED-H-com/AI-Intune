@@ -91,7 +91,7 @@ func diskOpsForm(w http.ResponseWriter, r *http.Request, fields ...string) bool 
 		allowed[f] = true
 	}
 	for k, v := range r.PostForm {
-		if !allowed[k] || len(v) != 1 {
+		if !allowed[k] || (len(v) != 1 && k != "acknowledge_removed_paths") {
 			return false
 		}
 	}
@@ -212,7 +212,7 @@ func (s *Server) reauthenticateDiskApply(w http.ResponseWriter, r *http.Request,
 	return true
 }
 func (s *Server) applyDiskPolicy(w http.ResponseWriter, r *http.Request) {
-	if !diskOpsForm(w, r, "id", "body", "expected_revision", "expires_at", "preview_digest", "reason", "idempotency_key", "confirm_id", "password", "code") {
+	if !diskOpsForm(w, r, "id", "body", "expected_revision", "expires_at", "preview_digest", "reason", "idempotency_key", "confirm_id", "password", "code", "acknowledge_removed_paths") {
 		s.diskFormError(w, r, diskPoliciesBack)
 		return
 	}
@@ -225,7 +225,7 @@ func (s *Server) applyDiskPolicy(w http.ResponseWriter, r *http.Request) {
 	if !s.reauthenticateDiskApply(w, r, diskPoliciesBack) {
 		return
 	}
-	req := store.DiskPolicyRequest{ID: r.PostForm.Get("id"), Body: json.RawMessage(r.PostForm.Get("body")), ExpectedRevision: &rev, ExpiresAt: expires, PreviewDigest: r.PostForm.Get("preview_digest"), Reason: r.PostForm.Get("reason")}
+	req := store.DiskPolicyRequest{ID: r.PostForm.Get("id"), Body: json.RawMessage(r.PostForm.Get("body")), ExpectedRevision: &rev, ExpiresAt: expires, PreviewDigest: r.PostForm.Get("preview_digest"), Reason: r.PostForm.Get("reason"), AcknowledgeRemovedPaths: r.PostForm["acknowledge_removed_paths"]}
 	out, err := s.operator.DiskPolicyUpsert(req, true, r.PostForm.Get("idempotency_key"), operator.ActorFromRequest(r, operator.SourceKindWeb))
 	if err != nil {
 		s.diskOpsError(w, r, err, diskPoliciesBack)

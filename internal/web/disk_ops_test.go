@@ -274,6 +274,7 @@ func TestDiskOpsScreenshotFixtures(t *testing.T) {
 		}
 		if state == "approved" || state == "rejected" || state == "consumed" {
 			a.DecisionActor = "example-admin"
+			a.DecisionReason = "reviewed the exact manifest"
 		}
 		if state == "consumed" {
 			a.JobID = "example-job-id"
@@ -289,14 +290,23 @@ func TestDiskOpsScreenshotFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removalEdit := edit
+	removalEdit.ProtectPaths = []string{}
+	req.Body, _ = json.Marshal(removalEdit)
+	req.Reason = "remove the configured data protection after review"
+	removalPreview, e := s.operator.DiskPolicyUpsert(req, false, "", operator.Actor{AuthSubject: "local-user:fixture-account", AuthMethod: operatorauth.AuthMethodLocalAccountSession, AuthCapability: "admin", AuthDecision: string(operatorauth.Authorized)})
+	if e != nil {
+		t.Fatal(e)
+	}
 	decision := store.OpsApprovalDecisionResult{Approval: items[0], Request: store.OpsApprovalDecisionRequest{ID: items[0].ID, Decision: "approved", PolicyRevision: policy.Revision, PolicyDigest: policy.Digest, ItemDigest: items[0].ItemDigest, Deadline: items[0].Deadline, Reason: "reviewed the exact item manifest"}, PreviewDigest: "sha256:" + strings.Repeat("b", 64)}
 	fixtures := []struct {
 		name, template string
 		data           page
 	}{
 		{"disk-policies", "disk_policies.html", page{Title: "Disk policies", Nav: "tenant-disk-policies", DiskPolicies: &diskPoliciesPage{Items: []store.OpsPolicy{policy}, Selected: &policy, Canonical: string(policy.Body), Edit: edit, ID: policy.ID, ExpectedRevision: policy.Revision, ProtectPaths: "/srv/data", WritesEnabled: true}}},
-		{"disk-policy-preview", "disk_policy_review.html", page{Title: "Review disk policy", Nav: "tenant-disk-policies", DiskPolicyReview: &diskPolicyReviewPage{Preview: preview, Changes: operator.DiskPolicyChanges(preview.PreviousBody, preview.Policy.Body), Body: string(preview.Policy.Body), Reason: req.Reason, IdempotencyKey: "fixture-policy-key", WritesEnabled: true}}},
+		{"disk-policy-preview", "disk_policy_review.html", page{Title: "Review disk policy", Nav: "tenant-disk-policies", DiskPolicyReview: &diskPolicyReviewPage{Preview: preview, Changes: operator.DiskPolicyChanges(preview.PreviousBody, preview.Policy.Body), Body: string(preview.Policy.Body), Reason: "retain older temporary files", IdempotencyKey: "fixture-policy-key", WritesEnabled: true}}},
 		{"approvals", "disk_approvals.html", page{Title: "Approvals", Nav: "tenant-approvals", DiskApprovals: &diskApprovalsPage{Items: items, WritesEnabled: true}}},
+		{"disk-policy-removal-preview", "disk_policy_review.html", page{Title: "Review protection removal", Nav: "tenant-disk-policies", DiskPolicyReview: &diskPolicyReviewPage{Preview: removalPreview, Changes: operator.DiskPolicyChanges(removalPreview.PreviousBody, removalPreview.Policy.Body), Body: string(removalPreview.Policy.Body), Reason: req.Reason, IdempotencyKey: "fixture-removal-key", WritesEnabled: true}}},
 		{"approval-preview", "disk_approval_review.html", page{Title: "Review approval decision", Nav: "tenant-approvals", DiskApprovalReview: &diskApprovalReviewPage{Preview: decision, IdempotencyKey: "fixture-decision-key", WritesEnabled: true}}},
 		{"disk-policies-disabled", "disk_policies.html", page{Title: "Disk policies", Nav: "tenant-disk-policies", DiskPolicies: &diskPoliciesPage{Items: []store.OpsPolicy{}, Edit: store.DefaultDiskPolicy(), ID: "disk-default"}}},
 	}
@@ -310,5 +320,34 @@ func TestDiskOpsScreenshotFixtures(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, f.name+".html"), body, 0644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestDiskPolicyWebRemovalConfirmation(t *testing.T) {
+	s, st := newServer(t)
+	policy := createDiskWebPolicy(t, s, st)
+	p := diskWebPrincipal(true, false, "")
+	form := diskWebEditForm()
+	form.Set("expected_revision", strconv.FormatInt(policy.Revision, 10))
+	form.Set("protect_paths", "")
+	w := diskWebRequest(t, s, "POST", diskPoliciesBack+"/preview", form, p, false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Remove protection: ") || !strings.Contains(w.Body.String(), `type="checkbox" name="acknowledge_removed_paths" value="/srv/data" required`) {
+		t.Fatal("missing per-path acknowledgement", w.Code, w.Body.String())
+	}
+	apply := diskWebHidden(t, w.Body.String(), diskPolicyHidden...)
+	apply.Set("confirm_id", policy.ID)
+	w = diskWebRequest(t, s, "POST", diskPoliciesBack+"/apply", apply, p, false)
+	if w.Code != 412 {
+		t.Fatal("unchecked removal accepted", w.Code, w.Body.String())
+	}
+	apply.Set("acknowledge_removed_paths", "/srv/other")
+	w = diskWebRequest(t, s, "POST", diskPoliciesBack+"/apply", apply, p, false)
+	if w.Code != 412 {
+		t.Fatal("wrong acknowledgement accepted", w.Code)
+	}
+	apply.Set("acknowledge_removed_paths", "/srv/data")
+	w = diskWebRequest(t, s, "POST", diskPoliciesBack+"/apply", apply, p, false)
+	if w.Code != 303 {
+		t.Fatal("checked removal rejected", w.Code, w.Body.String())
 	}
 }

@@ -25,6 +25,7 @@ type OpsApproval struct {
 	ItemDigest     string     `json:"item_digest"`
 	CreatedAt      time.Time  `json:"created_at"`
 	Deadline       time.Time  `json:"deadline"`
+	DecisionReason string     `json:"decision_reason,omitempty"`
 	DecisionActor  string     `json:"decision_actor,omitempty"`
 	DecidedAt      *time.Time `json:"decided_at,omitempty"`
 	JobID          string     `json:"job_id,omitempty"`
@@ -35,7 +36,7 @@ func scanOpsApproval(row interface{ Scan(...any) error }) (OpsApproval, error) {
 	var a OpsApproval
 	var created, deadline string
 	var decided, consumed sql.NullString
-	err := row.Scan(&a.ID, &a.State, &a.Actor, &a.MachineID, &a.Operation, &a.PolicyID, &a.PolicyRevision, &a.PolicyDigest, &a.ItemDigest, &created, &deadline, &a.DecisionActor, &decided, &a.JobID, &consumed)
+	err := row.Scan(&a.ID, &a.State, &a.Actor, &a.MachineID, &a.Operation, &a.PolicyID, &a.PolicyRevision, &a.PolicyDigest, &a.ItemDigest, &created, &deadline, &a.DecisionActor, &decided, &a.JobID, &consumed, &a.DecisionReason)
 	a.CreatedAt = parseTime(created)
 	a.Deadline = parseTime(deadline)
 	if decided.Valid {
@@ -49,7 +50,7 @@ func scanOpsApproval(row interface{ Scan(...any) error }) (OpsApproval, error) {
 	return a, err
 }
 
-const opsApprovalColumns = `id,state,actor,machine_id,operation,policy_id,policy_revision,policy_digest,item_digest,created_at,deadline,COALESCE(decision_actor,''),decided_at,COALESCE(job_id,''),consumed_at`
+const opsApprovalColumns = `id,state,actor,machine_id,operation,policy_id,policy_revision,policy_digest,item_digest,created_at,deadline,COALESCE(decision_actor,''),decided_at,COALESCE(job_id,''),consumed_at,decision_reason`
 
 func (s *Store) OpsApprovals(now time.Time) ([]OpsApproval, error) {
 	return s.OpsApprovalsFiltered("", "", "", now)
@@ -367,5 +368,6 @@ func opsApprovalAuditDetail(a OpsApproval) string {
 		State          string    `json:"state"`
 		JobID          string    `json:"job_id,omitempty"`
 		Deadline       time.Time `json:"deadline"`
-	}{a.ID, a.Operation, a.PolicyRevision, a.PolicyDigest, a.ItemDigest, a.State, a.JobID, a.Deadline}))
+		DecisionReason string    `json:"decision_reason,omitempty"`
+	}{a.ID, a.Operation, a.PolicyRevision, a.PolicyDigest, a.ItemDigest, a.State, a.JobID, a.Deadline, a.DecisionReason}))
 }

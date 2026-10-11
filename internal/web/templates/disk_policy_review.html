@@ -8,6 +8,7 @@
 <form method="post" action="/tenant/disk-policies/apply">
 <input type="hidden" name="id" value="{{$p.Policy.ID}}"><input type="hidden" name="body" value="{{$r.Body}}"><input type="hidden" name="expected_revision" value="{{$p.ExpectedRevision}}"><input type="hidden" name="expires_at" value="{{diskTime $p.ExpiresAt}}"><input type="hidden" name="preview_digest" value="{{$p.PreviewDigest}}"><input type="hidden" name="reason" value="{{$r.Reason}}"><input type="hidden" name="idempotency_key" value="{{$r.IdempotencyKey}}">
 <label><span class="field-label">Type {{$p.Policy.ID}} to confirm</span><input name="confirm_id" required autocomplete="off"></label>
+{{if $p.RemovedProtectPaths}}<fieldset><legend>Remove protection</legend><p>These paths will lose their configured protection. Built-in protections remain enforced.</p>{{range $p.RemovedProtectPaths}}<label><input type="checkbox" name="acknowledge_removed_paths" value="{{.}}" required> Remove protection: <span class="mono">{{.}}</span></label>{{end}}</fieldset>{{end}}
 {{template "disk_reauthentication" .}}
 <div class="command-bar" style="margin-top:14px"><button type="submit" {{if not $r.WritesEnabled}}disabled{{end}}>Apply policy revision {{$p.Policy.Revision}}</button><a class="button secondary" href="/tenant/disk-policies">Cancel</a></div>
 {{if not $r.WritesEnabled}}<p>Disk writes are disabled in Hub configuration. Return and preview again after enabling them.</p>{{end}}</form></div>

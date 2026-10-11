@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"net/http"
 	"strings"
@@ -37,12 +38,15 @@ func (h *hub) handleDiskPolicies(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAuditedJSON(w, r, actor, store.AuditDiskPolicyApply) {
 		return
 	}
+	apply := r.URL.Path == "/v1/operator/disk-ops/policies"
+	if apply && !h.requireDiskJSONFreshHuman(w, r, store.AuditDiskPolicyApply) {
+		return
+	}
 	var req store.DiskPolicyRequest
 	if rejection := decodeOperatorBody(w, r, &req); rejection != nil {
 		h.rejectOperatorPolicyTransport(w, r, actor, store.AuditDiskPolicyApply, rejection.Status, rejection.Code, rejection.Detail)
 		return
 	}
-	apply := r.URL.Path == "/v1/operator/disk-ops/policies"
 
 	out, err := svc.DiskPolicyUpsert(req, apply, r.Header.Get("Idempotency-Key"), actor)
 	if err != nil {
@@ -80,6 +84,9 @@ func (h *hub) handleDiskApprovalDecision(w http.ResponseWriter, r *http.Request)
 	if !h.requireAuditedJSON(w, r, actor, store.AuditOpsApproval) {
 		return
 	}
+	if !strings.HasSuffix(r.URL.Path, "/preview") && !h.requireDiskJSONFreshHuman(w, r, store.AuditOpsApproval) {
+		return
+	}
 	if r.URL.RawQuery != "" || r.URL.ForceQuery {
 		h.rejectOperatorPolicyTransport(w, r, actor, store.AuditOpsApproval, 400, "BAD_REQUEST", "decision does not accept query parameters")
 		return
@@ -104,4 +111,15 @@ func (h *hub) handleDiskApprovalDecision(w http.ResponseWriter, r *http.Request)
 	} else {
 		writeJSON(w, 200, out)
 	}
+}
+
+// Local sessions have no action-bound JSON reauthentication proof. Only the
+// boundary's fresh human LocalAPI authorization can admit JSON applies.
+func (h *hub) requireDiskJSONFreshHuman(w http.ResponseWriter, r *http.Request, action store.AuditAction) bool {
+	p, ok := operatorauth.PrincipalFromContext(r.Context())
+	if ok && p.AuthMethod == operatorauth.AuthMethodLocalAPI && p.Has(operatorauth.Admin) && p.StableSubject() != "" {
+		return true
+	}
+	h.rejectOperatorPolicyTransport(w, r, operatorActor(r), action, 403, "FORBIDDEN", "JSON apply requires fresh human authorization; local-account users must apply through the reauthenticated Hub UI")
+	return false
 }
