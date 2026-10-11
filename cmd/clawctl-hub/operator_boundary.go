@@ -59,11 +59,12 @@ const (
 	serviceEligible
 	serviceEligibleReadScriptsOnly
 	serviceEligibleSelf
+	serviceEligibleScriptEvidenceOnly
 )
 
 // Unknown classes fail closed.
 func (e serviceTokenEligibility) eligible() bool {
-	return e == serviceEligible || e == serviceEligibleReadScriptsOnly || e == serviceEligibleSelf
+	return e == serviceEligible || e == serviceEligibleReadScriptsOnly || e == serviceEligibleSelf || e == serviceEligibleScriptEvidenceOnly
 }
 
 type operatorSecurityProfile uint8
@@ -160,8 +161,9 @@ var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
 // classifies that exact ServeMux pattern in review.
 // Service-token reads expose structured summaries only. Credential retrieval,
 // diagnostics, worker error details, and raw report/evidence text are human-only;
-// bounded operator text scrubbing does not redact secrets. Lifecycle self/rotate
-// are the explicit exceptions for the authenticated token itself.
+// bounded operator text scrubbing does not redact secrets. Script job evidence
+// has a dedicated class checked against job kind and catalog mode at use time.
+// Lifecycle self/rotate are exceptions for the authenticated token itself.
 var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /v1/operator/service-tokens/self":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
 	"POST /v1/operator/service-tokens/rotate":          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
@@ -230,7 +232,7 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /v1/operator/machines/{id}/evidence":                             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/jobs":                                               {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/jobs/{id}":                                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/jobs/{id}/evidence":                                 {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/jobs/{id}/evidence":                                 {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleScriptEvidenceOnly},
 	"GET /v1/operator/deployments":                                        {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/deployments/{id}":                                   {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/artifacts":                                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
@@ -875,7 +877,7 @@ func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
 		return false
 	}
 
-	if policy.ServiceTokenEligible > serviceEligibleSelf {
+	if policy.ServiceTokenEligible > serviceEligibleScriptEvidenceOnly {
 		return false
 	}
 	if policy.ServiceTokenEligible == serviceEligibleSelf && pattern != "GET /v1/operator/service-tokens/self" && pattern != "POST /v1/operator/service-tokens/rotate" {
@@ -885,6 +887,11 @@ func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
 		(policy.Permission != operatorauth.Operate || (pattern != "POST /v1/operator/script-runs/preview" && pattern != "POST /v1/operator/script-runs")) {
 		return false
 	}
+	if policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly &&
+		(pattern != "GET /v1/operator/jobs/{id}/evidence" || policy.Permission != operatorauth.View) {
+		return false
+	}
+
 	if policy.Permission < operatorauth.View || policy.Permission > operatorauth.Admin {
 		return false
 	}

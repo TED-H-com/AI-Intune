@@ -288,6 +288,12 @@ func TestServiceTokenManifestEligibility(t *testing.T) {
 		if policy.ServiceTokenEligible == serviceEligibleSelf {
 			continue
 		}
+		if policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly {
+			if route != "GET /v1/operator/jobs/{id}/evidence" || policy.Permission != operatorauth.View || !operatorPolicyAdmissible(route, policy) {
+				t.Errorf("unexpected script evidence class: %s", route)
+			}
+			continue
+		}
 		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly {
 			scriptCount++
 			if (route != "POST /v1/operator/script-runs/preview" && route != "POST /v1/operator/script-runs") || policy.Permission != operatorauth.Operate || !operatorPolicyAdmissible(route, policy) {
@@ -520,7 +526,7 @@ func TestServiceTokenAuditUsesFinalStatusOnce(t *testing.T) {
 }
 
 func TestServiceTokenManagementRejectsIneligibleAllowlist(t *testing.T) {
-	for _, allow := range []string{"", "POST /v1/operator/deployments/{id}/continuations", "POST /v1/operator/machines/{id}/diagnostic-noop-jobs", "GET /v1/operator/not-registered", "GET /v1/operator/machines/{id}/enrollment-token", "GET /v1/operator/machines/{id}/evidence", "GET /v1/operator/jobs/{id}/evidence", "GET  /v1/operator/machines"} {
+	for _, allow := range []string{"", "POST /v1/operator/deployments/{id}/continuations", "POST /v1/operator/machines/{id}/diagnostic-noop-jobs", "GET /v1/operator/not-registered", "GET /v1/operator/machines/{id}/enrollment-token", "GET /v1/operator/machines/{id}/evidence", "GET  /v1/operator/machines"} {
 		t.Run(allow, func(t *testing.T) {
 			h, st := localAccountHandler(t)
 			actor, err := st.CreateFirstAdmin("alice", usersPassword)
@@ -965,13 +971,23 @@ func TestServiceTokenManagementScriptAllowlistScope(t *testing.T) {
 }
 
 // No response containing enrollment material or unredacted evidence may be
-// delegated. Self/rotate are the explicit token lifecycle exception.
+// delegated. Self/rotate are the token lifecycle exception; the exact job
+// evidence route requires its dedicated runtime-checked script evidence class.
 func TestServiceTokenForbiddenManifestPatterns(t *testing.T) {
 	forbidden := []string{"enrollment-token", "installer-key", "password", "totp", "session", "/credential", "/key", "/token", "/mfa", "/evidence", "GET /v1/operator/machines/{id}", "/audit-events", "/tickets", "/maintenance/restore-drills", "/artifact-fetches", "/timeline", "/daily-report", "/tailnet", "/disk-clean/summaries"}
 	for route, policy := range operatorRoutePolicies {
 		if policy.ServiceTokenEligible == serviceEligibleSelf {
 			continue
 		}
+		if route == "GET /v1/operator/jobs/{id}/evidence" && policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly {
+			req := httptest.NewRequest("POST", "/", nil)
+			req.PostForm = url.Values{"name": {"agent"}, "scope": {"view"}, "expiry_days": {"90"}, "routes": {route}}
+			if _, message := validateServiceTokenForm(req); message != "" {
+				t.Fatal("script evidence route must be selectable")
+			}
+			continue
+		}
+
 		for _, pattern := range forbidden {
 			matches := strings.Contains(route, pattern)
 			if pattern == "GET /v1/operator/machines/{id}" {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -175,5 +176,135 @@ func TestServiceTokenBATCatalogPreviewAndApplyDenied(t *testing.T) {
 	}
 	if err := f.store.DB().QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("BAT jobs=%d err=%v", count, err)
+	}
+}
+
+func TestServiceTokenScriptEvidenceOnly(t *testing.T) {
+	f := observedOperatorFixture(t)
+	now := time.Now().UTC()
+	enabled := true
+	if err := f.store.RecordCheckin(f.machine.id, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: now, JobsEnabled: &enabled, ScriptV1: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	actor, err := f.store.CreateFirstAdmin("evidence-admin", usersPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := "GET /v1/operator/jobs/{id}/evidence"
+	_, secret, err := f.store.CreateServiceToken(store.ServiceToken{Name: "hermes-evidence", Scope: "view", ExpiresAt: now.Add(time.Hour), Allowlist: []string{route}}, actor.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := newOperatorBoundary(f.mux, &boundaryAuthorizer{}, f.store, operatorRoutePolicies, testOperatorAuthority)
+	createScript := func(id string, args json.RawMessage) string {
+		t.Helper()
+		entry, exists := scriptcatalog.Lookup(id)
+		if !exists {
+			t.Fatal("missing catalog entry")
+		}
+		req := store.ScriptRunRequest{ScriptID: id, ScriptSHA256: entry.SHA256, Args: args, Targets: []string{f.machine.id}, Reason: "evidence test"}
+		audit := store.AuditEntry{AuthSubject: "local-user:" + actor.AccountID, AuthMethod: operatorauth.AuthMethodLocalAccountSession, AuthCapability: "admin"}
+		if entry.Mode == "read" {
+			audit.AuthCapability = "operate"
+		}
+		preview, err := f.store.ScriptRun(req, false, "", audit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.PreviewDigest = preview.PreviewDigest
+		result, err := f.store.ScriptRun(req, true, "evidence-"+id, audit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.JobIDs[0]
+	}
+	readID := createScript("fleet-probe-v1", json.RawMessage(`{}`))
+	lease, err := f.store.ClaimJob(readID, f.machine.id, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AdvanceJobByAgent(readID, f.machine.id, lease, deploy.Start, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.RecordVerification(readID, f.machine.id, lease, scriptcatalog.Kind, "fleet-probe-v1", 0, "read-script-results", "", true, now); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := json.Marshal(scriptcatalog.Result{StdoutSHA256: scriptcatalog.Digest([]byte("read-script-results")), StderrSHA256: scriptcatalog.Digest(nil), ExitCode: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.RecordVerification(readID, f.machine.id, lease, "script_v1_metadata", string(metadata), 0, "", "", true, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AdvanceJobByAgent(readID, f.machine.id, lease, deploy.FinishWork, now); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := f.store.MarkSucceededIfVerified(readID, now); err != nil || state != deploy.Succeeded {
+		t.Fatalf("complete script: %s %v", state, err)
+	}
+
+	writeID := createScript("bat-sweep-report-v1", json.RawMessage(`{"hosts":["sample-host"],"connector_tree_sha256":"`+strings.Repeat("a", 64)+`"}`))
+	otherID := createOperatorReadJob(t, f.store, f.machine.id, "cnode-operator", "NON_SCRIPT_EVIDENCE")
+	for _, tc := range []struct {
+		name, id string
+		status   int
+	}{
+		{"read script", readID, http.StatusOK},
+		{"write script", writeID, http.StatusForbidden},
+		{"non-script job", otherID, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := "/v1/operator/jobs/" + tc.id + "/evidence"
+			request := newBoundaryRequest(http.MethodGet, path, nil)
+			request.Header.Set("Authorization", "Bearer "+secret)
+			response := httptest.NewRecorder()
+			boundary.ServeHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("status=%d", response.Code)
+			}
+			if tc.status == http.StatusForbidden {
+				assertAPIError(t, response, http.StatusForbidden, "SERVICE_TOKEN_SCRIPT_EVIDENCE_ONLY")
+				if strings.Contains(response.Body.String(), "NON_SCRIPT_EVIDENCE") {
+					t.Fatal("denial exposed evidence")
+				}
+			} else if !strings.Contains(response.Body.String(), "read-script-results") {
+				t.Fatal("missing script output")
+			}
+			// A local human session retains normal view access to every job kind.
+			human := httptest.NewRequest(http.MethodGet, path, nil)
+			principal := operatorauth.Principal{AuthMethod: operatorauth.AuthMethodLocalAccountSession, GrantedCapabilities: operatorauth.CapabilityNames{View: "view"}}
+			humanResponse := httptest.NewRecorder()
+			f.mux.ServeHTTP(humanResponse, operatorauth.WithPrincipal(human, principal))
+			if humanResponse.Code != http.StatusOK {
+				t.Fatalf("human status=%d", humanResponse.Code)
+			}
+		})
+	}
+	var denials int
+	if err := f.store.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE auth_subject='service:hermes-evidence' AND auth_method='service-token' AND action=? AND subject=? AND outcome!='ok'`, store.AuditOperatorDenied, route).Scan(&denials); err != nil || denials != 2 {
+		t.Fatalf("denial audits=%d err=%v", denials, err)
+	}
+}
+
+func TestScriptEvidenceEligibilityCannotBeAssignedToOtherRoutes(t *testing.T) {
+	policy := operatorRoutePolicies["GET /v1/operator/jobs/{id}/evidence"]
+	if policy.ServiceTokenEligible != serviceEligibleScriptEvidenceOnly || !operatorPolicyAdmissible("GET /v1/operator/jobs/{id}/evidence", policy) {
+		t.Fatal("missing narrow evidence eligibility")
+	}
+	if operatorPolicyAdmissible("GET /v1/operator/machines/{id}/evidence", policy) {
+		t.Fatal("script evidence class allowed on another route")
+	}
+	policy.Permission = operatorauth.Operate
+	if operatorPolicyAdmissible("GET /v1/operator/jobs/{id}/evidence", policy) {
+		t.Fatal("script evidence class must remain view")
+	}
+	found := false
+	for _, route := range hermesServiceRoutes {
+		if route == "GET /v1/operator/jobs/{id}/evidence" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Hermes preset missing script evidence")
 	}
 }

@@ -47,7 +47,7 @@ var serviceTokenForm = template.Must(template.New("service-tokens").Parse(`<!doc
 {{if eq .ErrorField "source_cidrs"}}<p class="error" id="source_cidrs-error">{{.Message}}</p>{{end}}<label for="cidrs">Optional source CIDRs</label><textarea id="cidrs" {{if eq .ErrorField "source_cidrs"}}aria-invalid="true" aria-errormessage="source_cidrs-error"{{end}} name="source_cidrs">{{.CIDRs}}</textarea><small>One network per line or comma-separated, e.g. 192.0.2.0/24. Empty allows any source IP.</small>
 {{if eq .ErrorField "password"}}<p class="error" id="password-error">{{.Message}}</p>{{end}}<label for="password">Current password</label><input id="password" {{if eq .ErrorField "password"}}aria-invalid="true" aria-errormessage="password-error"{{end}} type="password" name="password" required autocomplete="current-password">
 {{if or (eq .ErrorField "code") (eq .ErrorField "password")}}<p class="error" id="code-error">{{.Message}}</p>{{end}}<label for="code">Authenticator code</label><input id="code" {{if or (eq .ErrorField "code") (eq .ErrorField "password")}}aria-invalid="true" aria-errormessage="code-error"{{end}} name="code" required inputmode="numeric" autocomplete="one-time-code">
-<button>Create selected routes</button><button name="preset" value="hermes-default">Create Hermes token (operate)</button><small>Hermes default: supervision summaries, job list/details and script-runs preview/apply. Hermes always uses operate scope; selected routes use the scope above.</small></form>
+<button>Create selected routes</button><button name="preset" value="hermes-default">Create Hermes token (operate)</button><small>Hermes default: supervision summaries, job list/details, read-script evidence and script-runs preview/apply. Hermes always uses operate scope; selected routes use the scope above.</small></form>
 <h2>Existing tokens</h2><table><tr><th>ID / name</th><th>Scope</th><th>Status</th><th>Allowed routes / CIDRs</th><th>Expires</th><th>Revoke chain</th></tr>{{range .Tokens}}<tr><td>{{.ID}}<br>{{.Name}}</td><td>{{.Scope}}</td><td>{{.Status}}</td><td>{{range .Allowlist}}{{.}}<br>{{end}}{{range .SourceCIDRs}}{{.}}<br>{{end}}</td><td>{{.ExpiresAt}}</td><td><form method="post" action="/account/service-tokens/revoke"><input type="hidden" name="id" value="{{.ID}}"><label>Password <input type="password" name="password" required autocomplete="current-password"></label><label>Authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Revoke entire chain</button></form></td></tr>{{end}}</table></body></html>`))
 
 // Creation renders directly, without forms or the list, so the one-time secret is unmistakable.
@@ -75,7 +75,7 @@ func serviceTokenErrorField(message string) string {
 	}
 }
 
-var hermesServiceRoutes = []string{"GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status", "GET /v1/operator/jobs", "GET /v1/operator/jobs/{id}", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}
+var hermesServiceRoutes = []string{"GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status", "GET /v1/operator/jobs", "GET /v1/operator/jobs/{id}", "GET /v1/operator/jobs/{id}/evidence", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}
 
 func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 	t := store.ServiceToken{Name: r.PostForm.Get("name"), Scope: r.PostForm.Get("scope"), SourceCIDRs: splitServiceList(r.PostForm.Get("source_cidrs"))}
@@ -279,6 +279,9 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			path := strings.TrimPrefix(strings.SplitN(route, " ", 2)[1], "/v1/operator/")
 			label := strings.ReplaceAll(path, "-", " ")
 			description := "Read " + label
+			if policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly {
+				description = "Read evidence for read-only catalog script jobs only"
+			}
 			if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly {
 				description = "Run READ-only catalog scripts (operate required)"
 			}
