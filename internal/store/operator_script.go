@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/teddashh/AI-Intune/internal/deploy"
+	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"sort"
 	"strings"
@@ -63,6 +64,15 @@ func normalizeScript(req ScriptRunRequest) (ScriptRunRequest, scriptcatalog.Entr
 	return req, e, nil
 }
 func scriptScope(e scriptcatalog.Entry, a AuditEntry) error {
+	if a.AuthMethod == operatorauth.AuthMethodServiceToken {
+		if e.Mode != "read" {
+			return operatorError("SERVICE_TOKEN_READ_SCRIPTS_ONLY", "service tokens require a read-only catalog script")
+		}
+		if a.AuthCapability != "operate" {
+			return operatorError("SCRIPT_SCOPE_REQUIRED", "read scripts require operate")
+		}
+		return nil
+	}
 	if (e.Mode == "write" && (a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "-admin"))) || (e.Mode == "read" && (a.AuthCapability == "operate" || strings.HasSuffix(a.AuthCapability, "-operate"))) {
 		return nil
 	}
@@ -92,7 +102,14 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 	audit.Subject = "script catalog"
 	audit.IdempotencyKey = key
 	original := req
-	req, e, err := normalizeScript(req)
+	entry, exists := scriptcatalog.Lookup(req.ScriptID)
+	if audit.AuthMethod == operatorauth.AuthMethodServiceToken && (!exists || entry.Mode != "read") {
+		err = operatorError("SERVICE_TOKEN_READ_SCRIPTS_ONLY", "service tokens require a read-only catalog script")
+	}
+	var e scriptcatalog.Entry
+	if err == nil {
+		req, e, err = normalizeScript(req)
+	}
 	if err == nil {
 		err = scriptScope(e, audit)
 	}

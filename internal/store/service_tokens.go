@@ -45,7 +45,7 @@ func (s *Store) CreateServiceToken(t ServiceToken, actor string) (ServiceToken, 
 		return ServiceToken{}, "", ErrServiceToken
 	}
 	for _, v := range t.Allowlist {
-		if !validServiceRoute(v) {
+		if !validServiceRoute(v) || (t.Scope != "operate" && (v == "POST /v1/operator/script-runs/preview" || v == "POST /v1/operator/script-runs")) {
 			return ServiceToken{}, "", ErrServiceToken
 		}
 	}

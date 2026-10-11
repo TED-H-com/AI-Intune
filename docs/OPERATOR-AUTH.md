@@ -634,10 +634,38 @@ protects the last active admin. User mutations are audit logged without password
 
 ## Scoped service-token boundary
 
-`operatorRoutePolicies.ServiceTokenEligible` is an explicit opt-in, defaulting to false. Currently only read-only `GET /v1/operator/*` routes with the view capability are eligible (GET patterns also serve HEAD). All existing mutations and human preview/apply routes—including deployment/rollout continuations, retries, failed-batch skips, diagnostics, and verifier assignments—remain human-only, even for an operate token with those routes in a legacy allowlist. Future automation routes must be deliberately classified and tested.
+`operatorRoutePolicies.ServiceTokenEligible` is an explicit opt-in, defaulting to the human-only zero class. Read-script preview/apply use the distinct `serviceEligibleReadScriptsOnly` class described below. Other eligible routes are read-only `GET /v1/operator/*` routes with the view capability (GET patterns also serve HEAD). Other mutations and human preview/apply routes—including deployment/rollout continuations, retries, failed-batch skips, diagnostics, and verifier assignments—remain human-only, even for an operate token with those routes in a legacy allowlist. Future automation routes must be deliberately classified and tested.
 
 Management requires a human admin session and MFA. Creation requires at least one exact registered method/route-pattern entry, each explicitly eligible; malformed or empty lists are rejected at creation and authentication. Route eligibility is checked on every bearer request independently of its allowlist. Tokens retain view/operate scopes, expiry and immediate revocation checks.
 
 The boundary receives the Hub's configured `clientip.Resolver`: CIDRs, failure limiter keys, principal source and audit source use the resolved client address. `Fly-Client-IP` or `X-Forwarded-For` is trusted only when the connection peer matches `CLAWCTL_TRUSTED_PROXIES`, with `CLAWCTL_CLIENT_IP_HEADER` selecting the configured header. Untrusted peers cannot supply their own client identity; IPv6 limiter keys retain the shared /64 grouping.
 
 Service request audit is written once after CSRF and downstream handling complete. The first final HTTP status determines success (`<400`); implicit responses are 200 and informational headers do not determine the outcome. Denied requests use the bounded operator-denial ledger. Audit write failures after a response are logged without rewriting the completed response.
+
+
+### Service tokens and ad hoc catalog scripts
+
+Hermes service tokens with `operate` scope may allowlist exactly
+`POST /v1/operator/script-runs/preview` (`script_run_preview`) and
+`POST /v1/operator/script-runs` (`script_run_apply`). The manifest uses
+`serviceEligibleReadScriptsOnly`; view-scope tokens cannot include these routes.
+Both handler and store re-check the current embedded catalog on every preview
+and apply, before digest validation or idempotency replay. The script must exist
+with mode `read`. Unknown scripts and every other mode return 403
+`SERVICE_TOKEN_READ_SCRIPTS_ONLY` with a denial audit row. Write scripts,
+including the admin-approved write-equivalent `bat-sweep-report-v1`, remain
+human admin only. A human write preview cannot authorize a token apply, and a
+token preview cannot authorize an apply after the script becomes write-class.
+The catalog includes read-class `fleet-probe-v1` and write-class
+`bat-sweep-report-v1`.
+
+Script request rate limits still apply to service tokens, shared across preview
+and apply by stable `service:<name>` subject. Success and denial audits retain
+that service identity. Existing bounded rate-limit denial auditing still applies.
+
+Schedule configuration is human-only: upsert and set-enabled preview/apply
+(`POST /v1/operator/schedules/{operation}/{phase}`) and run-now
+(`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
+Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
+Schedule list/get eligibility remains unchanged (currently human-only).
+No routes or capability tallies changed.

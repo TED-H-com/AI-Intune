@@ -271,4 +271,32 @@ with `Retry-After: 2`; retry after that delay rather than issuing parallel reads
 
 For a public HTTPS Hub, use `clawctl-operator --hub-url https://hub.example.com --token-file /path/to/token mcp` (or `call <tool> [json]`). The file must be regular, mode 0600, and not a symlink. Redirects and ambient proxies remain disabled. Tailnet literal-origin mode is unchanged when no token file is supplied.
 
-Create and revoke tokens at `/account/service-tokens` with a human admin session and MFA. Tokens expire within 90 days and grant only view/operate. A nonempty allowlist is required. Entries are exact method plus registered eligible route pattern, such as `GET /v1/operator/machines` or `GET /v1/operator/machines/{id}`. Only read-only view JSON routes are currently service-token eligible; all existing mutations, previews, admin and approval-gated routes require a human. Source CIDRs and failure limiter keys use the configured client-IP resolver. Forwarded client headers are accepted only from configured trusted proxies.
+Create and revoke tokens at `/account/service-tokens` with a human admin session and MFA. Tokens expire within 90 days and grant only view/operate. A nonempty allowlist is required. Entries are exact method plus registered eligible route pattern, such as `GET /v1/operator/machines` or `GET /v1/operator/machines/{id}`. Read-only view JSON routes and the two read-script routes described below are service-token eligible. Other mutations, previews, admin and approval-gated routes require a human. Source CIDRs and failure limiter keys use the configured client-IP resolver. Forwarded client headers are accepted only from configured trusted proxies.
+
+
+### Service tokens and ad hoc catalog scripts
+
+Hermes service tokens with `operate` scope may allowlist exactly
+`POST /v1/operator/script-runs/preview` (`script_run_preview`) and
+`POST /v1/operator/script-runs` (`script_run_apply`). The manifest uses
+`serviceEligibleReadScriptsOnly`; view-scope tokens cannot include these routes.
+Both handler and store re-check the current embedded catalog on every preview
+and apply, before digest validation or idempotency replay. The script must exist
+with mode `read`. Unknown scripts and every other mode return 403
+`SERVICE_TOKEN_READ_SCRIPTS_ONLY` with a denial audit row. Write scripts,
+including the admin-approved write-equivalent `bat-sweep-report-v1`, remain
+human admin only. A human write preview cannot authorize a token apply, and a
+token preview cannot authorize an apply after the script becomes write-class.
+The catalog includes read-class `fleet-probe-v1` and write-class
+`bat-sweep-report-v1`.
+
+Script request rate limits still apply to service tokens, shared across preview
+and apply by stable `service:<name>` subject. Success and denial audits retain
+that service identity. Existing bounded rate-limit denial auditing still applies.
+
+Schedule configuration is human-only: upsert and set-enabled preview/apply
+(`POST /v1/operator/schedules/{operation}/{phase}`) and run-now
+(`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
+Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
+Schedule list/get eligibility remains unchanged (currently human-only).
+No routes or capability tallies changed.

@@ -75,7 +75,7 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 					if err == nil {
 						for _, route := range allow {
 							policy, valid := operatorRoutePolicies[route]
-							if !valid || !policy.ServiceTokenEligible || policy.Representation != operatorJSON || policy.Permission == operatorauth.Admin || !strings.Contains(route, " /v1/operator/") {
+							if !valid || (policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly && r.PostForm.Get("scope") != "operate") || !policy.ServiceTokenEligible.eligible() || policy.Representation != operatorJSON || policy.Permission == operatorauth.Admin || !strings.Contains(route, " /v1/operator/") {
 								err = store.ErrServiceToken
 								break
 							}
@@ -234,7 +234,7 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 	}
 	secret := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	required := policy.Permission.String()
-	if !policy.ServiceTokenEligible {
+	if !policy.ServiceTokenEligible.eligible() {
 		required = ""
 	}
 	token, err := b.store.AuthenticateServiceToken(secret, pattern, source, required)
@@ -243,7 +243,7 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 		principal.TailnetUserLogin = "service:" + token.Name
 		principal.NodeStableID = token.ID
 	}
-	if err != nil || !policy.ServiceTokenEligible || policy.Permission == operatorauth.Admin {
+	if err != nil || !policy.ServiceTokenEligible.eligible() || policy.Permission == operatorauth.Admin {
 		b.serviceAttempts.allow(source)
 		writeOperatorBoundaryError(response, operatorJSON, 401, "UNAUTHENTICATED", "Authentication required")
 		return
