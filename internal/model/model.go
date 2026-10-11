@@ -948,7 +948,7 @@ type CredStatus string
 
 const (
 	CredAbsent     CredStatus = "absent"     // 沒裝這家
-	CredConfigured CredStatus = "configured" // 有憑證且過期時間還沒到
+	CredConfigured CredStatus = "configured" // 本機憑證可續期、長效或過期時間還沒到
 	CredExpired    CredStatus = "expired"    // 過期時間已過
 	CredUnknown    CredStatus = "unknown"    // 讀不到 / 沒有過期欄位 / 格式不認得
 	CredFailed     CredStatus = "failed"     // 真實請求失敗過
@@ -966,6 +966,8 @@ const (
 // 「這個 session 被伺服器端撤銷了」。判斷交給 Hub 做跨機器比對：同一張票在
 // A 上一直在更新、在 B 上 mtime 卡住三天，那 B 大概被踢了。
 type Credential struct {
+	// Source identifies the file contract; omitted by older agents. gemini slot uses agy.
+	Source    string     `json:"source,omitempty"`
 	Provider  string     `json:"provider"` // claude / codex / grok / gemini / openclaw
 	Status    CredStatus `json:"status"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`

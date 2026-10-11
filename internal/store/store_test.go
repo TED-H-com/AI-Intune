@@ -2411,3 +2411,52 @@ FROM machine_checkins WHERE machine_id = ? ORDER BY sent_at`, id)
 		t.Fatalf("量到 0 uptime 讀回為 observed=%t seconds=%d，預期 observed=true seconds=0；真的剛開機會被錯印成 unknown", detail.Checkins[1].UptimeObserved, detail.Checkins[1].UptimeSeconds)
 	}
 }
+
+func TestFactsOldGeminiWithAgy(t *testing.T) {
+	s := newTestStore(t)
+	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	id := mustEnroll(t, s, "host-a", at.Add(-time.Hour))
+	b := healthyBatch(at)
+	expired := at.Add(-126 * 24 * time.Hour)
+	b.Credentials = []model.Credential{{Provider: "gemini", Status: model.CredExpired, ExpiresAt: &expired}}
+	b.CLITools = append(b.CLITools, model.CLITool{Name: "agy", Present: true})
+	if err := s.RecordObservation(id, b, at); err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.Facts(id, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.AgyPresent {
+		t.Fatal("agy presence not projected")
+	}
+	f.EverCheckedIn = true
+	f.LastCheckinReceived = at
+	for _, finding := range state.Derive(f).Findings {
+		if finding.Kind == "credential" {
+			t.Fatalf("legacy finding: %+v", finding)
+		}
+	}
+	b.Credentials[0].Source = "agy"
+	if err := s.RecordObservation(id, b, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	f, err = s.Facts(id, at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Credentials[0].Source != "agy" {
+		t.Fatal("source not projected")
+	}
+	found := false
+	f.EverCheckedIn = true
+	f.LastCheckinReceived = at
+	for _, finding := range state.Derive(f).Findings {
+		if finding.Kind == "credential" && !finding.Advisory {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("new agy expired credential was suppressed")
+	}
+}

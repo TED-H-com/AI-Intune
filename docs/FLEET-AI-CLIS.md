@@ -9,7 +9,7 @@ use agy. The installer reports no login success and never removes Gemini.
 | claude | Global npm `@anthropic-ai/claude-code` | Automation wrapper and private OAuth token |
 | codex | Global npm `@openai/codex` | `~/.codex/auth.json`, mode 600 |
 | grok | `https://x.ai/cli/install.sh` | `~/.grok/auth.json`, mode 600 |
-| agy | `https://antigravity.google/cli/install.sh` | OAuth layout under `~/.gemini/antigravity-cli`, when detectable |
+| agy | `https://antigravity.google/cli/install.sh` | `~/.gemini/antigravity-cli/antigravity-oauth-token` |
 
 Grok installs to `~/.grok/bin/grok`. Link it from `~/.local/bin/grok`.
 The installer links agy from known user install locations when present.
@@ -133,3 +133,31 @@ Use this helper for scripts whose output is safe to store and summarize.
 The checker produces sanitized output. Generic scripts must uphold the same
 rule: never print secrets. Report directories are mode 700 and new output
 files are mode 600. The report renders malformed or failed output as unknown.
+
+## Agent credential observations
+
+The historical `gemini` credential slot represents agy. The agent reads only
+`~/.gemini/antigravity-cli/antigravity-oauth-token`; legacy
+`~/.gemini/oauth_creds.json` is ignored. The agy file must be regular, not a
+symlink, owned by the agent user, and have no group/other permission bits.
+Valid JSON with a non-empty `token.refresh_token` is `configured`, with note
+"refreshable; access token refreshed on use" and no `expires_at`. An expired
+one-hour access token is normal: agy refreshes on use. Without a refresh token,
+`token.expiry` (RFC3339, including nanoseconds and offsets) is judged normally.
+Malformed JSON is `unknown`; the Hub treats it as a non-advisory finding.
+
+For Claude, `~/.config/claude-automation/oauth-token` is authoritative whenever
+present. The agent requires a regular, user-owned, non-symlink file with mode
+0600 and one line matching `^sk-ant-oat[0-9A-Za-z_-]{20,400}$` (a final newline
+is allowed). This probe intentionally requires 0600 even though the wrapper
+also accepts 0400. A valid file is `configured`, with note "long-lived
+claude-automation token; expiry not encoded" and no `expires_at`. Only absence
+permits fallback to `~/.claude/.credentials.json`. Invalid files produce
+non-advisory findings with non-secret reasons. No Claude command or API is
+called by credential probes; token values are never reported or hashed.
+
+The additive credential `source` field is `agy` or `claude-automation` for
+these files. Existing Hubs understand `configured` without expiry. New Hubs
+ignore source-less legacy Gemini credentials when the machine reports agy
+present, while still judging invalid agy credentials. Other providers retain
+their existing judgement.
