@@ -391,10 +391,12 @@ type Facts struct {
 	LastTaskEnded    time.Time
 
 	// Credentials：每個 provider 的狀態與過期時間。
+	AgyPresent  bool
 	Credentials []CredFact
 }
 
 type CredFact struct {
+	Source    string
 	Provider  string
 	Status    string
 	ExpiresAt *time.Time
@@ -770,6 +772,9 @@ func Derive(f Facts) Judgement {
 
 	// 3e. 憑證
 	for _, c := range f.Credentials {
+		if c.Provider == "gemini" && c.Source == "" && f.AgyPresent {
+			continue
+		}
 		switch c.Status {
 		case "expired":
 			// ⚠ 「過期」有兩種，而檔案本身分不出來：
@@ -839,6 +844,9 @@ func Derive(f Facts) Judgement {
 			promote(2, m)
 		case "failed":
 			m := fmt.Sprintf("%s 最近一次真實請求失敗", c.Provider)
+			if c.Source == "agy" || c.Source == "claude-automation" {
+				m = fmt.Sprintf("%s credential invalid: %s", c.Provider, c.Note)
+			}
 			add("credential", 3, false, "%s", m)
 			promote(3, m)
 		case "unknown":
@@ -848,7 +856,13 @@ func Derive(f Facts) Judgement {
 			if note == "" {
 				note = "讀不到過期時間"
 			}
-			add("credential", 2, true, "%s 的登入狀態未知：%s", c.Provider, note)
+			if c.Source == "agy" {
+				m := fmt.Sprintf("%s credential unparseable: %s", c.Provider, note)
+				add("credential", 3, false, "%s", m)
+				promote(3, m)
+			} else {
+				add("credential", 2, true, "%s 的登入狀態未知：%s", c.Provider, note)
+			}
 		case "absent", "configured":
 			// ⚠ configured 是有憑證且過期時間還沒到，absent 是沒裝這家；兩者都是事實，不長 finding。
 		case "":

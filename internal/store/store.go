@@ -2966,6 +2966,13 @@ SELECT COUNT(DISTINCT agent_started_at), COUNT(agent_started_at) FROM machine_ch
 		}
 	}
 
+	if obs, ok, err := s.latestObservationReceivedBy(machineID, KindCLITool, "agy", now); err != nil {
+		return state.Facts{}, err
+	} else if ok {
+		if tool, ok := unmarshalInto[model.CLITool](obs.Payload); ok {
+			f.AgyPresent = tool.Present
+		}
+	}
 	// --- 憑證。⚠ Status 原樣帶過去，五個詞，不壓成布林。
 	creds, err := s.latestBySubject(machineID, KindCredential, now)
 	if err != nil {
@@ -2979,6 +2986,7 @@ SELECT COUNT(DISTINCT agent_started_at), COUNT(agent_started_at) FROM machine_ch
 			continue
 		}
 		cf := state.CredFact{
+			Source:    c.Source,
 			Provider:  c.Provider,
 			Status:    string(c.Status),
 			ExpiresAt: c.ExpiresAt,

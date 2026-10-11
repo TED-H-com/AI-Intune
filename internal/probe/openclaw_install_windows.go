@@ -46,3 +46,6 @@ func diskFreeAvailable(path string) (int64, error) {
 func diskFreeError(target string, err error) string {
 	return "GetDiskFreeSpaceEx " + target + "：" + err.Error()
 }
+
+// POSIX ownership cannot be established for these Linux fleet token contracts.
+func credentialOwnedByUser(os.FileInfo) bool { return false }
