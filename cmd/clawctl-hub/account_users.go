@@ -44,7 +44,7 @@ func registerUserRoutes(mux *http.ServeMux, st *store.Store, resolver clientip.R
 			action := userActions[strings.TrimPrefix(r.URL.Path, "/account/users/")]
 			ip := resolver.Resolve(r)
 			meta := store.AuditEntry{SourceAddr: ip, UserAgent: r.UserAgent()}
-			auditFailure := func(detail string) {
+			auditFailure := func(detail string, resolvers ...clientip.Resolver) {
 				_ = st.RecordAudit(store.AuditEntry{Action: store.AuditAction("hub-user-" + action), AuthSubject: p.StableSubject(), AuthMethod: p.AuthMethod, Subject: r.PostForm.Get("username"), Detail: detail, OK: false, SourceAddr: ip, UserAgent: r.UserAgent()})
 			}
 			if !limiter.allow(ip) {
@@ -111,18 +111,28 @@ func registerUserRoutes(mux *http.ServeMux, st *store.Store, resolver clientip.R
 	return userPatterns
 }
 
-// Boundary failures never parse an untrusted mutation body. The route and actor
-// identify the rejected action without persisting credentials.
-func recordUserBoundaryFailure(st *store.Store, r *http.Request, detail string) {
+// Boundary failures record the authenticated actor and rejected action. Service
+// token targets are extracted from a bounded form and validated before auditing.
+func recordUserBoundaryFailure(st *store.Store, r *http.Request, detail string, resolvers ...clientip.Resolver) {
 	if st == nil || r.Method != http.MethodPost {
-		return
-	}
-	action, ok := userActions[strings.TrimPrefix(r.URL.Path, "/account/users/")]
-	if !ok {
 		return
 	}
 	p, ok := operatorauth.PrincipalFromContext(r.Context())
 	if !ok || p.AuthMethod != operatorauth.AuthMethodLocalAccountSession {
+		return
+	}
+	if r.URL.Path == "/account/service-tokens/create" || r.URL.Path == "/account/service-tokens/revoke" {
+		var resolver clientip.Resolver
+		if len(resolvers) > 0 {
+			resolver = resolvers[0]
+		}
+		entry, _ := serviceTokenManagementMetadata(nil, r, p, resolver)
+		entry.Detail = detail
+		_ = st.RecordAudit(entry)
+		return
+	}
+	action, ok := userActions[strings.TrimPrefix(r.URL.Path, "/account/users/")]
+	if !ok {
 		return
 	}
 	_ = st.RecordAudit(store.AuditEntry{Action: store.AuditAction("hub-user-" + action), AuthSubject: p.StableSubject(), AuthMethod: p.AuthMethod, Subject: r.URL.Path, Detail: detail, SourceAddr: p.SourceAddr, UserAgent: r.UserAgent(), OK: false})

@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-244（18 non-operator＋226 operator；117 operator JSON＋109 HTML/BFF/CSV/download），exact auth tally 是
-`view=89`／`operate=28`／`admin=109`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+247（18 non-operator＋229 operator；117 operator JSON＋112 HTML/BFF/CSV/download），exact auth tally 是
+`view=89`／`operate=28`／`admin=112`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -517,8 +517,8 @@ Changes read 由 `/reports/changes`、`GET /v1/operator/changes` 與
 receipt/transition time；agent `measured_at` 是分開顯示的不受信任座標。Cursor 綁 exact filters、
 window、evaluation instant 與所有 append-source/retention ceilings；retention 若讓 traversal 移位就
 以 `410` fail closed。Store 先下推 exact filters，篩選後 traversal 的 `total`／`matched_total` 必須
-相等，kind counts 也只計該集合。每次最多檢查 250,000 筆 observation window rows、每個 selected
-source 250,000 筆 timestamp metadata、10,000 endpoint keys、10,000 transitions、32 MiB candidate
+相等，kind counts 也只計該集合。每次最多檢查 253,000 筆 observation window rows、每個 selected
+source 253,000 筆 timestamp metadata、10,000 endpoint keys、10,000 transitions、32 MiB candidate
 metadata 與 32 MiB endpoint payload；超限 `422`、兩個 read slot 已滿 `429`、10 秒
 逾時 `503`。Typed safe DTO 不直接序列化 Store payload，也不輸出 hostname/account/path/PID/argv 或
 free-form note/error/reason；非公開 credential／CLI／systemd subject 一律固定遮罩且不能查詢。
@@ -537,7 +537,7 @@ append-only transition event ledger；升級會回填 surviving spans，但對�
 Ticket usage read 由 `/reports/tickets`、`/reports/tickets.csv`、`GET /v1/operator/tickets` 與
 `clawctl-hub tickets` 共用 `operator.Service.ListTicketsContext`。查詢採 Hub `received_at` 的固定
 `[from,to]` 交易快照，預設 7 天、最多 30 天，可用 SHA-256 opaque provider reference 精確下鑽。
-Store 在 materialize 前固定 250,000 candidate rows 與 32 MiB evidence bytes 上限；operator DTO 再固定
+Store 在 materialize 前固定 253,000 candidate rows 與 32 MiB evidence bytes 上限；operator DTO 再固定
 100 providers、每 provider 50 machines、50 agents、5 error variants，以及 256-byte identity／2048-byte
 error text。所有文字使用共用 scrub/truncation metadata，完成回合與驗證成功分開，報到率低於 80%
 時調度資格為 false。Web、JSON、terminal 與 spreadsheet-safe CSV 都只讀這個 typed projection。
