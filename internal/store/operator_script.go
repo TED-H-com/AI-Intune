@@ -137,7 +137,7 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 	previewReq.PreviewDigest = ""
 	digest := scriptModeBoundDigest(previewReq, e.Mode)
 	out = ScriptRunResult{PreviewDigest: digest, Targets: req.Targets, JobIDs: []string{}}
-	audit.RequestDigest = scriptModeBoundDigest(req, e.Mode)
+	audit.RequestDigest = "script-v2:" + scriptModeBoundDigest(req, e.Mode)
 	tx, err := s.beginWrite(context.Background(), "script_run")
 	if err != nil {
 		return out, err
@@ -162,12 +162,22 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 		var operation, cachedDigest, response string
 		ce := tx.QueryRow(`SELECT operation,request_digest,COALESCE(response_json,'') FROM operator_idempotency WHERE idempotency_key=?`, key).Scan(&operation, &cachedDigest, &response)
 		if ce == nil {
-			if operation != "script_v1" || cachedDigest != audit.RequestDigest {
+			// Only unversioned historical rows may use compatibility formats.
+			// v2 writes never fall back to a digest lacking the approved mode.
+			matches := cachedDigest == audit.RequestDigest
+			if strings.HasPrefix(cachedDigest, "sha256:") {
+				matches = cachedDigest == scriptModeBoundDigest(req, e.Mode) ||
+					cachedDigest == "sha256:"+scriptcatalog.Digest(mustScriptJSON(req))
+			}
+			if operation != "script_v1" || !matches {
 				return reject("idempotency conflict")
 			}
 			if json.Unmarshal([]byte(response), &out) != nil {
 				return out, errors.New("invalid script receipt")
 			}
+			// Correlate the replay audit with the exact stored receipt, including
+			// its historical digest version.
+			audit.RequestDigest = cachedDigest
 			out.Replayed = true
 			audit.OK = true
 			audit.Detail = OperatorIdempotencyReplayPrefix + scriptDetail(req, out.JobIDs)

@@ -141,3 +141,36 @@ bounded-history, quota, cleanup/Jev and dedup differences before declaring full
 parity. Verify every scheduled run's evidence/audit attribution and no connector
 writes. Review hourly for two missed intervals, >10% failures in 24h or >15m
 schedule lag, per design §5. Auto-approval remains a separate future change.
+
+## Schedule approval-mode upgrade
+
+Schedules retain the server-resolved `execution_mode` approved through upsert.
+The additive migration leaves existing schedules at the empty value; it does
+not infer historical approval from the current catalog. When a due schedule's
+mode is missing or differs from the catalog, the Hub disables it, increments
+its revision, records `mode_changed` in the scheduler audit, and emits no jobs.
+A hash change still pauses with `script_changed`. Re-enable requires a fresh
+upsert preview and approval; set-enabled cannot bypass either pause.
+
+Before rollout, inspect a consistent backup of each target Hub. After applying
+the additive migration to the backup, the following read-only query must return
+zero to establish that no schedules need explicit mode reapproval:
+
+```sql
+SELECT COUNT(*) AS schedules_requiring_mode_reapproval
+FROM schedules WHERE execution_mode = '';
+```
+
+The available upgrade database snapshot (669,442,048 bytes, file timestamp
+2026-10-10 15:48 UTC) was checked read-only on 2026-10-11. It has no `schedules`
+table and no WAL sidecar, so it contains no legacy schedules. This establishes
+only the contents of that snapshot, not the current state of a running Hub or
+other deployment databases. If a pre-upgrade backup has a schedules table but
+no execution_mode column, every row requires reapproval after migration.
+
+New immediate-script receipts use `script-v2:sha256:` request digests with the
+approved mode bound into the hash. Existing unversioned `sha256:` receipts can
+replay only when the exact historical normalized request digest matches (the
+pre-mode format or the earlier mode-bound format). Reuse the original key and
+request to recover its stored receipt; a legacy preview never authorizes a new
+execution under a fresh key.

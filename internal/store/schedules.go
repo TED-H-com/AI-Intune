@@ -15,23 +15,24 @@ import (
 )
 
 type Schedule struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	ScriptID     string          `json:"script_id"`
-	ScriptSHA256 string          `json:"script_sha256"`
-	Args         json.RawMessage `json:"args"`
-	Targets      []string        `json:"targets"`
-	Cron         string          `json:"cron"`
-	Enabled      bool            `json:"enabled"`
-	CatchUp      bool            `json:"catch_up"`
-	CreatedBy    string          `json:"created_by"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	Revision     int64           `json:"revision"`
-	LastRunAt    *time.Time      `json:"last_run_at"`
-	LastJobIDs   []string        `json:"last_job_ids"`
-	NextRunAt    time.Time       `json:"next_run_at"`
-	PausedReason string          `json:"paused_reason"`
+	ExecutionMode string          `json:"execution_mode"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	ScriptID      string          `json:"script_id"`
+	ScriptSHA256  string          `json:"script_sha256"`
+	Args          json.RawMessage `json:"args"`
+	Targets       []string        `json:"targets"`
+	Cron          string          `json:"cron"`
+	Enabled       bool            `json:"enabled"`
+	CatchUp       bool            `json:"catch_up"`
+	CreatedBy     string          `json:"created_by"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	Revision      int64           `json:"revision"`
+	LastRunAt     *time.Time      `json:"last_run_at"`
+	LastJobIDs    []string        `json:"last_job_ids"`
+	NextRunAt     time.Time       `json:"next_run_at"`
+	PausedReason  string          `json:"paused_reason"`
 }
 
 // ScheduleListResponse is the shared wire envelope for schedule lists.
@@ -64,12 +65,12 @@ type ScheduleResult struct {
 	Replayed      bool     `json:"replayed"`
 }
 
-const scheduleColumns = `id,name,script_id,script_sha256,args,targets,cron,enabled,catch_up,created_by,created_at,updated_at,revision,last_run_at,last_job_ids,next_run_at,paused_reason`
+const scheduleColumns = `id,name,script_id,script_sha256,args,targets,cron,enabled,catch_up,created_by,created_at,updated_at,revision,last_run_at,last_job_ids,next_run_at,paused_reason,execution_mode`
 
 func scanSchedule(row jobReadScanner) (v Schedule, err error) {
 	var args, targets, created, updated, jobs, next string
 	var last sql.NullString
-	err = row.Scan(&v.ID, &v.Name, &v.ScriptID, &v.ScriptSHA256, &args, &targets, &v.Cron, &v.Enabled, &v.CatchUp, &v.CreatedBy, &created, &updated, &v.Revision, &last, &jobs, &next, &v.PausedReason)
+	err = row.Scan(&v.ID, &v.Name, &v.ScriptID, &v.ScriptSHA256, &args, &targets, &v.Cron, &v.Enabled, &v.CatchUp, &v.CreatedBy, &created, &updated, &v.Revision, &last, &jobs, &next, &v.PausedReason, &v.ExecutionMode)
 	if err != nil {
 		return
 	}
@@ -224,6 +225,7 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 		v.Name = req.Name
 		v.ScriptID = req.ScriptID
 		v.ScriptSHA256 = req.ScriptSHA256
+		v.ExecutionMode = entry.Mode
 		v.Args = normalized.Args
 		v.Targets = normalized.Targets
 		v.Cron = strings.Join(strings.Fields(req.Cron), " ")
@@ -244,7 +246,7 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 	if e := scheduleScope(entry, a); e != nil {
 		return out, e
 	}
-	if operation == "set-enabled" && v.PausedReason != "" && req.Enabled {
+	if operation == "set-enabled" && req.Enabled && (v.PausedReason != "" || v.ExecutionMode == "" || v.ExecutionMode != entry.Mode) {
 		return out, scriptBad("re-approve script through upsert")
 	}
 	if v.Enabled {
@@ -291,7 +293,7 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 			v.CreatedAt = a.At
 			v.LastJobIDs = []string{}
 		}
-		_, err = tx.Exec(`INSERT INTO schedules (`+scheduleColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,script_id=excluded.script_id,script_sha256=excluded.script_sha256,args=excluded.args,targets=excluded.targets,cron=excluded.cron,enabled=excluded.enabled,updated_at=excluded.updated_at,revision=excluded.revision,next_run_at=excluded.next_run_at,paused_reason=excluded.paused_reason`, v.ID, v.Name, v.ScriptID, v.ScriptSHA256, string(v.Args), string(mustScriptJSON(v.Targets)), v.Cron, v.Enabled, false, v.CreatedBy, fmtTime(v.CreatedAt), fmtTime(v.UpdatedAt), v.Revision, nil, string(mustScriptJSON(v.LastJobIDs)), fmtTime(v.NextRunAt), v.PausedReason)
+		_, err = tx.Exec(`INSERT INTO schedules (`+scheduleColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,script_id=excluded.script_id,script_sha256=excluded.script_sha256,args=excluded.args,targets=excluded.targets,cron=excluded.cron,enabled=excluded.enabled,updated_at=excluded.updated_at,revision=excluded.revision,next_run_at=excluded.next_run_at,paused_reason=excluded.paused_reason,execution_mode=excluded.execution_mode`, v.ID, v.Name, v.ScriptID, v.ScriptSHA256, string(v.Args), string(mustScriptJSON(v.Targets)), v.Cron, v.Enabled, false, v.CreatedBy, fmtTime(v.CreatedAt), fmtTime(v.UpdatedAt), v.Revision, nil, string(mustScriptJSON(v.LastJobIDs)), fmtTime(v.NextRunAt), v.PausedReason, v.ExecutionMode)
 		if err != nil {
 			return
 		}
@@ -460,12 +462,18 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 			return
 		}
 	}
+	pauseReason := ""
 	if !ok || entry.SHA256 != v.ScriptSHA256 || scriptcatalog.Digest(entry.Bytes) != v.ScriptSHA256 {
-		_, err = tx.Exec(`UPDATE schedules SET enabled=0,paused_reason='script_changed',revision=revision+1,updated_at=? WHERE id=?`, fmtTime(now), id)
+		pauseReason = "script_changed"
+	} else if v.ExecutionMode == "" || v.ExecutionMode != entry.Mode {
+		pauseReason = "mode_changed"
+	}
+	if pauseReason != "" {
+		_, err = tx.Exec(`UPDATE schedules SET enabled=0,paused_reason=?,revision=revision+1,updated_at=? WHERE id=?`, pauseReason, fmtTime(now), id)
 		if err != nil {
 			return
 		}
-		a.Detail = "script_changed"
+		a.Detail = pauseReason
 		if err = s.recordAuditTx(tx, a); err != nil {
 			return
 		}
@@ -521,7 +529,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 		outcome = "skipped_unavailable"
 		err = nil
 	} else {
-		raw := mustScriptJSON(scriptcatalog.Spec{ExecutionMode: entry.Mode, Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
+		raw := mustScriptJSON(scriptcatalog.Spec{ExecutionMode: v.ExecutionMode, Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
 		for _, target := range v.Targets {
 			desired, rev, e := createDesiredStateTx(tx, "machine", target, scriptcatalog.Kind, v.ScriptID, string(raw), "operator:"+a.AuthSubject, now)
 			if e != nil {

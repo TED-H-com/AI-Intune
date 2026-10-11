@@ -310,7 +310,7 @@ func TestScriptApprovalBindsExecutionMode(t *testing.T) {
 	}
 	normalized.PreviewDigest = req.PreviewDigest
 	var storedDigest string
-	if err := st.DB().QueryRow(`SELECT request_digest FROM operator_idempotency WHERE idempotency_key=?`, "mode-bound-approval").Scan(&storedDigest); err != nil || storedDigest != scriptModeBoundDigest(normalized, "read") {
+	if err := st.DB().QueryRow(`SELECT request_digest FROM operator_idempotency WHERE idempotency_key=?`, "mode-bound-approval").Scan(&storedDigest); err != nil || storedDigest != "script-v2:"+scriptModeBoundDigest(normalized, "read") {
 		t.Fatalf("request binding: %v", err)
 	}
 	job, err := st.Job(result.JobIDs[0])
@@ -324,5 +324,71 @@ func TestScriptApprovalBindsExecutionMode(t *testing.T) {
 	spec, err := scriptcatalog.Decode([]byte(desired.Spec))
 	if err != nil || spec.ExecutionMode != "read" {
 		t.Fatal("approved execution mode not stored")
+	}
+}
+
+func TestScriptLegacyDigestReceiptReplay(t *testing.T) {
+	for _, version := range []string{"legacy-request", "unversioned-mode-bound", "v2-rejects-legacy-fallback"} {
+		t.Run(version, func(t *testing.T) {
+			s, req, actor, _ := scriptFixture(t)
+			preview, err := s.ScriptRun(req, false, "", actor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.PreviewDigest = preview.PreviewDigest
+			created, err := s.ScriptRun(req, true, "existing-script-key", actor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			normalized, entry, err := normalizeScript(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if version != "unversioned-mode-bound" {
+				legacyPreview := normalized
+				legacyPreview.PreviewDigest = ""
+				req.PreviewDigest = "sha256:" + scriptcatalog.Digest(mustScriptJSON(legacyPreview))
+				normalized.PreviewDigest = req.PreviewDigest
+				created.PreviewDigest = req.PreviewDigest
+			}
+			digest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(normalized))
+			if version == "unversioned-mode-bound" {
+				digest = scriptModeBoundDigest(normalized, entry.Mode)
+			}
+			if version == "v2-rejects-legacy-fallback" {
+				digest = "script-v2:" + digest
+			}
+			if _, err := s.DB().Exec(`UPDATE operator_idempotency SET request_digest=?,response_json=? WHERE idempotency_key=?`, digest, string(mustScriptJSON(created)), "existing-script-key"); err != nil {
+				t.Fatal(err)
+			}
+			replayed, err := s.ScriptRun(req, true, "existing-script-key", actor)
+			if version == "v2-rejects-legacy-fallback" {
+				if err == nil {
+					t.Fatal("versioned receipt used legacy fallback")
+				}
+			} else {
+				if err != nil || !replayed.Replayed || len(replayed.JobIDs) != 1 || replayed.JobIDs[0] != created.JobIDs[0] || replayed.PreviewDigest != created.PreviewDigest {
+					t.Fatalf("legacy receipt not replayed: %v", err)
+				}
+				var replayAudits int
+				if err := s.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action=? AND idempotency_key=? AND request_digest=? AND detail LIKE ?`, AuditScriptApply, "existing-script-key", digest, OperatorIdempotencyReplayPrefix+"%").Scan(&replayAudits); err != nil || replayAudits != 1 {
+					t.Fatalf("legacy replay audit correlation=%d err=%v", replayAudits, err)
+				}
+				changed := req
+				changed.Reason = "different request"
+				if _, err := s.ScriptRun(changed, true, "existing-script-key", actor); err == nil {
+					t.Fatal("changed request matched legacy receipt")
+				}
+				if version == "legacy-request" {
+					if _, err := s.ScriptRun(req, true, "fresh-key", actor); err == nil {
+						t.Fatal("legacy approval accepted for fresh execution")
+					}
+				}
+			}
+			var count int
+			if err := s.DB().QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&count); err != nil || count != 1 {
+				t.Fatalf("duplicate execution count=%d err=%v", count, err)
+			}
+		})
 	}
 }
