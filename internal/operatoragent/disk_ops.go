@@ -3,6 +3,7 @@ package operatoragent
 import (
 	"context"
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/diskreport"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"strings"
 )
@@ -14,7 +15,7 @@ type diskPolicyHub interface {
 
 func diskPolicyTools() []Tool {
 	id := strField(1, 128, idPattern, "Policy ID")
-	out := []Tool{{Name: "disk_policy_list", Description: "List disk policy revisions. Human view only; protected paths are represented by counts and digests.", InputSchema: obj(map[string]any{}), Annotations: readAnn("disk_policy_list")}, {Name: "disk_policy_get", Description: "Get latest disk policy revision. Human view only.", InputSchema: obj(map[string]any{"id": id}, "id"), Annotations: readAnn("disk_policy_get")}}
+	out := []Tool{{Name: "disk_report_get", Description: "Read ranked deep disk report items with sanitized display paths only.", InputSchema: obj(map[string]any{"id": id, "cursor": strField(1, 10, "^[0-9]+$", "Page cursor"), "limit": intBound(1, 100, "Page size")}, "id"), Annotations: readAnn("disk_report_get")}, {Name: "disk_policy_list", Description: "List disk policy revisions. Human view only; protected paths are represented by counts and digests.", InputSchema: obj(map[string]any{}), Annotations: readAnn("disk_policy_list")}, {Name: "disk_policy_get", Description: "Get latest disk policy revision. Human view only.", InputSchema: obj(map[string]any{"id": id}, "id"), Annotations: readAnn("disk_policy_get")}}
 	out = append([]Tool{{Name: "disk_ops_status", Description: "Read disk usage and safe-tier results with paths represented by digests. Human view only.", InputSchema: obj(map[string]any{"machine_id": strField(1, 128, idPattern, "Machine ID")}, "machine_id"), Annotations: readAnn("disk_ops_status")}}, out...)
 	for _, phase := range []string{"preview", "apply"} {
 		name := "disk_policy_upsert_" + phase
@@ -44,6 +45,37 @@ func diskPolicySchema() map[string]any {
 	}, "schema_version", "safe_tier", "protect_paths", "thresholds", "quarantine_ttl_days", "scan_budgets")
 }
 func (s *Service) diskPolicyCall(ctx context.Context, name string, raw json.RawMessage) (any, error) {
+	if name == "disk_report_get" {
+		var req struct {
+			ID     string `json:"id"`
+			Cursor string `json:"cursor"`
+			Limit  int    `json:"limit"`
+		}
+		if e := decodeArgs(raw, &req); e != nil {
+			return nil, e
+		}
+		if req.Limit == 0 {
+			req.Limit = 100
+		}
+		if req.ID == "" || req.Limit < 1 || req.Limit > 100 {
+			return nil, &CallError{Code: "invalid_arguments", Message: "report ID and limit 1..100 required"}
+		}
+		h, ok := s.Hub.(interface {
+			DiskReport(context.Context, string, string, int) (store.DiskReportPage, error)
+		})
+		if !ok {
+			return nil, &CallError{Code: "not_configured", Message: "disk report client unavailable"}
+		}
+		v, e := h.DiskReport(ctx, req.ID, req.Cursor, req.Limit)
+		if e != nil {
+			return nil, hubErr(e)
+		}
+		v.Report = diskreport.PublicReport(v.Report)
+		for i := range v.Items {
+			v.Items[i] = diskreport.PublicItem(v.Items[i])
+		}
+		return v, nil
+	}
 	if name == "disk_ops_status" {
 		h, ok := s.Hub.(interface {
 			DiskOpsStatus(context.Context, string) (store.DiskOpsStatus, error)

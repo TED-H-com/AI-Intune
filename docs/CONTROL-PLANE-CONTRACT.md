@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-266（18 non-operator＋248 operator；127 operator JSON＋121 HTML/BFF/CSV/download），exact auth tally 是
-`view=97`／`operate=28`／`admin=123`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+271（20 non-operator＋251 operator；129 operator JSON＋122 HTML/BFF/CSV/download），exact auth tally 是
+`view=100`／`operate=28`／`admin=123`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1141,3 +1141,15 @@ directory descriptor; cache replacement causes a deferred result. Disk-v2 job
 evidence is human-only even for read scripts because output and pinned policy specs
 contain private paths. MCP status remains a path-safe digest/category projection.
 Docker keeps only the two fixed §4.1 age-filtered commands, including confirmation `-f`.
+
+P2-03 deep disk analysis shares canonical operator services across server-rendered
+UI, JSON and MCP. Read scans require disk_ops_v2 and pinned immutable policy;
+manual enqueue is human-admin preview/apply with idempotency and audit. Report
+chunks authenticate the active assigned machine job and bind sequence, chunk
+hash, final canonical digest and item count. Private paths never enter audit or
+ordinary projections; only human-admin HTML can reveal them. Partial/truncated
+inventory never means clean. Pressure evaluates active non-retired machines with fresh check-ins and >80%
+(default policy) usage, sharing six-hour coalescing with weekly/manual scans.
+Only enqueue and bounded coalesce decisions persist minute slots and audit rows;
+routine below-threshold/unavailable checks leave no durable trigger evidence.
+Human cleanup decisions remain disabled until P2-04; no delegated approvals.

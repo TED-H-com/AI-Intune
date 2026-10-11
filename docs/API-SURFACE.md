@@ -3,13 +3,13 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 272 個 HTTP operations（24 non-operator＋248 operator；127 條 operator JSON）、
+> 逐一對照 277 個 HTTP operations（26 non-operator＋251 operator；129 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 272-operation tally above (24 non-operator + 248 operator). The inventory/contract excludes these six public account operations and totals 266. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 277-operation tally above (26 non-operator + 251 operator). The inventory/contract excludes these six public account operations and totals 271. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -898,3 +898,17 @@ directory descriptor; cache replacement causes a deferred result. Disk-v2 job
 evidence is human-only even for read scripts because output and pinned policy specs
 contain private paths. MCP status remains a path-safe digest/category projection.
 Docker keeps only the two fixed §4.1 age-filtered commands, including confirmation `-f`.
+
+### Deep disk report surface (P2-03)
+
+| Method | Route | Authority / behavior |
+|---|---|---|
+| POST | `/v1/disk-reports/{job_id}/chunks` | Machine bearer, active assigned deep job; 64 KiB payload, ordered sequence/digest retries, 2 MiB total |
+| POST | `/v1/disk-reports/{job_id}/complete` | Machine bearer; canonical digest and <=500 item count |
+| GET | `/v1/operator/disk-ops/reports` | View; optional machine_id, latest 100 finalized report summaries |
+| GET | `/v1/operator/disk-ops/reports/{id}` | View; cursor and limit 1..100, sanitized display paths; exact-allowlisted view tokens eligible |
+| GET | `/disk-reports/{id}` | Human viewer; full private path only for admin; category/confidence filters and disabled action controls |
+
+Manual deep scans use existing script preview/apply routes, human admin only,
+with pinned policy/hash/mode, preview digest, idempotency and audit. No new
+service-token writes. `disk_report_get` calls the same canonical read service.

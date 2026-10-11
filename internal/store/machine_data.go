@@ -44,6 +44,8 @@ var machineDataTables = []MachineDataTable{
 	{Table: "workload_observation_evidence", TimeCol: "received_at"},
 	{Table: "canary_silent_failures", TimeCol: "last_seen_at"},
 	{Table: "jobs", TimeCol: "created_at"},
+	{Table: "disk_reports", TimeCol: "created_at"},
+	{Table: "disk_deep_trigger_slots", TimeCol: "slot"},
 	{Table: "ops_approvals", TimeCol: "created_at"},
 	{Table: "maintenance_summaries", TimeCol: "received_at"},
 	{Table: "maintenance_rollout_targets", TimeCol: ""},

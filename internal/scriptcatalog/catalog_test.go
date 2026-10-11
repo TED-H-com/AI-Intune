@@ -7,8 +7,8 @@ import (
 )
 
 func TestRegistryHashIntegrity(t *testing.T) {
-	if len(List()) != 4 {
-		t.Fatal("expected probe, BAT report and disk-safe scripts")
+	if len(List()) != 5 {
+		t.Fatal("expected probe, BAT report, disk-safe and deep-report scripts")
 	}
 	for _, meta := range List() {
 		e, ok := Lookup(meta.ID)

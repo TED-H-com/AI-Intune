@@ -122,16 +122,16 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		t.Fatal(err)
 	}
-	if len(nonOperatorRegistered) != 24 || len(nonOperatorRoutePolicies) != 24 {
-		t.Fatalf("non-operator registered=%d policies=%d, want 24/24",
+	if len(nonOperatorRegistered) != 26 || len(nonOperatorRoutePolicies) != 26 {
+		t.Fatalf("non-operator registered=%d policies=%d, want 26/26",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 248 || len(operatorRoutePolicies) != 248 {
-		t.Fatalf("operator registered=%d policies=%d, want 248/248",
+	if len(operatorRegistered) != 251 || len(operatorRoutePolicies) != 251 {
+		t.Fatalf("operator registered=%d policies=%d, want 251/251",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 272 {
-		t.Fatalf("all registered routes=%d, 預期 272", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 277 {
+		t.Fatalf("all registered routes=%d, 預期 277", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -141,14 +141,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 97 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 123 {
-		t.Fatalf("permission counts=%v, want view=97 operate=28 admin=123", counts)
+	if counts[operatorauth.View] != 100 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 123 {
+		t.Fatalf("permission counts=%v, want view=100 operate=28 admin=123", counts)
 	}
-	if representations[operatorJSON] != 127 || representations[operatorHTML] != 120 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=127 HTML=120 plain=1", representations)
+	if representations[operatorJSON] != 129 || representations[operatorHTML] != 121 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=129 HTML=121 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 247 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=247 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 250 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=250 terminal=1", profiles)
 	}
 }
 

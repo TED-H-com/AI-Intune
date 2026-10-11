@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -63,6 +64,17 @@ func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error)
 
 // RunPolicy accepts only a digest-pinned closed policy for disk entries.
 func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy json.RawMessage) (Result, error) {
+	return runPolicy(ctx, e, args, timeout, policy, nil)
+}
+
+// RunReport delivers private typed output only to the supervisor, never evidence.
+func RunReport(ctx context.Context, e Entry, args []byte, timeout int, policy json.RawMessage, sink io.Writer) (Result, error) {
+	if e.ID != "disk-deep-report-v1" {
+		return Result{}, fmt.Errorf("not a report script")
+	}
+	return runPolicy(ctx, e, args, timeout, policy, sink)
+}
+func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy json.RawMessage, sink io.Writer) (Result, error) {
 	var result Result
 	if os.Geteuid() == 0 || e.RunsAs != "agent-user" || !e.AllowsOS("linux") || timeout < 1 || timeout > e.MaxTimeout || e.OutputCap < 1 || e.OutputCap > 64<<10 || Digest(e.Bytes) != e.SHA256 {
 		return result, fmt.Errorf("invalid catalog execution constraints")
@@ -71,7 +83,7 @@ func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	if err != nil {
 		return result, err
 	}
-	if IsDiskSafe(e.ID) {
+	if IsDisk(e.ID) {
 		var a struct {
 			PolicyDigest string `json:"policy_digest"`
 		}
@@ -99,7 +111,7 @@ func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	defer cancel()
 	interpreter := "/bin/sh"
 	home := dir
-	if e.ID == "bat-sweep-report-v1" || IsDiskSafe(e.ID) {
+	if e.ID == "bat-sweep-report-v1" || IsDisk(e.ID) {
 		interpreter = "/usr/bin/python3"
 		account, err := user.Current()
 		if err != nil || account.HomeDir == "" {
@@ -108,7 +120,7 @@ func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 		home = account.HomeDir
 	}
 	argv := []string{path}
-	if e.ID == "bat-sweep-report-v1" || IsDiskSafe(e.ID) {
+	if e.ID == "bat-sweep-report-v1" || IsDisk(e.ID) {
 		argv = []string{"-I", "-S", "-B", path}
 	}
 	cmd := exec.CommandContext(ctx, interpreter, argv...)
@@ -121,6 +133,9 @@ func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	stdout := output{digest: sha256.New(), cap: e.OutputCap}
 	stderr := output{digest: sha256.New(), cap: e.OutputCap}
 	cmd.Stdout = &stdout
+	if sink != nil {
+		cmd.Stdout = io.MultiWriter(&stdout, sink)
+	}
 	cmd.Stderr = &stderr
 	start := time.Now()
 	err = cmd.Run()
@@ -138,8 +153,12 @@ func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	}
 	result.TimedOut = ctx.Err() == context.DeadlineExceeded
 	result.Stdout, result.Stderr = stdout.text(), stderr.text()
-	if IsDiskSafe(e.ID) && stdout.count <= int64(e.OutputCap) {
+	if IsDisk(e.ID) && stdout.count <= int64(e.OutputCap) {
 		result.Stdout = RedactDiskJSON(stdout.buf.Bytes())
+	}
+	if e.ID == "disk-deep-report-v1" {
+		result.Stdout = ""
+		result.Stderr = ""
 	}
 	result.StdoutTruncated, result.StderrTruncated = stdout.count > int64(e.OutputCap), stderr.count > int64(e.OutputCap)
 	result.StdoutSHA256, result.StderrSHA256 = fmt.Sprintf("%x", stdout.digest.Sum(nil)), fmt.Sprintf("%x", stderr.digest.Sum(nil))

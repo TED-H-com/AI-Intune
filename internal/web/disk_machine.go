@@ -19,6 +19,8 @@ type diskMachinePage struct {
 	Request   string
 	Digest    string
 	Key       string
+	ReadOnly  bool
+	Reports   []store.DiskReportSummary
 	Operation string
 }
 
@@ -40,7 +42,7 @@ func (s *Server) diskMachine(w http.ResponseWriter, r *http.Request) {
 	}
 	schedules := []store.Schedule{}
 	for _, v := range all {
-		if !scriptcatalog.IsDiskSafe(v.ScriptID) {
+		if !scriptcatalog.IsDisk(v.ScriptID) {
 			continue
 		}
 		for _, id := range v.Targets {
@@ -55,7 +57,12 @@ func (s *Server) diskMachine(w http.ResponseWriter, r *http.Request) {
 		s.diskOpsError(w, r, err, "/")
 		return
 	}
-	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: status, Policies: policies, Schedules: schedules, History: history.Items}})
+	reports, err := s.operator.DiskReports(status.MachineID)
+	if err != nil {
+		s.diskOpsError(w, r, err, "/")
+		return
+	}
+	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: status, Policies: policies, Schedules: schedules, History: history.Items, Reports: reports}})
 }
 func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -74,7 +81,7 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 		switch r.PostForm.Get("operation") {
 		case "script":
 			var req store.ScriptRunRequest
-			if json.Unmarshal([]byte(raw), &req) != nil || len(req.Targets) != 1 || req.Targets[0] != id || !scriptcatalog.IsDiskSafe(req.ScriptID) {
+			if json.Unmarshal([]byte(raw), &req) != nil || len(req.Targets) != 1 || req.Targets[0] != id || !scriptcatalog.IsDisk(req.ScriptID) {
 				s.diskFormError(w, r, back)
 				return
 			}
@@ -102,7 +109,7 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if r.PostForm.Get("operation") == "upsert" {
-				if len(req.Targets) != 1 || req.Targets[0] != id || !scriptcatalog.IsDiskSafe(req.ScriptID) {
+				if len(req.Targets) != 1 || req.Targets[0] != id || !scriptcatalog.IsDisk(req.ScriptID) {
 					s.diskFormError(w, r, back)
 					return
 				}
@@ -142,7 +149,7 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, "Request key", err)
 			return
 		}
-		s.render(w, r, "disk_machine.html", page{Title: "Review scheduled cleanup", DiskMachine: &diskMachinePage{Status: store.DiskOpsStatus{MachineID: id, WritesEnabled: s.operator.DiskOpsWritesEnabled()}, Review: "Run scheduled safe cleanup now", Operation: "run-now", Request: v.ID, Digest: out.PreviewDigest, Key: key}})
+		s.render(w, r, "disk_machine.html", page{Title: "Review scheduled cleanup", DiskMachine: &diskMachinePage{Status: store.DiskOpsStatus{MachineID: id, WritesEnabled: s.operator.DiskOpsWritesEnabled()}, ReadOnly: v.ExecutionMode == "read", Review: "Run scheduled disk job now", Operation: "run-now", Request: v.ID, Digest: out.PreviewDigest, Key: key}})
 		return
 	}
 
@@ -162,10 +169,15 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := &diskMachinePage{Status: store.DiskOpsStatus{MachineID: id, WritesEnabled: s.operator.DiskOpsWritesEnabled()}, Key: key}
-	if action == "preview" || action == "cleanup" {
+	if action == "preview" || action == "cleanup" || action == "deep" {
 		script := "disk-safe-clean-v2"
 		if action == "preview" {
 			script = "disk-safe-preview-v2"
+		}
+		if action == "deep" {
+			script = "disk-deep-report-v1"
+			args, _ = json.Marshal(map[string]any{"policy_id": policy.ID, "policy_digest": policy.Digest, "max_items": 500})
+			view.ReadOnly = true
 		}
 		entry, _ := scriptcatalog.Lookup(script)
 		req := store.ScriptRunRequest{ScriptID: script, ScriptSHA256: entry.SHA256, Args: args, Targets: []string{id}, Reason: r.PostForm.Get("reason")}
@@ -189,6 +201,9 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 		view.Digest = out.PreviewDigest
 		view.Operation = "script"
 		view.Review = "Run safe cleanup"
+		if action == "deep" {
+			view.Review = "Run deep analysis (read only)"
+		}
 	} else if action == "schedule" || action == "toggle" {
 		req := store.ScheduleRequest{Reason: r.PostForm.Get("reason")}
 		op := "upsert"
@@ -204,7 +219,12 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			reason := req.Reason
-			req, err = store.DiskScheduleTemplate(scope, policy.ID, policy.Digest, id, hour, minute)
+			if scope == "deep" {
+				req, err = store.DiskDeepScheduleTemplate(policy.ID, policy.Digest, id, hour, minute)
+				view.ReadOnly = true
+			} else {
+				req, err = store.DiskScheduleTemplate(scope, policy.ID, policy.Digest, id, hour, minute)
+			}
 			if err != nil {
 				s.diskOpsError(w, r, err, back)
 				return
@@ -246,7 +266,8 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 		view.Request = string(raw)
 		view.Digest = out.PreviewDigest
 		view.Operation = op
-		view.Review = "Review safe cleanup schedule"
+		view.Review = "Review disk schedule"
+		view.ReadOnly = out.Schedule.ExecutionMode == "read"
 	} else {
 		s.diskFormError(w, r, back)
 		return
@@ -254,5 +275,5 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "disk_machine.html", page{Title: "Review disk operation", DiskMachine: view})
 }
 func diskScheduleTarget(v store.Schedule, id string) bool {
-	return scriptcatalog.IsDiskSafe(v.ScriptID) && len(v.Targets) == 1 && v.Targets[0] == id
+	return scriptcatalog.IsDisk(v.ScriptID) && len(v.Targets) == 1 && v.Targets[0] == id
 }

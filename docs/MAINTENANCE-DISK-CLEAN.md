@@ -440,3 +440,59 @@ compares the snapshot. Any change or resolution failure defers the item and latc
 a protection-change skip for all remaining mutations in that run, even if the alias
 is restored later. A new invocation establishes a fresh baseline. Alias access times
 and ordinary directory modification times do not participate in identity checks.
+
+## Deep reports (P2-03)
+
+`disk-deep-report-v1` is a pinned read script with closed `policy_id`,
+`policy_digest`, and `max_items` (1–500) args. It observes reviewed Linux roots
+without following symlinks or crossing mounts. Enumeration and archive hashing
+require no-atime descriptors; inaccessible roots and unknown generation/holder
+facts remain partial or investigate-only. All repository roots, credentials,
+secret backups, active/rollback names and configured protected paths are excluded
+as aggregates. Access times are weak under relatime/noatime. Archive hashes have a
+64 MiB content budget. Docker listing includes stopped-container references;
+shared-layer reclaim and rollback references remain unknown.
+
+The supervisor uploads typed records in memory to machine-authenticated
+`POST /v1/disk-reports/{job_id}/chunks` and `/complete`: active assigned job,
+64 KiB per chunk, 2 MiB total, 500 items, ordered sequence and digest replay
+binding. Completion binds the canonical Go report JSON digest and item count.
+Private paths live only in restricted report columns, never stdout or audit.
+Final reports expire after 30 days; incomplete uploads after 24 hours.
+
+Fresh usage (both observation and receipt within 15 minutes) strictly above the
+policy threshold (default 80%) triggers minute reconciliation. All manual,
+weekly and pressure deep jobs coalesce per machine for six hours, including
+queued/running jobs. Only `disk_ops_v2` machines qualify. The machine's enabled
+weekly schedule selects its policy; a single active tenant policy is an
+unambiguous fallback. Multiple unassigned policies skip without durable trigger evidence.
+Only active, expected, non-retired machines with recent check-ins are evaluated.
+Routine below-threshold, stale, unavailable and unassigned evaluations create no
+slot or audit rows. Enqueue and the first coalesce decision in each six-hour
+interval use persisted minute slots and audit evidence. Writes need not be enabled for
+read scans. Weekly templates use Sunday UTC and an explicit operator hour/minute.
+
+Use the machine Disk page to preview/apply a report or weekly schedule and open
+the ranked viewer. JSON and `disk_report_get` expose sanitized display paths;
+human admins may view full paths in the no-store HTML viewer. Selection and
+approve/reject buttons are disabled until P2-04. No cleanup action or agent
+approval delegation is implemented here. Deployment canaries and freeze windows
+remain private configuration; reports are read-only.
+
+### Deep-report no-atime capability model
+
+The read scanner runs with the agent user identity. Linux permits `O_NOATIME`
+when that user owns the inode or has `CAP_FOWNER` for it. Root-owned reviewed
+roots such as `/tmp`, `/var/tmp`, and `/usr/local/bin` may therefore be skipped
+by an ordinary agent user. No capability elevation or privileged helper is
+installed by P2-03. The scanner never retries enumeration or content reads
+without `O_NOATIME`: reports and the viewer clearly state
+“skipped: no O_NOATIME permission”, and remain partial. Stat-only metadata does
+not require content reads; archive hashing remains weak when a safe descriptor
+cannot be opened. Protection aliases reuse safe-v2 lexical and strict resolved
+snapshots; resolution on a filesystem lacking `noatime` defers rather than
+changing a symlink's access time. Displayed paths replace Unicode format/control
+characters using the shared bounded-text scrubber; exact raw paths remain only
+in the private item binding after completion (chunk digest receipts retain no
+payload). Docker stdout is streamed with a 2 MiB cap and deadline; overflow
+kills the subprocess and produces partial inventory.

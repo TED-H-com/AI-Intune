@@ -25,6 +25,9 @@ var batSweep []byte
 //go:embed disk-safe-preview-v2.py
 var diskPreview []byte
 
+//go:embed disk-deep-report-v1.py
+var diskDeep []byte
+
 //go:embed disk-safe-clean-v2.py
 var diskClean []byte
 
@@ -76,7 +79,18 @@ func diskSchema() Schema {
 }
 func IsDiskSafe(id string) bool { return id == "disk-safe-preview-v2" || id == "disk-safe-clean-v2" }
 
+func IsDisk(id string) bool { return IsDiskSafe(id) || id == "disk-deep-report-v1" }
+func deepSchema() Schema {
+	s := diskSchema()
+	delete(s.Properties, "scope")
+	lo, hi := 1, 500
+	s.Properties["max_items"] = Property{Type: "integer", Minimum: &lo, Maximum: &hi}
+	s.Required = []string{"policy_id", "policy_digest", "max_items"}
+	return s
+}
+
 var registry = []Entry{
+	{"disk-deep-report-v1", "1", "5a673b4e6ba04aea9368baa5ac4b91fa7ebfcfa2f5e5a5ca782527c7f405d3fe", deepSchema(), 600, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskDeep},
 	{"disk-safe-preview-v2", "2", "95ae88877bb530293c3fb75b774b1ed5c274bb3397bfefec04117b7bd15b94fe", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
 	{"disk-safe-clean-v2", "2", "049158e13d64e0a9de03bb3697fad76c36faa19481a98bf0fdb9037abf362f96", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},
 	{"bat-sweep-report-v1", "1", "0e00340abb9083cc2ab358857309c2f6c9237d7397581881b91a45868cd425a2", Schema{Type: "object", Required: []string{"hosts", "connector_tree_sha256"}, Properties: map[string]Property{"hosts": {Type: "array", MinItems: 1, MaxItems: 8, Items: &Property{Type: "string", Pattern: "^[a-z0-9-]{1,32}$", MinLength: 1, MaxLength: 32}}, "connector_tree_sha256": {Type: "string", Pattern: "^[a-f0-9]{64}$", MinLength: 64, MaxLength: 64}, "include_excerpts": {Type: "boolean"}}}, 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, batSweep},

@@ -264,9 +264,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryDiskClean: {
 		title:    "磁碟清理",
-		holds:    "磁碟操作批准 ledger（人類 actor、操作、機器、原則／項目摘要、deadline、狀態與工作單連結）、disk-clean 的最新摘要、指派的設定摘要、rollout 目標，以及 Hub 的告警狀態。摘要是機器送回的那一行；指派與 rollout 是操作員按下的；告警狀態是 Hub 判定後留下的。這些列不按時間清。",
+		holds:    "磁碟操作批准 ledger（人類 actor、操作、機器、原則／項目摘要、deadline、狀態與工作單連結）、disk-clean 的最新摘要、指派的設定摘要、rollout 目標，以及 Hub 的告警狀態。摘要是機器送回的那一行；指派與 rollout 是操作員按下的；告警狀態是 Hub 判定後留下的。Existing cleanup ledgers are kept. Deep reports contain restricted paths and typed candidates: finalized reports expire after 30 days, incomplete uploads after 24 hours; pressure slots expire after 30 days.",
 		source:   DataSourceHub,
-		tables:   []string{"ops_approvals", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state"},
+		tables:   []string{"disk_reports", "disk_deep_trigger_slots", "ops_approvals", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state"},
 		freeText: "摘要裡的主機名稱、使用者、attention、分類備註與報告路徑。",
 		path:     "/tenant/maintenance",
 	},
