@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -133,6 +135,10 @@ func TestServiceTokenFailureRateLimit(t *testing.T) {
 }
 
 func TestServiceTokenManagementPlaintextOnce(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
 	h, st := localAccountHandler(t)
 	actor, err := st.CreateFirstAdmin("alice", usersPassword)
 	if err != nil {
@@ -151,27 +157,71 @@ func TestServiceTokenManagementPlaintextOnce(t *testing.T) {
 	}
 	cookie := adminSession(t, st)
 	code, _ := totp.Code(factor, time.Now().Unix()/30)
-	fields := url.Values{"name": {"agent"}, "scope": {"view"}, "expiry_days": {"90"}, "password": {usersPassword}, "code": {code}, "routes": {"GET /v1/operator/machines"}}
+	fields := url.Values{"name": {"agent"}, "scope": {"view"}, "expiry_days": {"90"}, "password": {usersPassword}, "code": {code}, "preset": {"hermes-default"}}
 	w := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), cookie)
 	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("create status: %d", w.Code)
 	}
 	secret := regexp.MustCompile(`cst_[a-f0-9]{64}`).FindString(w.Body.String())
-	if secret == "" || strings.Count(w.Body.String(), secret) != 1 {
+	if secret == "" || strings.Count(w.Body.String(), secret) != 1 || strings.Count(w.Body.String(), "cst_") != 1 {
 		t.Fatal("creation did not show exactly one secret")
 	}
+	if w.Header().Get("Pragma") != "no-cache" || w.Header().Get("Referrer-Policy") != "no-referrer" || w.Header().Get("Location") != "" {
+		t.Fatal("one-time response headers incorrect")
+	}
+	if strings.Contains(w.Body.String(), "<form") || strings.Contains(w.Body.String(), "Existing tokens") || !strings.Contains(w.Body.String(), "Copy your token now") || !strings.Contains(w.Body.String(), "mode 0600") {
+		t.Fatal("creation must render dedicated save-token page")
+	}
+
 	hash := sha256.Sum256([]byte(serviceTokenCopyScript))
 	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'sha256-"+base64.StdEncoding.EncodeToString(hash[:])+"'") || !strings.Contains(w.Body.String(), serviceTokenCopyScript) {
 		t.Fatal("copy script missing exact CSP hash")
 	}
 
 	page := accountRequest(h, "GET", "/account/service-tokens", "", cookie)
-	if page.Code != 200 || strings.Contains(page.Body.String(), secret) {
+	if page.Code != 200 || strings.Contains(page.Body.String(), "cst_") {
 		t.Fatal("listing disclosed secret or failed")
 	}
 	tokens, err := st.ListServiceTokens()
 	if err != nil || len(tokens) != 1 {
 		t.Fatal("missing token")
+	}
+	if tokens[0].Scope != "operate" {
+		t.Fatal("Hermes view selection did not create operate token")
+	}
+	rows, err := st.DB().Query("SELECT * FROM audit_log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns, _ := rows.Columns()
+	for rows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range values {
+			switch x := v.(type) {
+			case string:
+				if strings.Contains(x, secret) {
+					t.Fatal("audit disclosed token")
+				}
+			case []byte:
+				if bytes.Contains(x, []byte(secret)) {
+					t.Fatal("audit disclosed token")
+				}
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	if strings.Contains(logs.String(), secret) {
+		t.Fatal("logs disclosed token")
 	}
 	// A bearer alone does not authorize token management or human security pages.
 	for _, path := range []string{"/account/service-tokens", "/account/security", "/account/users"} {
@@ -236,6 +286,12 @@ func TestServiceTokenManifestEligibility(t *testing.T) {
 		}
 		count++
 		if policy.ServiceTokenEligible == serviceEligibleSelf {
+			continue
+		}
+		if policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly {
+			if route != "GET /v1/operator/jobs/{id}/evidence" || policy.Permission != operatorauth.View || !operatorPolicyAdmissible(route, policy) {
+				t.Errorf("unexpected script evidence class: %s", route)
+			}
 			continue
 		}
 		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly {
@@ -470,7 +526,7 @@ func TestServiceTokenAuditUsesFinalStatusOnce(t *testing.T) {
 }
 
 func TestServiceTokenManagementRejectsIneligibleAllowlist(t *testing.T) {
-	for _, allow := range []string{"", "POST /v1/operator/deployments/{id}/continuations", "POST /v1/operator/machines/{id}/diagnostic-noop-jobs", "GET /v1/operator/not-registered", "GET  /v1/operator/machines"} {
+	for _, allow := range []string{"", "POST /v1/operator/deployments/{id}/continuations", "POST /v1/operator/machines/{id}/diagnostic-noop-jobs", "GET /v1/operator/not-registered", "GET /v1/operator/machines/{id}/enrollment-token", "GET /v1/operator/machines/{id}/evidence", "GET  /v1/operator/machines"} {
 		t.Run(allow, func(t *testing.T) {
 			h, st := localAccountHandler(t)
 			actor, err := st.CreateFirstAdmin("alice", usersPassword)
@@ -911,5 +967,78 @@ func TestServiceTokenManagementScriptAllowlistScope(t *testing.T) {
 				t.Fatalf("tokens=%d err=%v", len(tokens), err)
 			}
 		})
+	}
+}
+
+// No response containing enrollment material or unredacted evidence may be
+// delegated. Self/rotate are the token lifecycle exception; the exact job
+// evidence route requires its dedicated runtime-checked script evidence class.
+func TestServiceTokenForbiddenManifestPatterns(t *testing.T) {
+	forbidden := []string{"enrollment-token", "installer-key", "password", "totp", "session", "/credential", "/key", "/token", "/mfa", "/evidence", "GET /v1/operator/machines/{id}", "/audit-events", "/tickets", "/maintenance/restore-drills", "/artifact-fetches", "/timeline", "/daily-report", "/tailnet", "/disk-clean/summaries"}
+	for route, policy := range operatorRoutePolicies {
+		if policy.ServiceTokenEligible == serviceEligibleSelf {
+			continue
+		}
+		if route == "GET /v1/operator/jobs/{id}/evidence" && policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly {
+			req := httptest.NewRequest("POST", "/", nil)
+			req.PostForm = url.Values{"name": {"agent"}, "scope": {"view"}, "expiry_days": {"90"}, "routes": {route}}
+			if _, message := validateServiceTokenForm(req); message != "" {
+				t.Fatal("script evidence route must be selectable")
+			}
+			continue
+		}
+
+		for _, pattern := range forbidden {
+			matches := strings.Contains(route, pattern)
+			if pattern == "GET /v1/operator/machines/{id}" {
+				matches = route == pattern
+			}
+			if matches {
+				req := httptest.NewRequest("POST", "/", nil)
+				req.PostForm = url.Values{"name": {"agent"}, "scope": {"operate"}, "expiry_days": {"90"}, "routes": {route}}
+				if _, message := validateServiceTokenForm(req); message == "" {
+					t.Errorf("secret route accepted at create: %s", route)
+				}
+			}
+			if matches && policy.ServiceTokenEligible.eligible() {
+				t.Errorf("secret-bearing route eligible: %s", route)
+			}
+		}
+	}
+}
+
+func TestServiceTokenCustomScriptScopeError(t *testing.T) {
+	h, st := localAccountHandler(t)
+	actor, err := st.CreateFirstAdmin("alice", usersPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factor, err := st.BeginTOTPEnrollment(actor.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enroll, _ := totp.Code(factor, time.Now().Unix()/30-1)
+	if _, err := st.ConfirmTOTP(actor.AccountID, enroll); err != nil {
+		t.Fatal(err)
+	}
+	fields := url.Values{"name": {"custom-agent"}, "scope": {"view"}, "expiry_days": {"60"}, "max_lifetime": {"180"}, "source_cidrs": {"192.0.2.0/24"}, "routes": {"POST /v1/operator/script-runs"}, "password": {"must-not-reflect"}, "code": {"987654"}}
+	w := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), adminSession(t, st))
+	body := w.Body.String()
+	if w.Code != 400 {
+		t.Fatalf("status %d", w.Code)
+	}
+	for _, want := range []string{`role="alert"`, `<title>Error: Service tokens</title>`, `id="scope" aria-invalid="true" aria-errormessage="scope-error"`, `id="scope-error">Script-runs requires operate scope.`, `value="custom-agent"`, `value="view" selected`, `value="60" selected`, `value="180" selected`, `192.0.2.0/24`, `value="POST /v1/operator/script-runs" checked`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	for _, forbidden := range []string{"must-not-reflect", "987654", "cst_"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatal("reflected factor or secret")
+		}
+	}
+	tokens, err := st.ListServiceTokens()
+	if err != nil || len(tokens) != 0 {
+		t.Fatal("invalid custom token created")
 	}
 }

@@ -34,6 +34,19 @@ func TestScheduleOverlapAndAudit(t *testing.T) {
 	if e != nil || len(got.LastJobIDs) != 1 {
 		t.Fatalf("%+v %v", got, e)
 	}
+	job, err := s.Job(got.LastJobIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := s.DesiredState(job.DesiredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := scriptcatalog.Decode([]byte(desired.Spec))
+	if err != nil || spec.ExecutionMode != "read" {
+		t.Fatal("scheduled job did not persist execution mode")
+	}
+
 	if e = s.TickSchedules(got.NextRunAt); e != nil {
 		t.Fatal(e)
 	}
@@ -444,5 +457,125 @@ func TestBATReportScheduleRequiresAdmin(t *testing.T) {
 	actor.AuthCapability = "admin"
 	if run, err := st.ScheduleRunNow(result.Schedule.ID, "bat-run-admin", actor); err != nil || len(run.JobIDs) != 1 {
 		t.Fatalf("admin run %+v %v", run, err)
+	}
+}
+
+func TestScheduleExecutionModePauseAndReapproval(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode   string
+		reclassified bool
+	}{
+		{"legacy missing approved mode", "", false},
+		{"same-hash read to write reclassification", "read", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, v, actor, _ := createTestSchedule(t)
+			if tc.reclassified {
+				entry, _ := scriptcatalog.Lookup("bat-sweep-report-v1")
+				// Reconstruct a read-approved schedule after the same ID/hash
+				// has become write in the current catalog.
+				if _, err := s.DB().Exec(`UPDATE schedules SET script_id=?,script_sha256=?,execution_mode=? WHERE id=?`, entry.ID, entry.SHA256, tc.mode, v.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := s.DB().Exec(`UPDATE schedules SET execution_mode='' WHERE id=?`, v.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.TickSchedules(v.NextRunAt); err != nil {
+				t.Fatal(err)
+			}
+			paused, err := s.ScheduleGet(v.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if paused.Enabled || paused.PausedReason != "mode_changed" || paused.Revision != v.Revision+1 {
+				t.Fatal("mode drift not paused")
+			}
+			var jobs, audits int
+			if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schedule_jobs WHERE schedule_id=?`, v.ID).Scan(&jobs); err != nil || jobs != 0 {
+				t.Fatalf("unauthorized jobs=%d err=%v", jobs, err)
+			}
+			if err := s.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action='schedule-run' AND subject=? AND auth_subject=? AND detail='mode_changed'`, v.Name, "scheduler:"+v.Name).Scan(&audits); err != nil || audits != 1 {
+				t.Fatalf("pause audit=%d err=%v", audits, err)
+			}
+			actor.AuthCapability = "admin"
+			if _, err := s.ScheduleManage(ScheduleRequest{ID: v.ID, Enabled: true, ExpectedRevision: paused.Revision, Reason: "enable schedule"}, "set-enabled", false, "", actor); err == nil {
+				t.Fatal("mode pause bypassed by enabling")
+			}
+			read, _ := scriptcatalog.Lookup("fleet-probe-v1")
+			req := ScheduleRequest{ID: v.ID, Name: v.Name, ScriptID: read.ID, ScriptSHA256: read.SHA256, Args: json.RawMessage(`{}`), Targets: v.Targets, Cron: v.Cron, Enabled: true, ExpectedRevision: paused.Revision, Reason: "reapprove mode"}
+			preview, err := s.ScheduleManage(req, "upsert", false, "", actor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.PreviewDigest = preview.PreviewDigest
+			approved, err := s.ScheduleManage(req, "upsert", true, "reapprove-mode", actor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if approved.Schedule.ExecutionMode != "read" || approved.Schedule.PausedReason != "" || !approved.Schedule.Enabled {
+				t.Fatal("mode reapproval not persisted")
+			}
+			if err := s.TickSchedules(approved.Schedule.NextRunAt); err != nil {
+				t.Fatal(err)
+			}
+			after, err := s.ScheduleGet(v.ID)
+			if err != nil || len(after.LastJobIDs) != 1 {
+				t.Fatal("reapproved schedule did not run")
+			}
+		})
+	}
+}
+
+func TestScheduleExecutionModeAdditiveMigration(t *testing.T) {
+	s, v, _, _ := createTestSchedule(t)
+	if _, err := s.DB().Exec(`ALTER TABLE schedules DROP COLUMN execution_mode`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := addMissingColumns(s.DB()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy, err := s.ScheduleGet(v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.ExecutionMode != "" || !legacy.Enabled {
+		t.Fatal("migration inferred approval mode")
+	}
+	if err := s.TickSchedules(v.NextRunAt); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := s.ScheduleGet(v.ID)
+	if err != nil || paused.Enabled || paused.PausedReason != "mode_changed" {
+		t.Fatal("migrated legacy schedule did not fail closed")
+	}
+}
+
+func TestScheduleManualModePauseIsAtomicAndAudited(t *testing.T) {
+	s, v, actor, _ := createTestSchedule(t)
+	if _, err := s.DB().Exec(`UPDATE schedules SET execution_mode='' WHERE id=?`, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`CREATE TRIGGER reject_mode_audit BEFORE INSERT ON audit_log WHEN NEW.action='schedule-run' AND NEW.detail='mode_changed' BEGIN SELECT RAISE(ABORT,'test audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ScheduleRunNow(v.ID, "failed-mode-pause", actor); err == nil {
+		t.Fatal("pause without audit")
+	}
+	unchanged, err := s.ScheduleGet(v.ID)
+	if err != nil || !unchanged.Enabled || unchanged.Revision != v.Revision {
+		t.Fatal("pause partially committed")
+	}
+	if _, err := s.DB().Exec(`DROP TRIGGER reject_mode_audit`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.ScheduleRunNow(v.ID, "manual-mode-pause", actor)
+	if err != nil || len(out.JobIDs) != 0 {
+		t.Fatal("manual mode pause failed")
+	}
+	replayed, err := s.ScheduleRunNow(v.ID, "manual-mode-pause", actor)
+	if err != nil || !replayed.Replayed {
+		t.Fatal("mode-pause receipt did not replay")
 	}
 }

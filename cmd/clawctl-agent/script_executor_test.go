@@ -23,7 +23,7 @@ func TestScriptExecutorRejectsHashMismatch(t *testing.T) {
 
 func TestScriptExecutorEvidenceAndValidation(t *testing.T) {
 	e, _ := scriptcatalog.Lookup("fleet-probe-v1")
-	spec := scriptcatalog.Spec{Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: json.RawMessage(`{}`)}
+	spec := scriptcatalog.Spec{ExecutionMode: "read", Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: json.RawMessage(`{}`)}
 	raw, _ := json.Marshal(spec)
 	job := model.JobResponse{Spec: raw, ResourceKind: scriptcatalog.Kind, ResourceID: e.ID, ExecutionTimeout: 15}
 	if runtime.GOOS == "linux" && os.Geteuid() != 0 {

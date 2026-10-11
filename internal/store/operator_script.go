@@ -91,6 +91,15 @@ func scriptDetail(req ScriptRunRequest, jobs []string) string {
 	return string(raw)
 }
 
+// The mode is resolved by the server, never trusted from the request. Binding
+// it prevents a same-hash catalog reclassification from reusing an approval.
+func scriptModeBoundDigest(request any, mode string) string {
+	return "sha256:" + scriptcatalog.Digest(mustScriptJSON(struct {
+		Request       any    `json:"request"`
+		ExecutionMode string `json:"execution_mode"`
+	}{request, mode}))
+}
+
 // ScriptRun validates and creates the complete fanout in a single writer
 // transaction with idempotency and one bounded audit row per request. No migration needed.
 func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit AuditEntry) (out ScriptRunResult, err error) {
@@ -126,9 +135,9 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 	audit.Subject = e.ID
 	previewReq := req
 	previewReq.PreviewDigest = ""
-	digest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(previewReq))
+	digest := scriptModeBoundDigest(previewReq, e.Mode)
 	out = ScriptRunResult{PreviewDigest: digest, Targets: req.Targets, JobIDs: []string{}}
-	audit.RequestDigest = "sha256:" + scriptcatalog.Digest(mustScriptJSON(req))
+	audit.RequestDigest = "script-v2:" + scriptModeBoundDigest(req, e.Mode)
 	tx, err := s.beginWrite(context.Background(), "script_run")
 	if err != nil {
 		return out, err
@@ -153,12 +162,22 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 		var operation, cachedDigest, response string
 		ce := tx.QueryRow(`SELECT operation,request_digest,COALESCE(response_json,'') FROM operator_idempotency WHERE idempotency_key=?`, key).Scan(&operation, &cachedDigest, &response)
 		if ce == nil {
-			if operation != "script_v1" || cachedDigest != audit.RequestDigest {
+			// Only unversioned historical rows may use compatibility formats.
+			// v2 writes never fall back to a digest lacking the approved mode.
+			matches := cachedDigest == audit.RequestDigest
+			if strings.HasPrefix(cachedDigest, "sha256:") {
+				matches = cachedDigest == scriptModeBoundDigest(req, e.Mode) ||
+					cachedDigest == "sha256:"+scriptcatalog.Digest(mustScriptJSON(req))
+			}
+			if operation != "script_v1" || !matches {
 				return reject("idempotency conflict")
 			}
 			if json.Unmarshal([]byte(response), &out) != nil {
 				return out, errors.New("invalid script receipt")
 			}
+			// Correlate the replay audit with the exact stored receipt, including
+			// its historical digest version.
+			audit.RequestDigest = cachedDigest
 			out.Replayed = true
 			audit.OK = true
 			audit.Detail = OperatorIdempotencyReplayPrefix + scriptDetail(req, out.JobIDs)
@@ -178,7 +197,7 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 		return reject("target unavailable")
 	}
 	if apply {
-		spec := scriptcatalog.Spec{Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: req.Args}
+		spec := scriptcatalog.Spec{ExecutionMode: e.Mode, Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: req.Args}
 		raw := mustScriptJSON(spec)
 		for _, id := range req.Targets {
 			desired, revision, ce := createDesiredStateTx(tx, "machine", id, scriptcatalog.Kind, e.ID, string(raw), "operator:"+audit.AuthSubject, audit.At)

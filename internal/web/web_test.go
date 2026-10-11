@@ -124,7 +124,7 @@ func batch(measuredAt time.Time) model.ObservationBatch {
 		Credentials: []model.Credential{{Provider: "claude", Status: model.CredConfigured}},
 		CLITools: []model.CLITool{{
 			Name: "openclaw", Present: true, Path: "/usr/bin/openclaw",
-			VersionReported: "2026.6.1", RunningPID: 4242,
+			VersionReported: "2026.6.1", RunningPID: 913370421,
 		}},
 		// ⚠ 這組值照 samplehub1 的實機抄的：--bind=tailscale --port=9876，
 		// 而且核心的 socket 表上真的有東西在聽那個 port。
@@ -2157,8 +2157,10 @@ func TestInstalledVersusRunningIsSpelledOut(t *testing.T) {
 	if !strings.Contains(body, "PATH 與執行中的安裝不同") {
 		t.Error("沒有把安裝與執行中的檔案不一致講出來")
 	}
-	for _, private := range []string{"/opt/openclaw-2.2.0", "/opt/openclaw-2.1.0", "4242"} {
-		if strings.Contains(body, private) {
+	// The PID is matched as a whole number: random IDs, CSRF tokens and
+	// timestamps in the page can contain short digit runs by chance.
+	for _, private := range []string{"/opt/openclaw-2.2.0", "/opt/openclaw-2.1.0", "913370421"} {
+		if regexp.MustCompile(`(^|[^0-9])` + regexp.QuoteMeta(private) + `([^0-9]|$)`).MatchString(body) {
 			t.Errorf("typed machine page leaked host coordinate %q", private)
 		}
 	}

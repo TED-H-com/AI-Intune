@@ -54,8 +54,8 @@ func TestServiceTokenFormFieldsAndErrors(t *testing.T) {
 		t.Fatal(msg)
 	}
 	fields.Set("scope", "view")
-	if _, msg = validateServiceTokenForm(req); msg != "Script-runs requires operate scope." {
-		t.Fatal(msg)
+	if token, msg = validateServiceTokenForm(req); msg != "" || token.Scope != "operate" {
+		t.Fatal("Hermes must force operate scope")
 	}
 	mux, _, principal, _ := managementAuditFixture(t, true)
 	get := httptest.NewRequest("GET", "/account/service-tokens", nil)

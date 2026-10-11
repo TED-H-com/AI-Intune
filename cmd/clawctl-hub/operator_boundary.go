@@ -59,11 +59,12 @@ const (
 	serviceEligible
 	serviceEligibleReadScriptsOnly
 	serviceEligibleSelf
+	serviceEligibleScriptEvidenceOnly
 )
 
 // Unknown classes fail closed.
 func (e serviceTokenEligibility) eligible() bool {
-	return e == serviceEligible || e == serviceEligibleReadScriptsOnly || e == serviceEligibleSelf
+	return e == serviceEligible || e == serviceEligibleReadScriptsOnly || e == serviceEligibleSelf || e == serviceEligibleScriptEvidenceOnly
 }
 
 type operatorSecurityProfile uint8
@@ -158,6 +159,11 @@ var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
 // operatorRoutePolicies is an explicit manifest, not a path-prefix rule.
 // A newly registered control route therefore fails closed until somebody
 // classifies that exact ServeMux pattern in review.
+// Service-token reads expose structured summaries only. Credential retrieval,
+// diagnostics, worker error details, and raw report/evidence text are human-only;
+// bounded operator text scrubbing does not redact secrets. Script job evidence
+// has a dedicated class checked against job kind and catalog mode at use time.
+// Lifecycle self/rotate are exceptions for the authenticated token itself.
 var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /v1/operator/service-tokens/self":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
 	"POST /v1/operator/service-tokens/rotate":          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
@@ -222,23 +228,23 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /settings/tailnet":                                               {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /tenant/maintenance":                                             {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/machines":                                           {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/machines/{id}":                                      {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/machines/{id}/evidence":                             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/machines/{id}":                                      {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/machines/{id}/evidence":                             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/jobs":                                               {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/jobs/{id}":                                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/jobs/{id}/evidence":                                 {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/jobs/{id}/evidence":                                 {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleScriptEvidenceOnly},
 	"GET /v1/operator/deployments":                                        {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/deployments/{id}":                                   {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/artifacts":                                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/artifacts/{sha256}":                                 {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"POST /v1/operator/artifact-fetches/preview":                          {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/artifact-fetches":                                  {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/artifact-fetches":                                   {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/artifact-fetches/{id}":                              {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/artifact-fetches":                                   {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/artifact-fetches/{id}":                              {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/updates":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/audit-events":                                       {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/audit-events":                                       {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/changes":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/tickets":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/tickets":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/machines/{id}/lifecycle":                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"POST /v1/operator/machines/{id}/lifecycle-preview":                   {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"PUT /v1/operator/machines/{id}/lifecycle":                            {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
@@ -256,7 +262,7 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"POST /v1/operator/deployments/{id}/abandonments":                     {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/machines/{id}/channel":                              {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/machines/{id}/assigned-user":                        {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/machines/{id}/enrollment-token":                     {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/machines/{id}/enrollment-token":                     {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/machines/{id}/diagnostic-noop-preview":             {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/machines/{id}/diagnostic-noop-jobs":                {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/catalog-manifests":                                  {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
@@ -267,7 +273,7 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"POST /v1/operator/machines/{id}/profile-assignments":                 {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/catalog-manifests/standard-preview":                {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/machine-profiles/preview":                          {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/tailnet":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/tailnet":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/tailnet/peer-ignore-preview":                       {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"PUT /v1/operator/tailnet/peer-ignores/{id}":                          {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/maintenance/retention":                              {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
@@ -275,8 +281,8 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"POST /v1/operator/maintenance/retention/prunes":                      {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/maintenance/restore-drill-preview":                 {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/maintenance/restore-drills":                        {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/maintenance/restore-drills":                         {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/maintenance/restore-drills/{id}":                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/maintenance/restore-drills":                         {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/maintenance/restore-drills/{id}":                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/verifiers/preview":                                 {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/verifiers":                                         {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/verifiers":                                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
@@ -297,8 +303,8 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"POST /v1/operator/compliance-assignments":                            {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/machines/{id}/actions":                              {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/reports":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/daily-report":                                       {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/machines/{id}/timeline":                             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/daily-report":                                       {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/machines/{id}/timeline":                             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/data-disclosure":                                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/enrollment-report":                                  {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/software-report":                                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
@@ -372,8 +378,8 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"POST /deployments/{id}/skip-failed-batch":                            {operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/deployments/{id}/skip-failed-batch-preview":        {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/deployments/{id}/skip-failed-batches":              {operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/disk-clean/summaries":                               {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/disk-clean/summaries/{id}":                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/disk-clean/summaries":                               {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/disk-clean/summaries/{id}":                          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/disk-clean/profile-preview":                        {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/disk-clean/profiles":                               {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/disk-clean/dry-run-preview":                        {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
@@ -871,7 +877,7 @@ func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
 		return false
 	}
 
-	if policy.ServiceTokenEligible > serviceEligibleSelf {
+	if policy.ServiceTokenEligible > serviceEligibleScriptEvidenceOnly {
 		return false
 	}
 	if policy.ServiceTokenEligible == serviceEligibleSelf && pattern != "GET /v1/operator/service-tokens/self" && pattern != "POST /v1/operator/service-tokens/rotate" {
@@ -881,6 +887,11 @@ func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
 		(policy.Permission != operatorauth.Operate || (pattern != "POST /v1/operator/script-runs/preview" && pattern != "POST /v1/operator/script-runs")) {
 		return false
 	}
+	if policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly &&
+		(pattern != "GET /v1/operator/jobs/{id}/evidence" || policy.Permission != operatorauth.View) {
+		return false
+	}
+
 	if policy.Permission < operatorauth.View || policy.Permission > operatorauth.Admin {
 		return false
 	}

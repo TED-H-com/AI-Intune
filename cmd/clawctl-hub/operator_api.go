@@ -19,6 +19,8 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/operator"
+	"github.com/teddashh/AI-Intune/internal/operatorauth"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -360,6 +362,26 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
+	if principal, ok := operatorauth.PrincipalFromContext(r.Context()); ok && principal.AuthMethod == operatorauth.AuthMethodServiceToken {
+		// Classify the immutable desired state at use time, before fetching any
+		// raw evidence. Neither a legacy allowlist nor a read-looking resource
+		// ID can authorize a different job kind or a write catalog script.
+		detail, lookupErr := h.store.JobReadDetail(r.PathValue("id"), 1)
+		allowed := false
+		if lookupErr == nil && detail.Item.ResourceKind == scriptcatalog.Kind {
+			desired, desiredErr := h.store.DesiredState(detail.Item.DesiredID)
+			if desiredErr == nil {
+				spec, decodeErr := scriptcatalog.Decode([]byte(desired.Spec))
+				entry, exists := scriptcatalog.Lookup(spec.ScriptID)
+				allowed = decodeErr == nil && exists && serviceTokenScriptEvidenceAllowed(spec, entry, detail.Item.ResourceID)
+			}
+		}
+		if !allowed {
+			// The service-token boundary audits this denial without evidence.
+			writeErr(w, http.StatusForbidden, "SERVICE_TOKEN_SCRIPT_EVIDENCE_ONLY", "Service tokens require evidence from a read-only catalog script job")
+			return
+		}
+	}
 	result, err := operator.New(h.store).JobEvidence(operator.JobEvidenceRequest{
 		JobID: r.PathValue("id"), Limit: limit,
 	}, time.Now().UTC())
@@ -376,6 +398,13 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// A current read classification cannot grant access to legacy or historical
+// write evidence. Identity and mode must agree with the immutable job spec.
+func serviceTokenScriptEvidenceAllowed(spec scriptcatalog.Spec, entry scriptcatalog.Entry, resourceID string) bool {
+	return spec.ExecutionMode == "read" && entry.Mode == "read" &&
+		spec.ScriptID == entry.ID && spec.ScriptID == resourceID && spec.ScriptSHA256 == entry.SHA256
 }
 
 func parseOperatorJobEvidenceLimit(r *http.Request) (int, error) {

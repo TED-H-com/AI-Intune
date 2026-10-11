@@ -1566,7 +1566,8 @@ CREATE TABLE IF NOT EXISTS schedules (
  catch_up INTEGER NOT NULL DEFAULT 0 CHECK(catch_up=0),
  created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  revision INTEGER NOT NULL, last_run_at TEXT, last_job_ids TEXT NOT NULL DEFAULT '[]',
- next_run_at TEXT NOT NULL, paused_reason TEXT NOT NULL DEFAULT ''
+ next_run_at TEXT NOT NULL, paused_reason TEXT NOT NULL DEFAULT '',
+ execution_mode TEXT NOT NULL DEFAULT '' CHECK(execution_mode IN ('','read','write'))
 );
 CREATE TABLE IF NOT EXISTS schedule_slots (
  schedule_id TEXT NOT NULL REFERENCES schedules(id), slot TEXT NOT NULL,
