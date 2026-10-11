@@ -19,7 +19,7 @@ func scriptTools() []Tool {
 		"script_sha256":   strField(64, 64, "^[a-f0-9]{64}$", "Exact catalog hash"),
 		"args":            map[string]any{"type": "object", "description": "Closed per-script schema returned by script_catalog_list"},
 		"targets":         map[string]any{"type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": strField(1, 128, idPattern, "")},
-		"timeout_seconds": intBound(1, 60, "Catalog bounded timeout"), "reason": strField(1, 500, "", "Reason without credentials"),
+		"timeout_seconds": intBound(1, 600, "Catalog bounded timeout"), "reason": strField(1, 500, "", "Reason without credentials"),
 	}
 	apply := map[string]any{}
 	for k, v := range props {

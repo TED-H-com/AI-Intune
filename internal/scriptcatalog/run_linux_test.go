@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/user"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +81,31 @@ func requireAgentUser(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("phase-one script execution tests require a non-root agent user")
+	}
+}
+
+func TestRunBATUsesPythonAndAgentHome(t *testing.T) {
+	requireAgentUser(t)
+	e := testEntry("import json, os, sys\nprint(json.dumps({'home': os.environ['HOME'], 'tmp': os.environ['TMPDIR'], 'args': json.load(sys.stdin)}))\n")
+	e.ID = "bat-sweep-report-v1"
+	e.OutputCap = 4096
+	r, err := Run(context.Background(), e, []byte(`{}`), 3)
+	if err != nil || r.ExitCode != 0 {
+		t.Fatalf("Python execution %+v %v", r, err)
+	}
+	var out struct {
+		Home string         `json:"home"`
+		Tmp  string         `json:"tmp"`
+		Args map[string]any `json:"args"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &out); err != nil {
+		t.Fatal(err)
+	}
+	account, err := user.Current()
+	if err != nil || out.Home != account.HomeDir || out.Home == out.Tmp || out.Args == nil {
+		t.Fatalf("agent config home %+v %v", out, err)
+	}
+	if _, err := os.Stat(out.Tmp); !os.IsNotExist(err) {
+		t.Fatal("private temp directory retained")
 	}
 }

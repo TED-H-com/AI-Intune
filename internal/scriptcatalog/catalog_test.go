@@ -7,8 +7,8 @@ import (
 )
 
 func TestRegistryHashIntegrity(t *testing.T) {
-	if len(List()) != 1 {
-		t.Fatal("phase one must register exactly one script")
+	if len(List()) != 2 {
+		t.Fatal("expected probe and BAT report scripts")
 	}
 	for _, meta := range List() {
 		e, ok := Lookup(meta.ID)
@@ -39,6 +39,21 @@ func TestArgsValidation(t *testing.T) {
 	}
 	probe, _ := Lookup("fleet-probe-v1")
 	if _, err := probe.Validate(json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBATSweepArgs(t *testing.T) {
+	e, ok := Lookup("bat-sweep-report-v1")
+	if !ok || e.DefaultTimeout != 600 || e.MaxTimeout != 600 || e.OutputCap != 64<<10 {
+		t.Fatal("BAT constraints")
+	}
+	for _, raw := range []string{`{}`, `{"hosts":[]}`, `{"hosts":["bad.host"]}`, `{"hosts":[1]}`, `{"hosts":["a","b","c","d","e","f","g","h","i"]}`, `{"hosts":"sample"}`, `{"hosts":["sample"],"command":"true"}`} {
+		if _, err := e.Validate(json.RawMessage(raw)); err == nil {
+			t.Errorf("accepted %s", raw)
+		}
+	}
+	if _, err := e.Validate(json.RawMessage(`{"hosts":["sample-host"],"channels_file":"~/.config/bat-agent-connector/channels.toml"}`)); err != nil {
 		t.Fatal(err)
 	}
 }
