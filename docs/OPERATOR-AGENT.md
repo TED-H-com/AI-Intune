@@ -266,3 +266,9 @@ Supervision replies include `cached_at`: successful data is reused for up to
 (burst 10, refill 30/minute), including cache hits. Saturated computations or
 exhausted budgets return 429 (`SUPERVISION_BUSY` / `SUPERVISION_RATE_LIMITED`)
 with `Retry-After: 2`; retry after that delay rather than issuing parallel reads.
+
+## Service token client
+
+For a public HTTPS Hub, use `clawctl-operator --hub-url https://hub.example.com --token-file /path/to/token mcp` (or `call <tool> [json]`). The file must be regular, mode 0600, and not a symlink. Redirects and ambient proxies remain disabled. Tailnet literal-origin mode is unchanged when no token file is supplied.
+
+Create and revoke tokens at `/account/service-tokens` with a human admin session and MFA. Tokens expire within 90 days and grant only view/operate. A nonempty allowlist is required. Entries are exact method plus registered eligible route pattern, such as `GET /v1/operator/machines` or `GET /v1/operator/machines/{id}`. Only read-only view JSON routes are currently service-token eligible; all existing mutations, previews, admin and approval-gated routes require a human. Source CIDRs and failure limiter keys use the configured client-IP resolver. Forwarded client headers are accepted only from configured trusted proxies.

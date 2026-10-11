@@ -171,11 +171,11 @@ example.com/cap/clawctl-admin
 
 此 Tailscale surface 不含另列於 [API-SURFACE.md](API-SURFACE.md) 的 6 條公開 account operations；包含新的 Admin keyed-installer download。
 
-目前 code route manifest 固定為 244 operations：18 條 non-operator，加上 226 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=89`、`operate=28`、`admin=109`，
-其中 `/v1/operator/*` JSON routes 共 117 條、HTML/BFF/CSV/download 共 109 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 247 operations：18 條 non-operator，加上 229 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=89`、`operate=28`、`admin=112`，
+其中 `/v1/operator/*` JSON routes 共 117 條、HTML/BFF/CSV/download 共 112 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-244-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+247-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 operator route manifest 與實際註冊清單在 Hub 啟動時做雙向比對。繞過 operator
 boundary 的 18 條 route 也有另一份完整 manifest；兩份不能
@@ -584,7 +584,7 @@ Hub active 時明示 `--db` 被 writer-lock contention 在 SQLite open 前拒絕
 `inactive/dead/MainPID=0` 才成功，audit 明標 `direct-db-cli` 且不虛構 HTTP principal。
 官方 Prometheus parser 讀過 39 個指標／175 samples；四台已安裝 agent 都在最後
 Hub start 後 100 秒內重新 check-in，rollout 後 journal 無 error pattern 且無 warning-or-higher。
-實作前的 shell 222/222、全套 Go tests、`go vet`、race detector 與 static build 全過；
+實作前的 shell 225/225、全套 Go tests、`go vet`、race detector 與 static build 全過；
 兩份獨立對抗審查均無可重現 P0/P1。本次是首次從不理解新 handoff protocol 的舊版
 升級，因此 `.prev` 不支援新的手動 `--rollback`；本次 forward 當下的 automatic
 rollback 已有獨立復原路徑，之後由 `bf39c04` 開始的 rollout 才同時支援新手動協定。
@@ -631,3 +631,13 @@ clawctl-hub reset-admin-password --db PATH --username alice < password-file
 works with existing accounts. `reset-admin-password` selects the normalized
 username; optional `--disable-mfa` forces enrollment again. Host disable also
 protects the last active admin. User mutations are audit logged without passwords.
+
+## Scoped service-token boundary
+
+`operatorRoutePolicies.ServiceTokenEligible` is an explicit opt-in, defaulting to false. Currently only read-only `GET /v1/operator/*` routes with the view capability are eligible (GET patterns also serve HEAD). All existing mutations and human preview/apply routes—including deployment/rollout continuations, retries, failed-batch skips, diagnostics, and verifier assignments—remain human-only, even for an operate token with those routes in a legacy allowlist. Future automation routes must be deliberately classified and tested.
+
+Management requires a human admin session and MFA. Creation requires at least one exact registered method/route-pattern entry, each explicitly eligible; malformed or empty lists are rejected at creation and authentication. Route eligibility is checked on every bearer request independently of its allowlist. Tokens retain view/operate scopes, expiry and immediate revocation checks.
+
+The boundary receives the Hub's configured `clientip.Resolver`: CIDRs, failure limiter keys, principal source and audit source use the resolved client address. `Fly-Client-IP` or `X-Forwarded-For` is trusted only when the connection peer matches `CLAWCTL_TRUSTED_PROXIES`, with `CLAWCTL_CLIENT_IP_HEADER` selecting the configured header. Untrusted peers cannot supply their own client identity; IPv6 limiter keys retain the shared /64 grouping.
+
+Service request audit is written once after CSRF and downstream handling complete. The first final HTTP status determines success (`<400`); implicit responses are 200 and informational headers do not determine the outcome. Denied requests use the bounded operator-denial ledger. Audit write failures after a response are logged without rewriting the completed response.
