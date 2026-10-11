@@ -1590,3 +1590,35 @@ CREATE TABLE IF NOT EXISTS service_token_rotations (
  created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS service_token_rotation_budget ON service_token_rotations(budget_key,created_at);
+
+-- Phase 2 disk foundation: additive, revision bodies are immutable.
+CREATE TABLE IF NOT EXISTS ops_policies (
+ id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind='disk'),
+ revision INTEGER NOT NULL CHECK(revision>0), body TEXT NOT NULL,
+ digest TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+ superseded_at TEXT, PRIMARY KEY(id,revision)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ops_policy_current ON ops_policies(id) WHERE superseded_at IS NULL;
+CREATE TRIGGER IF NOT EXISTS ops_policy_immutable BEFORE UPDATE OF id,kind,revision,body,digest,created_by,created_at ON ops_policies
+ BEGIN SELECT RAISE(ABORT,'immutable ops policy'); END;
+CREATE TRIGGER IF NOT EXISTS ops_policy_no_delete BEFORE DELETE ON ops_policies
+ BEGIN SELECT RAISE(ABORT,'immutable ops policy'); END;
+CREATE TABLE IF NOT EXISTS ops_approvals (
+ id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','expired','consumed')),
+ actor TEXT NOT NULL, machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ operation TEXT NOT NULL, policy_id TEXT NOT NULL, policy_revision INTEGER NOT NULL,
+ policy_digest TEXT NOT NULL, item_digest TEXT NOT NULL, created_at TEXT NOT NULL,
+ deadline TEXT NOT NULL CHECK(unixepoch(deadline)-unixepoch(created_at)=1800), decision_actor TEXT, decided_at TEXT,
+ job_id TEXT REFERENCES jobs(job_id), consumed_at TEXT,
+ CHECK(state!='approved' OR (decision_actor IS NOT NULL AND decided_at IS NOT NULL)),
+ CHECK(state!='consumed' OR (decision_actor IS NOT NULL AND decided_at IS NOT NULL AND job_id IS NOT NULL AND consumed_at IS NOT NULL)),
+ FOREIGN KEY(policy_id,policy_revision) REFERENCES ops_policies(id,revision)
+);
+CREATE INDEX IF NOT EXISTS ops_approvals_pending ON ops_approvals(state,deadline);
+CREATE TRIGGER IF NOT EXISTS ops_approval_binding_immutable BEFORE UPDATE OF id,actor,machine_id,operation,policy_id,policy_revision,policy_digest,item_digest,created_at,deadline ON ops_approvals
+ BEGIN SELECT RAISE(ABORT,'immutable ops approval binding'); END;
+CREATE TRIGGER IF NOT EXISTS ops_approval_state_transition BEFORE UPDATE OF state ON ops_approvals
+ WHEN NOT (NEW.state=OLD.state OR
+ (OLD.state='pending' AND NEW.state IN ('approved','rejected','expired')) OR
+ (OLD.state='approved' AND NEW.state IN ('rejected','expired','consumed')))
+ BEGIN SELECT RAISE(ABORT,'invalid ops approval transition'); END;

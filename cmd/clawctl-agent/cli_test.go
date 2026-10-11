@@ -152,6 +152,9 @@ func TestReadinessCanRequireFreshMatchingPlatformEvidence(t *testing.T) {
 func TestAgentAdvertisesTheFixedDeviceSyncExecutor(t *testing.T) {
 	var checkin model.Checkin
 	advertiseJobCapabilities(&checkin)
+	if checkin.DiskOpsV2 != (runtime.GOOS == "linux" && os.Geteuid() != 0) {
+		t.Fatal("disk_ops_v2 advertised without supported agent runtime")
+	}
 	if !checkin.DeviceSyncV1 {
 		t.Fatal("agent did not advertise device-sync v1")
 	}

@@ -79,6 +79,7 @@ var allAuditActions = [...]AuditAction{
 	AuditMaintenanceContinue,
 	AuditMaintenanceAbandon,
 	AuditOperatorDenied,
+	AuditDiskPolicyPreview, AuditDiskPolicyApply, AuditOpsApproval,
 	AuditHubUserCreated, AuditHubUserDisabled, AuditHubUserEnabled, AuditHubUserRenamed, AuditHubUserEmailChanged,
 	AuditHubGuessing, AuditHubSetup, AuditHubLoginOK, AuditHubLoginFailed, AuditHubLockout, AuditHubLogout,
 	AuditMFAEnabled, AuditMFADisabled, AuditMFAFailed, AuditRecoveryCodeUsed, AuditRecoveryCodesRegenerated,

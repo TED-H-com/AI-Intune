@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-249（18 non-operator＋231 operator；119 operator JSON＋112 HTML/BFF/CSV/download），exact auth tally 是
-`view=91`／`operate=28`／`admin=112`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+263（18 non-operator＋245 operator；126 operator JSON＋119 HTML/BFF/CSV/download），exact auth tally 是
+`view=95`／`operate=28`／`admin=122`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -960,3 +960,90 @@ Flock 是合法 writer 之間的協作協定：state directory 必須保持 priv
 5. 將所有 operator capability 放進 Intune-like UI，逐項做 API/UI/CLI parity 測試。
 
 在這五步完成前，不以「又多一個按鈕」宣稱控制面完成。
+
+
+## Phase 2 disk foundation (P2-01)
+
+`ops_policies` stores immutable canonical disk policy revisions and SHA-256
+identities. `GET /v1/operator/disk-ops/policies` returns up to 500 revision rows;
+`GET /v1/operator/disk-ops/policies/{id}` returns the latest revision. Both
+require human view and remain token-ineligible because policies include additive
+protect paths. Built-in credentials/backups, generated images, active models,
+user data and all repository roots are always protected.
+
+Human admin `POST /v1/operator/disk-ops/policies/preview` accepts `id`, typed
+`body`, `expected_revision` (0 for create), and `reason`. It returns normalized
+policy, preview digest, revision, 30-minute `expires_at`, and warnings.
+`POST /v1/operator/disk-ops/policies` requires the same request plus the preview's
+`preview_digest`, `expires_at`, and `Idempotency-Key`. Fresh/replay responses
+are 201/200. Authorization precedes replay. Revision replacement, revocation of
+pending/approved ledger entries and rejection of queued consumed jobs, receipt
+and audit commit atomically. Audit stores
+digests, never policy paths. `--disk-ops-v2-writes` (`disk_ops_v2_writes`) defaults
+off and gates policy apply and approval writes; preview remains available.
+
+MCP tools: `disk_policy_list`, `disk_policy_get`, `disk_policy_upsert_preview`,
+`disk_policy_upsert_apply`; they share the operator service and strict HTTP client.
+`GET /v1/operator/disk-ops/approvals` is the minimal view read (up to 500 rows),
+with no paths/secrets; exact view-token allowlists may admit it. `approvals_summary`
+adds `disk_ops` counts by state and oldest pending age across the complete ledger.
+Expired pending/approved entries are projected as expired without authorizing work.
+
+Approvals bind human actor, machine, operation, immutable policy revision/digest,
+item/manifest digest and a 30-minute deadline. Trusted store entry points require
+verified human admin authority; service tokens and optional agents cannot approve. A private
+transaction helper consumes once together with job creation, receipt and audit;
+retries return the same job receipt after authorization. Approval decisions have human-admin preview/apply pages and JSON routes.
+Disk execution adapters are delivered separately. Future adapters must validate fresh
+filesystem facts and dispatch admission; generic script routes grant no new writes.
+
+Policy v1 defaults: user tmp 10 days, /var/tmp 14 days, Docker dangling/build cache
+168 hours, journald 500 MiB, cargo 30 days, uv lock-aware native prune, npm verify
+only, native holder-aware cache GC; thresholds warn 85%, critical 93%, deep report
+strictly >80%; fixed quarantine TTL 7 days; scan maxima 500 items/200,000 entries/600s.
+Unknown fields and unsafe bounds are rejected. Protection overrides approval.
+Linux non-root agents advertise `disk_ops_v2` foundation support at check-in;
+Hub reads only the exact latest receipt, never infers support from `script_v1`.
+This capability alone does not provide a root helper or executable disk adapter.
+
+Execution enablement requires reviewed adapters and a deployment-configured
+canary. Deep operations must respect deployment-configured freeze windows;
+planners and dispatch grants belong to later disk milestones.
+Existing cleaner bytes, timers and fleet-disk-clean/v1 summaries are unchanged.
+
+
+### Human-first disk administration
+
+The Hub UI is complete without MCP, AI agents or chat notifications. Tenant
+navigation includes **Disk policies** and **Approvals**. Human admin
+`GET /tenant/disk-policies` and `GET /tenant/disk-policies/{id}` show immutable
+revision history, canonical JSON/digest, safe-default creation and typed editing.
+`?revision=N` selects a historical revision for inspection. Historical revisions
+are read-only; changes start from the latest revision.
+
+`POST /tenant/disk-policies/preview` displays a before/after diff and expiring
+binding. `POST /tenant/disk-policies/apply` uses the same `DiskPolicyUpsert`
+service as JSON/MCP. Local-account applies require the current password and an
+enrolled authenticator code (unless MFA enforcement is explicitly disabled in
+configuration). Tailscale applies reauthorize the human admin at the request
+boundary and require typed ID confirmation; Tailscale provides no fresh MFA.
+Credentials are never included in preview fields, receipts, audit details or errors.
+
+Human view `GET /tenant/approvals` filters by `state`, `machine_id`, and `operation`
+with pending/approved/rejected/expired/consumed states. Only admins see decision
+buttons. `POST /tenant/approvals/preview` binds approve/reject to the current
+pending record, original deadline, policy revision/digest, item digest, actor and
+reason. `POST /tenant/approvals/apply` requires that binding, typed approval ID,
+reauthentication and idempotency. A decision creates no execution job.
+The canonical `DiskOpsApprovalDecision` service also backs human-admin JSON
+`POST /v1/operator/disk-ops/approvals/{id}/decision/preview` and
+`POST /v1/operator/disk-ops/approvals/{id}/decision`, plus optional MCP tools
+`disk_approval_decision_preview` and `disk_approval_decision_apply`.
+`disk_approval_list` and the JSON ledger read support the same filters.
+All new mutations remain service-token-ineligible; disk writes default off.
+
+Server-rendered forms use the existing operator CrossOriginProtection, pinned
+Host and locked CSP. No new inline scripts are introduced. Public defaults are
+generic; canaries, freeze windows and integration destinations come from deployment
+configuration. Fixture screenshots and HTML are generated with
+`ops/screenshots/phase2-disk.sh` into `docs/screenshots/phase2/p2-01/`.
