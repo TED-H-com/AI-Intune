@@ -393,3 +393,29 @@ directory descriptor; cache replacement causes a deferred result. Disk-v2 job
 evidence is human-only even for read scripts because output and pinned policy specs
 contain private paths. MCP status remains a path-safe digest/category projection.
 Docker keeps only the two fixed §4.1 age-filtered commands, including confirmation `-f`.
+
+### Native-cache ownership boundary
+
+The v2 adapter delegates cache-internal garbage collection to the native tool:
+`uv cache prune` owns its cache descendants and takes uv's exclusive cache lock;
+`npm cache verify` / cacache verification touches content-addressed cache entries.
+The adapter does not validate each descendant again at native-tool deletion time.
+It admits only a real, user-owned cache directory, never a symlink root, and rejects
+roots inside or containing configured protections or Git repositories. Both the
+fixed location and its resolved location are checked to cover ancestor aliases.
+
+Before admission, the bounded, no-atime safety scan rejects symlinks escaping the
+cache root, including links at depths one and two. It also rejects unresolved links,
+protected targets, inaccessible trees and exhausted entry/item/time budgets with
+a skip reason; it never follows links while traversing. Contained links remain
+native-tool owned. The current scan conservatively checks deeper descendants too.
+uv/npm receive the cache location only as `/proc/self/fd/<n>`, with the no-follow
+root directory descriptor inherited across spawn. Root replacement causes a skip.
+The native lock, together with this explicit ownership boundary, governs mutations
+inside the admitted cache; no arbitrary user temporary tree is delegated to GC.
+
+Temporary-file unlink performs its final full identity comparison (device, inode,
+file type, size, nanosecond modification/change times, owner and link count) after
+holder scanning and protection checks, directly before unlink through the same
+retained no-follow parent directory descriptor. Changed entries are retained.
+Temporary directories are retained; the adapter never recursively removes them.

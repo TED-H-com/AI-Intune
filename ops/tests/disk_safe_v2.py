@@ -189,6 +189,77 @@ class Safety(unittest.TestCase):
             self.assertEqual(result['status'],'skipped');self.assertIn('changed',result['note'])
             self.assertEqual(list(other.iterdir()),[])
 
+    def test_final_identity_after_holder_scan_substitution(self):
+        for kind in ['replacement', 'symlink', 'directory', 'content-change']:
+            with self.subTest(kind=kind):
+                file=self.old('unlink-'+kind+'.txt');info=file.stat()
+                def swap(**kwargs):
+                    if kind=='content-change':
+                        file.write_text('changed size and timestamps')
+                    else:
+                        file.rename(self.root/('retained-'+kind))
+                        if kind=='replacement': file.write_text('replacement')
+                        elif kind=='symlink': file.symlink_to(self.root/'retained-symlink')
+                        else: file.mkdir()
+                    return {},True
+                with patch.object(self.clean,'holders',side_effect=swap):
+                    self.assertFalse(self.clean.unlink_checked(str(file),info,POLICY))
+                self.assertTrue(file.exists())
+
+    def test_native_root_ownership_and_protection_boundaries(self):
+        cache=self.root/'owned-cache';cache.mkdir()
+        class WrongOwner:
+            st_uid=os.geteuid()+1
+        for adapter in [self.preview,self.clean]:
+            with patch.object(adapter.os,'fstat',return_value=WrongOwner()):
+                result=adapter.native('uv',str(cache),['uv','cache','prune'],POLICY,{},True)
+            self.assertIn('not user-owned',result['note'])
+            for protect in [cache,cache/'nested',self.root]:
+                with patch.object(adapter.shutil,'which',return_value='/usr/bin/uv'):
+                    result=adapter.native('uv',str(cache),['uv','cache','prune'],dict(POLICY,protect_paths=[str(protect)]),{},True)
+                self.assertEqual(result['status'],'skipped');self.assertIn('protected',result['note'])
+            (cache/'.git').mkdir()
+            with patch.object(adapter.shutil,'which',return_value='/usr/bin/uv'):
+                self.assertIn('protected',adapter.native('uv',str(cache),['uv','cache','prune'],POLICY,{},True)['note'])
+            (cache/'.git').rmdir()
+            repo=cache/'nested-repo';repo.mkdir();(repo/'.git').mkdir()
+            with patch.object(adapter.shutil,'which',return_value='/usr/bin/uv'):
+                self.assertIn('protected',adapter.native('uv',str(cache),['uv','cache','prune'],POLICY,{},True)['note'])
+            (repo/'.git').rmdir();repo.rmdir()
+            link=self.root/'root-link';link.symlink_to(cache,target_is_directory=True)
+            self.assertEqual(adapter.native('uv',str(link),['uv','cache','prune'],POLICY,{},True)['status'],'skipped')
+            link.unlink()
+
+    def test_native_parent_alias_cannot_bypass_protection(self):
+        actual=self.root/'actual';(actual/'cache').mkdir(parents=True)
+        alias=self.root/'alias';alias.symlink_to(actual,target_is_directory=True)
+        for adapter in [self.preview,self.clean]:
+            with patch.object(adapter.shutil,'which',return_value='/usr/bin/uv'),patch.object(adapter.subprocess,'run',side_effect=AssertionError('protected alias spawn')):
+                result=adapter.native('uv',str(alias/'cache'),['uv','cache','prune'],dict(POLICY,protect_paths=[str(actual/'cache'/'protected')]),{},True)
+            self.assertEqual(result['status'],'skipped');self.assertIn('protected',result['note'])
+
+    def test_native_escaping_symlinks_and_bounded_scan(self):
+        cache=self.root/'cache';cache.mkdir()
+        outside=self.root/'outside';outside.mkdir()
+        for depth in [1,2]:
+            directory=cache if depth==1 else cache/'nested'
+            directory.mkdir(exist_ok=True)
+            link=directory/'escape';link.symlink_to(outside,target_is_directory=True)
+            for adapter in [self.preview,self.clean]:
+                with patch.object(adapter.shutil,'which',return_value='/usr/bin/npm'),patch.object(adapter.subprocess,'run',side_effect=AssertionError('unsafe spawn')):
+                    result=adapter.native('npm',str(cache),['npm','cache','verify'],POLICY,{},True)
+                self.assertIn('symlink escapes root',result['note'])
+            link.unlink()
+        for i in range(5): (cache/('entry-'+str(i))).write_text('data')
+        policy=dict(POLICY,scan_budgets=dict(POLICY['scan_budgets'],max_entries=2))
+        with patch.object(self.clean.shutil,'which',return_value='/usr/bin/npm'),patch.object(self.clean.subprocess,'run',side_effect=AssertionError('unbounded spawn')):
+            self.assertIn('budget exceeded',self.clean.native('npm',str(cache),['npm','cache','verify'],policy,{},True)['note'])
+
+    def test_native_contained_symlink_is_allowed(self):
+        cache=self.root/'cache';cache.mkdir()
+        (cache/'content').write_text('data');(cache/'alias').symlink_to(cache/'content')
+        self.assertEqual(self.native('npm',['npm','cache','verify'])['status'],'ok')
+
     def test_incomplete_visibility_and_cargo_root_skips(self):
         self.assertEqual(self.clean.native('uv',str(self.root),['uv','cache','prune'],POLICY,{},False)['status'],'skipped')
         request=json.dumps(dict(args=dict(scope='root',policy_id='fixture',policy_digest='sha256:'+'a'*64),policy=POLICY))

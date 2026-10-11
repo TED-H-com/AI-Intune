@@ -1,4 +1,9 @@
 # Fixed policy adapter. No caller-selected commands, paths, or environment.
+# Native cache boundary: uv owns its cache descendants and exclusive prune lock;
+# npm/cacache verify owns content-addressed cache entries. The adapter admits only
+# real user-owned roots outside protected paths/repositories, bounds its safety
+# scan, refuses escaping symlinks (including depth <= 2), and passes uv/npm only
+# an inherited fd-anchored cache path. It does not implement native GC internals.
 import datetime, fcntl, fnmatch, json, os, shutil, stat, subprocess, sys, time
 
 APPLY = True
@@ -110,11 +115,14 @@ def unlink_checked(path, info, policy):
                 return False
             except FileNotFoundError:
                 pass
-        fresh = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
         opened, complete = holders(ignore_fds=fds)
+        fresh = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
         if not complete or held(path, fresh, opened) or any(('dir', os.fstat(fd).st_dev, os.fstat(fd).st_ino) in opened for fd in fds) or protected(path, policy):
             return False
-        if (fresh.st_dev, fresh.st_ino, fresh.st_mtime_ns, fresh.st_ctime_ns, fresh.st_nlink, fresh.st_uid) != (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns, 1, os.geteuid()):
+        # All potentially lengthy checks precede the final descriptor-relative stat.
+        fresh = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
+        identity = lambda st: (st.st_dev, st.st_ino, stat.S_IFMT(st.st_mode), st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+        if identity(fresh) != identity(info) or not stat.S_ISREG(fresh.st_mode) or fresh.st_nlink != 1 or fresh.st_uid != os.geteuid():
             return False
         os.unlink(parts[-1], dir_fd=fds[-1])
         return True
@@ -189,6 +197,8 @@ def native(name, cache, command, policy, opened, complete):
     except OSError:
         return category('cache absent or unsafe')
     try:
+        if name in ['uv', 'npm'] and os.fstat(fd).st_uid != os.geteuid():
+            return category('unsafe: cache root is not user-owned')
         if APPLY:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return native_anchored(name, cache, command, policy, opened, complete, fd)
@@ -203,6 +213,9 @@ def same_cache(cache, fd):
     return stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (pinned.st_dev, pinned.st_ino)
 
 def native_anchored(name, cache, command, policy, opened, complete, fd):
+    # Resolve ancestor aliases as well as the caller's fixed cache location.
+    if protected(cache, policy) or protected(os.path.realpath(cache, strict=True), policy):
+        return category('protected cache root')
     try: n = cache_holders(cache, opened)
     except OSError: return category('cache absent or changed')
     if n:
@@ -217,6 +230,7 @@ def native_anchored(name, cache, command, policy, opened, complete, fd):
     stack = [cache]
     visited = estimate = item_count = 0
     identities = set()
+    deadline = time.monotonic() + min(policy["scan_budgets"]["max_seconds"], 60)
     try:
         while stack:
             root = stack.pop()
@@ -225,10 +239,19 @@ def native_anchored(name, cache, command, policy, opened, complete, fd):
             for item in entries(root):
                 visited += 1
                 p = os.path.join(root, item)
-                if visited > policy['scan_budgets']['max_entries']:
-                    return category('scan budget exceeded')
-                if (protected(p, policy) and not (name=='uv' and p==cache+'/.lock' and not policy['protect_paths'])) or os.path.islink(p):
+                if visited > policy['scan_budgets']['max_entries'] or time.monotonic() > deadline:
+                    return category('incomplete: scan budget exceeded')
+                if protected(p, policy) and not (name=='uv' and p==cache+'/.lock' and not policy['protect_paths']):
                     return category('protected cache subtree')
+                if os.path.islink(p):
+                    # Never traverse links. Internal links remain native-tool
+                    # owned; escaping or unresolved links refuse the entire GC.
+                    target = os.path.realpath(p, strict=True)
+                    if not inside(target, os.path.realpath(cache, strict=True)):
+                        return category('unsafe: cache symlink escapes root')
+                    if protected(target, policy):
+                        return category('protected cache symlink target')
+                    continue
                 info = os.lstat(p)
                 identities.add((info.st_dev, info.st_ino))
                 owners = held_pids(p, info, opened)

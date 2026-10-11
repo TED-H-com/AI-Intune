@@ -77,8 +77,8 @@ func diskSchema() Schema {
 func IsDiskSafe(id string) bool { return id == "disk-safe-preview-v2" || id == "disk-safe-clean-v2" }
 
 var registry = []Entry{
-	{"disk-safe-preview-v2", "2", "720429e3ebb55339511ff23798dd11ac95445ec589e415daa9622e16bea4daca", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
-	{"disk-safe-clean-v2", "2", "ff1c0bc62133ba64796fa6e81d2a04f5fc75cafed5fe1fee691df8195e768629", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},
+	{"disk-safe-preview-v2", "2", "07863aafaa3badec3e1b84c99e58ab3d55cae6188122b6aa0071b6f1ffaa29a1", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
+	{"disk-safe-clean-v2", "2", "17a57976bf5505e5ffe747b63ebae36f077633102b8578a306ed64e3bd19d115", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},
 	{"bat-sweep-report-v1", "1", "0e00340abb9083cc2ab358857309c2f6c9237d7397581881b91a45868cd425a2", Schema{Type: "object", Required: []string{"hosts", "connector_tree_sha256"}, Properties: map[string]Property{"hosts": {Type: "array", MinItems: 1, MaxItems: 8, Items: &Property{Type: "string", Pattern: "^[a-z0-9-]{1,32}$", MinLength: 1, MaxLength: 32}}, "connector_tree_sha256": {Type: "string", Pattern: "^[a-f0-9]{64}$", MinLength: 64, MaxLength: 64}, "include_excerpts": {Type: "boolean"}}}, 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, batSweep},
 	{"fleet-probe-v1", "1", "0c242784f162df0489571fa0ac901e0e583f54afa3d121d0b033e8dff2bad924", Schema{Type: "object", Properties: map[string]Property{}}, 15, 60, 64 << 10, "read", "agent-user", []string{"linux"}, probe},
 }
