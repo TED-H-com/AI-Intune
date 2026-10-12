@@ -22,6 +22,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
@@ -369,7 +370,8 @@ type Change struct {
 // ---------------------------------------------------------------- Store
 
 type Store struct {
-	diskOpsV2Writes atomic.Bool
+	diskOpsV2Writes    atomic.Bool
+	diskManifestSigner atomic.Pointer[rsa.PrivateKey]
 	// db is the single writer connection. rdb is the query-only reader pool,
 	// opened on the same file after migrations. Reads that do not need to see
 	// the caller's uncommitted writes go to rdb: with MaxOpenConns(1), a read
@@ -1728,6 +1730,14 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 	}
 	if _, err := tx.Exec(`DELETE FROM machine_job_capabilities WHERE machine_id=? AND sent_at=? AND capability='disk_ops_v2'`, machineID, fmtTime(c.SentAt)); err != nil {
 		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM machine_job_capabilities WHERE machine_id=? AND sent_at=? AND capability LIKE 'disk_actions_v1:%'`, machineID, fmtTime(c.SentAt)); err != nil {
+		return err
+	}
+	if validLowerSHA256(c.DiskActionKey) {
+		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities VALUES (?,? ,?,1)`, machineID, fmtTime(c.SentAt), "disk_actions_v1:"+c.DiskActionKey); err != nil {
+			return err
+		}
 	}
 	if c.DiskOpsV2 {
 		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities(machine_id,sent_at,capability,supported) VALUES (?,?,'disk_ops_v2',1)`, machineID, fmtTime(c.SentAt)); err != nil {

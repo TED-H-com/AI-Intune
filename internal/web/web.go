@@ -29,6 +29,7 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/compliance"
 	"github.com/teddashh/AI-Intune/internal/deploy"
+	"github.com/teddashh/AI-Intune/internal/diskreport"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
@@ -374,6 +375,8 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	DiskAction            *diskActionView
+	DiskQuarantine        *diskQuarantineView
 	DiskReport            *diskReportView
 	DiskMachine           *diskMachinePage
 	DiskPolicies          *diskPoliciesPage
@@ -1896,10 +1899,18 @@ func label(s state.State) string {
 }
 
 var funcs = template.FuncMap{
+	"diskItemIDs": func(items []diskreport.Item) string {
+		ids := []string{}
+		for _, i := range items {
+			ids = append(ids, i.ID)
+		}
+		return strings.Join(ids, ",")
+	},
 	"diskReportCategories": func() []string {
 		return []string{"app-update-backups", "installer-leftovers", "release-build-directories", "unused-docker-images", "caches-models", "orphaned-processes", "agent-session-stores", "duplicate-archives"}
 	},
 	"diskTime":               fmtDiskTime,
+	"diskExpiry":             fmtDiskExpiry,
 	"label":                  label,
 	"deploymentBlockerLabel": operator.DeploymentBlockerLabel,
 	"ruleLabel":              func(kind compliance.RuleKind) string { return compliance.RuleLabel(kind) },

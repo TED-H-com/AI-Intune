@@ -85,7 +85,7 @@ func (s *Store) OpsApprovalsFiltered(state, machine, operation string, now time.
 }
 func diskOperationValid(op string) bool {
 	switch op {
-	case "quarantine", "delete", "restore", "safe-clean":
+	case "quarantine", "delete", "restore", "safe-clean", "reject":
 		return true
 	}
 	return false

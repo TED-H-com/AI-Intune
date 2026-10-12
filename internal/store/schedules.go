@@ -571,13 +571,32 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 		}
 		raw := mustScriptJSON(scriptcatalog.Spec{Policy: policy, ExecutionMode: v.ExecutionMode, Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
 		for _, target := range v.Targets {
+			if entry.ID == "disk-quarantine-expire-v1" {
+				var args struct {
+					ID     string `json:"policy_id"`
+					Digest string `json:"policy_digest"`
+				}
+				_ = json.Unmarshal(v.Args, &args)
+				selection, _, selectionErr := expirySelectionTx(tx, target, args.ID, args.Digest, now)
+				if selectionErr != nil {
+					return nil, selectionErr
+				}
+				if len(selection) == 0 {
+					continue
+				}
+			}
 			desired, rev, e := createDesiredStateTx(tx, "machine", target, scriptcatalog.Kind, v.ScriptID, string(raw), "operator:"+a.AuthSubject, now)
 			if e != nil {
 				return nil, e
 			}
-			job, e := createManagedJobTx(tx, target, desired, rev, NewJob{ArtifactDigest: "sha256:" + scriptcatalog.Digest(raw), ExecutionTimeout: entry.DefaultTimeout}, now)
+			job, e := createManagedJobTx(tx, target, desired, rev, NewJob{ArtifactDigest: "sha256:" + scriptcatalog.Digest(raw), ExecutionTimeout: entry.DefaultTimeout, Irreversible: entry.ID == "disk-quarantine-expire-v1"}, now)
 			if e != nil {
 				return nil, e
+			}
+			if entry.ID == "disk-quarantine-expire-v1" {
+				if e = recordExpiryJobTx(tx, job, target, v.Args, now); e != nil {
+					return nil, e
+				}
 			}
 			jobs = append(jobs, job)
 			if _, e = tx.Exec(`INSERT INTO schedule_jobs VALUES (?,?,?,?)`, job, id, v.Name, slotKey); e != nil {
@@ -592,6 +611,10 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 				return nil, e
 			}
 		}
+	}
+	if outcome == "enqueued" && len(jobs) == 0 {
+		outcome = "skipped_unavailable"
+		a.Detail = "no approved expiry items are due"
 	}
 	if outcome != "enqueued" {
 		if a.Detail == "" {
@@ -625,6 +648,9 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 }
 
 func scheduleScope(e scriptcatalog.Entry, a AuditEntry) error {
+	if e.ID == "disk-quarantine-expire-v1" {
+		return humanDiskAdmin(a)
+	}
 	if e.ID != "disk-deep-report-v1" && e.Mode == "read" && (a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "-admin")) {
 		a.AuthCapability = "operate"
 	}

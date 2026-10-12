@@ -96,6 +96,22 @@ func (s *Store) ReauthenticateDiskAdmin(a AuditEntry, password, code string, req
 // OpsApprovalDecision is the canonical UI/JSON/MCP preview/apply boundary.
 // Scope is checked before replay; the decision, receipt and audit are atomic.
 func (s *Store) OpsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, key string, audit AuditEntry) (out OpsApprovalDecisionResult, err error) {
+	if apply && req.Decision == "approved" {
+		if err = humanDiskAdmin(audit); err != nil {
+			return out, err
+		}
+		var bound int
+		if err = s.rdb.QueryRow(`SELECT COUNT(*) FROM ops_manifests WHERE approval_id=?`, req.ID).Scan(&bound); err != nil {
+			return out, err
+		}
+		if bound != 0 {
+			return out, operatorError("PRECONDITION_FAILED", "manifest approval requires the exact disk action confirmation")
+		}
+	}
+	return s.opsApprovalDecision(req, apply, key, audit, nil)
+}
+
+func (s *Store) opsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, key string, audit AuditEntry, createJob func(dbTx, OpsApproval) (string, error)) (out OpsApprovalDecisionResult, err error) {
 	audit.Action = AuditOpsApproval
 	audit.Subject = req.ID
 	audit.IdempotencyKey = key
@@ -138,6 +154,9 @@ func (s *Store) OpsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 		Actor   string
 		Request OpsApprovalDecisionRequest
 	}{audit.AuthSubject, req}))
+	if createJob != nil {
+		requestDigest = "disk-action:" + requestDigest
+	}
 	audit.RequestDigest = requestDigest
 	if apply {
 		if key == "" || len(key) > 200 {
@@ -207,6 +226,18 @@ func (s *Store) OpsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 		out.Approval.DecidedAt = &now
 		if _, err = tx.Exec(`UPDATE ops_approvals SET state=?,decision_actor=?,decided_at=?,decision_reason=? WHERE id=? AND state='pending'`, req.Decision, audit.AuthSubject, fmtTime(now), req.Reason, a.ID); err != nil {
 			return out, err
+		}
+		if req.Decision == "approved" && createJob != nil {
+			job, ce := createJob(tx, out.Approval)
+			if ce != nil {
+				return out, ce
+			}
+			out.Approval.State = "consumed"
+			out.Approval.JobID = job
+			out.Approval.ConsumedAt = &now
+			if _, err = tx.Exec(`UPDATE ops_approvals SET state='consumed',job_id=?,consumed_at=? WHERE id=? AND state='approved'`, job, fmtTime(now), a.ID); err != nil {
+				return out, err
+			}
 		}
 		if _, err = tx.Exec(`INSERT INTO operator_idempotency(idempotency_key,operation,request_digest,outcome,response_json,created_at) VALUES (?,'ops-approval-decision-v1',?,'ok',?,?)`, key, requestDigest, string(mustScriptJSON(out)), fmtTime(now)); err != nil {
 			return out, err

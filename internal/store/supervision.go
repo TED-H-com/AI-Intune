@@ -62,6 +62,7 @@ type JobSummary struct {
 }
 
 type JobsSummary struct {
+	DiskActions              DiskActionMetrics `json:"disk_actions"`
 	CachedAt                 *time.Time        `json:"cached_at"`
 	SchemaVersion            int               `json:"schema_version"`
 	EvaluatedAt              time.Time         `json:"evaluated_at"`
@@ -86,6 +87,11 @@ type jobSummaryAccumulator struct {
 func (s *Store) JobsSummaryContext(ctx context.Context, f SupervisionFilter, now time.Time) (JobsSummary, error) {
 	result := JobsSummary{SchemaVersion: 1, EvaluatedAt: now.UTC(), Filters: f, ScanLimit: SupervisionScanLimit,
 		DurationBasis: "created_at_to_terminal_at", CadenceUnavailableReason: "no persisted scheduler or cadence", Items: []JobSummary{}}
+	var metricErr error
+	result.DiskActions, metricErr = s.DiskActionMetrics(f.MachineID, now)
+	if metricErr != nil {
+		return result, metricErr
+	}
 	query := `WITH cohort AS MATERIALIZED (SELECT desired_id,machine_id,state,created_at,terminal_at FROM jobs WHERE created_at <= ?`
 	args := []any{fmtTime(now)}
 	if f.MachineID != "" {

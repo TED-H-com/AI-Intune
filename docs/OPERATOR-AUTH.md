@@ -171,11 +171,11 @@ example.com/cap/clawctl-admin
 
 此 Tailscale surface 不含另列於 [API-SURFACE.md](API-SURFACE.md) 的 6 條公開 account operations；包含新的 Admin keyed-installer download。
 
-目前 code route manifest 固定為 271 operations：20 條 non-operator，加上 251 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=100`、`operate=28`、`admin=123`，
-其中 `/v1/operator/*` JSON routes 共 129 條、HTML/BFF/CSV/download 共 122 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 282 operations：22 條 non-operator，加上 260 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=102`、`operate=28`、`admin=130`，
+其中 `/v1/operator/*` JSON routes 共 134 條、HTML/BFF/CSV/download 共 126 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-271-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+282-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies reject local-account sessions
 before idempotency replay: no action-bound JSON reauthentication proof exists.
@@ -183,8 +183,8 @@ Only human admins freshly authorized through the Tailscale LocalAPI boundary may
 apply through JSON; local-account users use the Hub UI password/TOTP apply flow.
 
 operator route manifest 與實際註冊清單在 Hub 啟動時做雙向比對。繞過 operator
-boundary 的 20 條 route 也有另一份完整 manifest；兩份不能
-重疊。那 20 條是 17 條 machine transport、2 條 verifier transport、`/healthz`；其中
+boundary 的 22 條 route 也有另一份完整 manifest；兩份不能
+重疊。那 22 條是 19 條 machine transport、2 條 verifier transport、`/healthz`；其中
 `POST /v1/verifications`（write schema v2）與 `GET /v1/verification-assignments` 走的是 verifier bearer 而不是 machine
 bearer，manifest 仍把它們歸在 non-operator，因為它們同樣不經 operator boundary。
 Machine plane 的 `/v1/` 第二段必須是 literal 且不能是 `operator`，所以
@@ -710,3 +710,24 @@ through GET self before reporting success. Failed rename/file fsync preserves a
 0600 recovery file and reports its path; failed directory fsync reports the
 installed destination. Retry during overlap or install the recovery file promptly.
 See [Hermes timer](../ops/hermes/README.md).
+
+
+P2-04 signed disk grants use the machine plane, not operator credentials:
+`GET /v1/ops-manifests/{id}` requires the assigned machine's active exact job and
+manifest digest, consumed human approval, live deadline/lease and current policy.
+The helper verifies the signature using an independently pinned root-owned public
+key and renews authority before every mutation. Signing defaults off. All four
+write action catalog entries are ineligible for service-token execution and
+rejected by generic script/schedule admission. Dedicated human action dispatch is
+internal only in this slice; operator routes/MCP and reauthenticated UI are still
+pending. There is no agent delegation or delegated delete/restore path.
+
+### P2-04 human quarantine contract
+
+Exact manifests and consumed human approvals bind pinned quarantine/delete/restore
+jobs. Human mutations require admin and fresh reauth; they are not token eligible.
+MCP uses redacted projections; delegation remains deferred. Daily expiry
+(`10 6 * * *` UTC) selects only due items from consumed original quarantine approvals
+under the current policy. The assigned machine alone uploads private action receipts
+and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
+for routes, human UI, recovery, readiness and metrics.

@@ -29,5 +29,5 @@ func redactedDiskStatus(s store.DiskOpsStatus) map[string]any {
 		}
 		return map[string]any{"freed_bytes": e.Summary.FreedBytes, "categories": categories, "protections": pathProjection(e.Operation.Protections)}
 	}
-	return map[string]any{"machine_id": s.MachineID, "mounts": mounts, "thresholds": s.Thresholds, "last_safe_tier": project(s.LastSafeTier), "preview": project(s.Preview), "skip_count": len(s.Skips), "ownership": map[string]string{"user": "hub", "root": "local-timer"}, "writes_enabled": s.WritesEnabled}
+	return map[string]any{"actions": s.Actions, "machine_id": s.MachineID, "mounts": mounts, "thresholds": s.Thresholds, "last_safe_tier": project(s.LastSafeTier), "preview": project(s.Preview), "skip_count": len(s.Skips), "ownership": map[string]string{"user": "hub", "root": "local-timer"}, "writes_enabled": s.WritesEnabled}
 }

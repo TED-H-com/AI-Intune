@@ -28,6 +28,7 @@ type DiskSafeEnvelope struct {
 	} `json:"operation"`
 }
 type DiskOpsStatus struct {
+	Actions       DiskActionMetrics `json:"actions"`
 	MachineID     string            `json:"machine_id"`
 	Mounts        []DiskMountUsage  `json:"mounts"`
 	Thresholds    DiskThresholds    `json:"thresholds"`
@@ -133,5 +134,6 @@ func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
 			}
 		}
 	}
-	return out, nil
+	out.Actions, err = s.DiskActionMetrics(id, s.now().UTC())
+	return out, err
 }

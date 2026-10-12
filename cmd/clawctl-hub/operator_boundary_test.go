@@ -122,16 +122,16 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		t.Fatal(err)
 	}
-	if len(nonOperatorRegistered) != 26 || len(nonOperatorRoutePolicies) != 26 {
-		t.Fatalf("non-operator registered=%d policies=%d, want 26/26",
+	if len(nonOperatorRegistered) != 28 || len(nonOperatorRoutePolicies) != 28 {
+		t.Fatalf("non-operator registered=%d policies=%d, want 28/28",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 251 || len(operatorRoutePolicies) != 251 {
-		t.Fatalf("operator registered=%d policies=%d, want 251/251",
+	if len(operatorRegistered) != 260 || len(operatorRoutePolicies) != 260 {
+		t.Fatalf("operator registered=%d policies=%d, want 260/260",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 277 {
-		t.Fatalf("all registered routes=%d, 預期 277", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 288 {
+		t.Fatalf("all registered routes=%d, 預期 288", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -141,14 +141,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 100 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 123 {
-		t.Fatalf("permission counts=%v, want view=100 operate=28 admin=123", counts)
+	if counts[operatorauth.View] != 102 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 130 {
+		t.Fatalf("permission counts=%v, want view=102 operate=28 admin=130", counts)
 	}
-	if representations[operatorJSON] != 129 || representations[operatorHTML] != 121 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=129 HTML=121 plain=1", representations)
+	if representations[operatorJSON] != 134 || representations[operatorHTML] != 125 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=134 HTML=125 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 250 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=250 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 259 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=259 terminal=1", profiles)
 	}
 }
 
@@ -463,15 +463,24 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"GET /tenant/approvals", "/tenant/approvals", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /tenant/approvals/preview", "/tenant/approvals/preview", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /tenant/approvals/apply", "/tenant/approvals/apply", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"GET /disk-reports/{id}", "/disk-reports/fixture", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"GET /v1/operator/disk-ops/reports", "/v1/operator/disk-ops/reports", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
+		{"GET /v1/operator/disk-ops/reports/{id}", "/v1/operator/disk-ops/reports/fixture", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
+		{"POST /v1/operator/disk-ops/actions/preview", "/v1/operator/disk-ops/actions/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/disk-ops/actions/decide", "/v1/operator/disk-ops/actions/decide", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"GET /v1/operator/disk-ops/quarantine/{machine_id}", "/v1/operator/disk-ops/quarantine/fixture", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/disk-ops/restores/preview", "/v1/operator/disk-ops/restores/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/disk-ops/restores", "/v1/operator/disk-ops/restores", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /disk-reports/{id}/actions", "/disk-reports/fixture/actions", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /disk-actions/apply", "/disk-actions/apply", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"GET /machines/{id}/quarantine", "/machines/fixture/quarantine", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /machines/{id}/quarantine/restore", "/machines/fixture/quarantine/restore", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/disk-ops/approvals/{id}/decision/preview", "/v1/operator/disk-ops/approvals/example-id/decision/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/disk-ops/approvals/{id}/decision", "/v1/operator/disk-ops/approvals/example-id/decision", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/disk-ops/policies", "/v1/operator/disk-ops/policies", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/disk-ops/policies/{id}", "/v1/operator/disk-ops/policies/disk-default", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/disk-ops/policies/preview", "/v1/operator/disk-ops/policies/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/disk-ops/policies", "/v1/operator/disk-ops/policies", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"GET /v1/operator/disk-ops/reports", "/v1/operator/disk-ops/reports", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
-		{"GET /v1/operator/disk-ops/reports/{id}", "/v1/operator/disk-ops/reports/report-fixture", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
-		{"GET /disk-reports/{id}", "/disk-reports/report-fixture", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/disk-ops/approvals", "/v1/operator/disk-ops/approvals", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/disk-clean/summaries", "/v1/operator/disk-clean/summaries", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/disk-clean/summaries/{id}", "/v1/operator/disk-clean/summaries/machine-1", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
@@ -2376,5 +2385,27 @@ func TestDiskReportUploadRoutesRequireMachineAuthority(t *testing.T) {
 		if _, ok := operatorRoutePolicies[route]; ok {
 			t.Fatalf("machine upload %q exposed on operator plane", route)
 		}
+	}
+}
+
+func TestDiskActionRoutesRejectCrossOriginBeforeMutation(t *testing.T) {
+	st := boundaryStore(t)
+	for _, pattern := range []string{"POST /v1/operator/disk-ops/actions/preview", "POST /v1/operator/disk-ops/actions/decide", "POST /v1/operator/disk-ops/restores/preview", "POST /v1/operator/disk-ops/restores", "POST /disk-reports/{id}/actions", "POST /disk-actions/apply", "POST /machines/{id}/quarantine/restore"} {
+		t.Run(pattern, func(t *testing.T) {
+			inner := http.NewServeMux()
+			calls := 0
+			inner.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(204) })
+			boundary := newOperatorBoundary(inner, &boundaryAuthorizer{allow: true}, st, map[string]operatorRoutePolicy{pattern: operatorRoutePolicies[pattern]}, testOperatorAuthority)
+			_, path, _ := strings.Cut(pattern, " ")
+			path = strings.ReplaceAll(path, "{id}", "fixture")
+			r := newBoundaryRequest("POST", path, nil)
+			r.RemoteAddr = "100.100.10.20:4321"
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			w := httptest.NewRecorder()
+			boundary.ServeHTTP(w, r)
+			if w.Code != 403 || calls != 0 {
+				t.Fatalf("CSRF: status=%d handler calls=%d", w.Code, calls)
+			}
+		})
 	}
 }
