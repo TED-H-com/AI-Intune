@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -340,24 +341,69 @@ func (s *Store) scriptEvidenceReady(jobID string) (required, ready bool, err err
 }
 
 func validateScriptTargetsTx(tx dbTx, req ScriptRunRequest, e scriptcatalog.Entry) error {
+	var failures []string
 	for _, id := range req.Targets {
-		var osName string
-		var retired sql.NullString
+		var name, osName string
+		var retired, checkin sql.NullString
 		var enabled, capable sql.NullBool
-		var active int
-		ge := tx.QueryRow(`SELECT COALESCE(m.os,''),m.retired_at,c.jobs_enabled,cap.supported,
-   (SELECT COUNT(*) FROM jobs j WHERE j.machine_id=m.machine_id AND j.state NOT IN (?,?,?,?,?))
+		ge := tx.QueryRow(`SELECT COALESCE(NULLIF(m.display_name,''),m.machine_id),COALESCE(m.os,''),m.retired_at,c.sent_at,c.jobs_enabled,cap.supported
    FROM machine_registry m LEFT JOIN machine_checkins c ON c.rowid=(SELECT rowid FROM machine_checkins WHERE machine_id=m.machine_id ORDER BY received_at DESC,rowid DESC LIMIT 1)
-   LEFT JOIN machine_job_capabilities cap ON cap.machine_id=c.machine_id AND cap.sent_at=c.sent_at AND cap.capability=? WHERE m.machine_id=?`, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, scriptcatalog.Kind, id).Scan(&osName, &retired, &enabled, &capable, &active)
+   LEFT JOIN machine_job_capabilities cap ON cap.machine_id=c.machine_id AND cap.sent_at=c.sent_at AND cap.capability=? WHERE m.machine_id=?`, scriptcatalog.Kind, id).Scan(&name, &osName, &retired, &checkin, &enabled, &capable)
 		if errors.Is(ge, sql.ErrNoRows) {
-			return scriptBad("target not found")
+			failures = append(failures, id+": target not found")
+			continue
 		}
 		if ge != nil {
 			return ge
 		}
-		if retired.Valid || !enabled.Valid || !enabled.Bool || !capable.Valid || !capable.Bool || !e.AllowsOS(osName) || active != 0 {
-			return scriptBad("target unavailable, unsupported, execution disabled or active job")
+		var reasons []string
+		if retired.Valid {
+			reasons = append(reasons, "retired")
 		}
+		if !checkin.Valid {
+			reasons = append(reasons, "no check-in yet")
+		} else {
+			if !enabled.Valid || !enabled.Bool {
+				reasons = append(reasons, "jobs disabled in latest check-in")
+			}
+			if !capable.Valid || !capable.Bool {
+				reasons = append(reasons, "script_v1 capability not advertised in latest check-in")
+			}
+		}
+		if !e.AllowsOS(osName) {
+			reasons = append(reasons, fmt.Sprintf("OS '%s' not allowed for this script (allowed: %s)", osName, strings.Join(e.AllowedOS, ", ")))
+		}
+		rows, err := tx.Query(`SELECT j.state,COALESCE(d.resource_kind,'unknown') FROM jobs j LEFT JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.machine_id=? AND j.state NOT IN (?,?,?,?,?) ORDER BY j.created_at,j.job_id`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention)
+		if err != nil {
+			return err
+		}
+		var active int
+		var jobs []string
+		for rows.Next() {
+			var state, kind string
+			if err := rows.Scan(&state, &kind); err != nil {
+				rows.Close()
+				return err
+			}
+			active++
+			if len(jobs) < 3 {
+				jobs = append(jobs, state+"/"+kind)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if active > 0 {
+			reasons = append(reasons, fmt.Sprintf("%d active job(s) (%s)", active, strings.Join(jobs, ", ")))
+		}
+		if len(reasons) > 0 {
+			failures = append(failures, name+": "+strings.Join(reasons, "; "))
+		}
+	}
+	if len(failures) > 0 {
+		return scriptBad(strings.Join(failures, "\n"))
 	}
 	return nil
 }
