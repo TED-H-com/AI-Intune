@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-282（22 non-operator＋260 operator；134 operator JSON＋126 HTML/BFF/CSV/download），exact auth tally 是
-`view=102`／`operate=28`／`admin=130`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+292（22 non-operator＋270 operator；140 operator JSON＋130 HTML/BFF/CSV/download），exact auth tally 是
+`view=105`／`operate=28`／`admin=137`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1177,3 +1177,16 @@ MCP uses redacted projections; delegation remains deferred. Daily expiry
 under the current policy. The assigned machine alone uploads private action receipts
 and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
 for routes, human UI, recovery, readiness and metrics.
+P2-05 adds ten operator operations: ownership and alert reads, bound human-admin
+handoff/rollback/ack reviews and applies, and the fleet alerts UI. See
+[API surface](API-SURFACE.md#timer-handoff-and-disk-alerts-p2-05). Ownership defaults
+local-owned, and enqueue/claim/start enforce hub-owned. Handoff requires machine-authenticated disabled timer/service evidence with a
+Hub receipt after the transition and an exact echoed Hub revision/nonce. Timer
+evidence is ordered by Hub receipt sequence, rate limited and retained in bounded
+history. Rollback atomically disables schedules and enters rollback-pending;
+local ownership and its re-enable command return only after all matching jobs
+are terminal. Replays are audited. Stable notification key cooldowns and persisted
+per-machine/global delivery budgets prevent flapping from bypassing throttles. Root
+helper absence fails closed. Canary comparison uses daily policy-bound read previews;
+alerts use persisted episodes and the existing notifications ledger. P2-04 retains
+its exact human quarantine/restore operations; P2-05 adds no privileged agent actions.

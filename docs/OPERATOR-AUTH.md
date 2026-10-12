@@ -171,11 +171,11 @@ example.com/cap/clawctl-admin
 
 此 Tailscale surface 不含另列於 [API-SURFACE.md](API-SURFACE.md) 的 6 條公開 account operations；包含新的 Admin keyed-installer download。
 
-目前 code route manifest 固定為 282 operations：22 條 non-operator，加上 260 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=102`、`operate=28`、`admin=130`，
-其中 `/v1/operator/*` JSON routes 共 134 條、HTML/BFF/CSV/download 共 126 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 292 operations：22 條 non-operator，加上 270 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=105`、`operate=28`、`admin=137`，
+其中 `/v1/operator/*` JSON routes 共 140 條、HTML/BFF/CSV/download 共 130 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-282-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+292-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies reject local-account sessions
 before idempotency replay: no action-bound JSON reauthentication proof exists.
@@ -718,9 +718,8 @@ manifest digest, consumed human approval, live deadline/lease and current policy
 The helper verifies the signature using an independently pinned root-owned public
 key and renews authority before every mutation. Signing defaults off. All four
 write action catalog entries are ineligible for service-token execution and
-rejected by generic script/schedule admission. Dedicated human action dispatch is
-internal only in this slice; operator routes/MCP and reauthenticated UI are still
-pending. There is no agent delegation or delegated delete/restore path.
+rejected by generic script/schedule admission. Dedicated human action dispatch uses exact operator routes, redacted MCP previews
+and the reauthenticated UI. There is no agent delegation or delegated delete/restore path.
 
 ### P2-04 human quarantine contract
 
@@ -731,3 +730,10 @@ MCP uses redacted projections; delegation remains deferred. Daily expiry
 under the current policy. The assigned machine alone uploads private action receipts
 and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
 for routes, human UI, recovery, readiness and metrics.
+P2-05: ownership handoff/rollback and alert acknowledgement preview/apply are exact
+human-admin routes, never service-token eligible. Applies require fresh boundary
+LocalAPI authorization for JSON; local-account admins use the password/TOTP UI.
+Authorization precedes receipt replay. All new browser mutations use the existing
+cross-origin boundary. `disk_alerts_list` is a redacted view read eligible for exact
+view-token allowlists; `disk_ownership_get` remains human-view only. No token can
+change timer ownership, acknowledge alerts, or enable a cleanup schedule.

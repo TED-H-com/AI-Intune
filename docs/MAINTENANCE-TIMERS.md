@@ -126,3 +126,56 @@ sudo bash ops/maintenance/uninstall-timers.sh --scope root --apply
 Preview is the default. Apply disables installed timers and removes managed
 units and executables with backups. Config is kept unless `--purge` is added.
 Summaries, backups, and linger are kept. Journald is never restarted.
+
+## Hub timer handoff and rollback (P2-05)
+
+Each machine/scope starts **local-owned**. The machine Disk page shows read-only
+agent timer/service observations and summary age. A disabled daily Hub apply
+schedule must be ready before handoff. Choose the **Compare** daily schedule to
+run `disk-safe-preview-v2` while the local apply timer remains installed. Compare
+candidate-byte summaries on matching UTC days for seven days (`canary_days`,
+1–90, omitted means seven). The table retains disagreements; they do not satisfy
+the canary. Policy changes require comparison against the new policy digest.
+A human admin can explicitly override incomplete comparison with an audited reason.
+
+Review handoff and reauthenticate. Ownership becomes **handoff-pending**. Run the
+exact command displayed by the Hub locally, for example:
+
+```sh
+systemctl --user disable --now disk-clean.timer
+sudo bash -c 'systemctl disable --now disk-clean-root.timer'
+```
+
+The Hub never executes sudo. Wait for any current local cleanup service to finish.
+The Hub issues a transition revision and nonce in the next check-in response.
+The agent echoes that challenge after measuring the timer again. Only a known
+disabled/inactive timer and inactive service, received by the Hub after the
+transition and echoing its exact revision/nonce, changes ownership to **hub-owned**.
+Agent timestamps never order this evidence. Then enable the prepared Hub schedule.
+Missing/stale evidence leaves handoff pending. Root scope stays local-owned until
+a reviewed admin-installed helper exists; the current adapter has no root helper.
+A local timer re-enabled while hub-owned raises a dual-owner warning and blocks
+Hub apply admission. Weekly read-only local inventory and tmpfiles rules are
+independent of this apply timer.
+
+For rollback, review **Rollback** on the machine Disk page and reauthenticate.
+The transaction disables matching Hub apply schedules, cancels unclaimed queued
+cleanup and records **rollback-pending**. Claimed, running and verifying jobs keep
+ownership pending until every matching job is terminal. Admission stays blocked.
+The Hub then records **local-owned** and exposes the local re-enable command;
+it is hidden throughout rollback-pending. Use the displayed command only then:
+
+```sh
+systemctl --user enable --now disk-clean.timer
+sudo bash -c 'systemctl enable --now disk-clean-root.timer'
+```
+
+Do not enable local and Hub apply timers together. Native cache GC cannot be undone.
+Keep local summary files and PR #40 readers during comparison and migration.
+
+Timer observations have Hub `received_at` and monotonic receipt sequences. Ingestion
+accepts at most one batch per machine per 30 seconds (up to two scopes), retaining
+at most ten receipts per scope and at most fourteen days of history; the latest
+receipt remains available as stale/unknown evidence. Retention uses indexed Hub
+receipt time. Legacy observations migrate as stale and pending handoffs receive a
+new challenge. Handoff, rollback and acknowledgement idempotent replays are audited.

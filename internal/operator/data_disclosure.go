@@ -264,10 +264,10 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryDiskClean: {
 		title:    "磁碟清理",
-		holds:    "磁碟摘要、設定指派、rollout、告警與人類批准；深度報告、精確操作 manifest、隔離項目與結果、還原及到期工作綁定。私密路徑與檔案識別受限。完整報告保留 30 天，未完成上傳 24 小時，壓力紀錄 30 天；既有 ledger 保留規則不變。",
+		holds:    "清理摘要、指派、批准、私密報告、精確 manifest、隔離與還原、到期工作、計時器證據、權責、canary 及告警。報告和壓力紀錄 30 天、未完成上傳 24 小時；計時器歷史最多 10 筆及 14 天並保留最新證據、已清除告警及 canary 90 天、通知預算 48 小時。",
 		source:   DataSourceHub,
-		tables:   []string{"disk_reports", "disk_deep_trigger_slots", "ops_approvals", "ops_manifests", "disk_quarantine", "disk_action_receipts", "disk_action_items", "disk_expiry_jobs", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state"},
-		freeText: "摘要裡的主機名稱、使用者、attention、分類備註與報告路徑。",
+		tables:   []string{"disk_reports", "disk_deep_trigger_slots", "ops_approvals", "ops_manifests", "disk_quarantine", "disk_action_receipts", "disk_action_items", "disk_expiry_jobs", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state", "disk_timer_observations", "disk_timer_ingestion", "disk_ownership", "disk_alerts", "disk_alert_delivery_reservations", "disk_canary_days"},
+		freeText: "摘要裡的主機名稱、使用者、attention、分類備註、報告路徑與告警確認理由。",
 		path:     "/tenant/maintenance",
 	},
 	DataCategoryAssignments: {

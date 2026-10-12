@@ -49,7 +49,7 @@ func redactedDiskBody(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, projectionError()
 	}
-	return map[string]any{"schema_version": p.SchemaVersion, "safe_tier": p.SafeTier, "thresholds": p.Thresholds, "quarantine_ttl_days": p.QuarantineTTLDays, "scan_budgets": p.ScanBudgets, "protected_paths": pathProjection(p.ProtectPaths)}, nil
+	return map[string]any{"data_mounts": pathProjection(p.DataMounts), "canary_days": p.CanaryDays, "schema_version": p.SchemaVersion, "safe_tier": p.SafeTier, "thresholds": p.Thresholds, "quarantine_ttl_days": p.QuarantineTTLDays, "scan_budgets": p.ScanBudgets, "protected_paths": pathProjection(p.ProtectPaths)}, nil
 }
 func redactedDiskPolicy(p store.OpsPolicy) (any, error) {
 	body, err := redactedDiskBody(p.Body)

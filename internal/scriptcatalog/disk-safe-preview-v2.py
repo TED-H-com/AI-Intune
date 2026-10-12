@@ -506,25 +506,16 @@ def save_summary(directory, summary):
         try: os.unlink(name, dir_fd=directory)
         except FileNotFoundError: pass
 
-def mount_usage():
+def mount_usage(policy):
     mounts = []
-    seen = set()
-    try:
-        with open('/proc/self/mountinfo') as source:
-            for line in source:
-                fields = line.split()
-                separator = fields.index('-')
-                if fields[separator+1] not in ['ext4','xfs','btrfs','zfs','overlay','fuseblk']:
-                    continue
-                mount = fields[4].replace('\\040',' ').replace('\\134','\\')
-                if mount in seen or len(mounts)>=16 or not os.path.isdir(mount):
-                    continue
-                seen.add(mount)
-                disk = os.statvfs(mount)
-                avail, total = disk.f_bavail*disk.f_frsize, disk.f_blocks*disk.f_frsize
-                mounts.append(dict(mount=mount,total_bytes=total,available_bytes=avail,percent=int(100*(total-avail)/total) if total else 0))
-    except (OSError, ValueError):
-        pass
+    for mount in ['/'] + policy.get('data_mounts', []):
+        try:
+            disk = os.statvfs(mount)
+            avail, total = disk.f_bavail*disk.f_frsize, disk.f_blocks*disk.f_frsize
+            if total > 0 and 0 <= avail <= total:
+                mounts.append(dict(mount=mount,total_bytes=total,available_bytes=avail,percent=int(100*(total-avail)/total)))
+        except OSError:
+            pass  # Missing is unknown, never recovery evidence.
     return mounts
 
 def main():
@@ -576,7 +567,7 @@ def main():
         try: save_summary(state[0], summary)
         finally: os.close(state[1]); os.close(state[0])
     print(json.dumps(dict(summary=summary, operation=dict(schema='disk-safe/v2', policy_id=args['policy_id'], policy_digest=args['policy_digest'],
-        ownership='hub' if args['scope']=='user' else 'local-timer', skip_code='root_helper_missing' if args['scope']=='root' else '', mounts=mount_usage(), protections=['credentials','generated_images','repositories','active-models','configured-paths','open-descriptors','locks'])), separators=(',', ':')))
+        ownership='hub' if args['scope']=='user' else 'local-timer', skip_code='root_helper_missing' if args['scope']=='root' else '', mounts=mount_usage(policy), protections=['credentials','generated_images','repositories','active-models','configured-paths','open-descriptors','locks'])), separators=(',', ':')))
 
 if __name__ == '__main__':
     main()

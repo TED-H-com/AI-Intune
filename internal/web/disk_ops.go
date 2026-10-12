@@ -54,6 +54,7 @@ func (s *Server) diskOpsRoutes(mux *http.ServeMux) []string {
 		{"GET /machines/{id}/quarantine", s.diskQuarantine},
 		{"POST /machines/{id}/quarantine/restore", s.diskRestoreAction},
 		{"GET /machines/{id}/disk", s.diskMachine}, {"POST /machines/{id}/disk/actions", s.diskMachineAction},
+		{"POST /tenant/disk-alerts/ack/preview", s.diskAlertAck}, {"POST /tenant/disk-alerts/ack", s.diskAlertAck}, {"GET /tenant/disk-alerts", s.diskAlerts}, {"POST /machines/{id}/disk/ownership", s.diskOwnershipAction},
 		{"GET /tenant/disk-policies", s.diskPolicies}, {"GET /tenant/disk-policies/{id}", s.diskPolicies},
 		{"POST /tenant/disk-policies/preview", s.previewDiskPolicy}, {"POST /tenant/disk-policies/apply", s.applyDiskPolicy},
 		{"GET /tenant/approvals", s.diskApprovals}, {"POST /tenant/approvals/preview", s.previewDiskApproval}, {"POST /tenant/approvals/apply", s.applyDiskApproval},

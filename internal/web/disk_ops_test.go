@@ -415,7 +415,7 @@ func TestDiskMachineWebRenderAndForgedForms(t *testing.T) {
 	}
 }
 
-func TestDiskMachineWebCleanupPreviewApplyAndReplay(t *testing.T) {
+func TestDiskMachineWebCleanupRefusesLocalOwner(t *testing.T) {
 	s, st := newServer(t)
 	policy := createDiskWebPolicy(t, s, st)
 	id := onlineMachine(t, st, "example-device")
@@ -436,12 +436,11 @@ func TestDiskMachineWebCleanupPreviewApplyAndReplay(t *testing.T) {
 		t.Fatal("preview", w.Code, w.Body.String())
 	}
 	apply := diskWebHidden(t, w.Body.String(), "action", "operation", "request", "digest", "key")
-	for i := 0; i < 2; i++ {
-		w = diskWebRequest(t, s, "POST", path, apply, p, false)
-		if w.Code != 303 {
-			t.Fatal("apply", w.Code, w.Body.String())
-		}
+	w = diskWebRequest(t, s, "POST", path, apply, p, false)
+	if w.Code != 412 || !strings.Contains(w.Body.String(), "not hub-owned") {
+		t.Fatal("local owner apply admitted", w.Code, w.Body.String())
 	}
+
 }
 
 func TestDiskMachinePolishedSizesBadgesAndEmptyStates(t *testing.T) {
