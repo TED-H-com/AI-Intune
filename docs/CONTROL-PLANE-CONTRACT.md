@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-271（20 non-operator＋251 operator；129 operator JSON＋122 HTML/BFF/CSV/download），exact auth tally 是
-`view=100`／`operate=28`／`admin=123`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+282（22 non-operator＋260 operator；134 operator JSON＋126 HTML/BFF/CSV/download），exact auth tally 是
+`view=102`／`operate=28`／`admin=130`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1152,7 +1152,7 @@ inventory never means clean. Pressure evaluates active non-retired machines with
 (default policy) usage, sharing six-hour coalescing with weekly/manual scans.
 Only enqueue and bounded coalesce decisions persist minute slots and audit rows;
 routine below-threshold/unavailable checks leave no durable trigger evidence.
-Human cleanup decisions remain disabled until P2-04; no delegated approvals.
+P2-04 enables exact human-admin cleanup decisions; no delegated approvals.
 
 Deep-report chunk and completion uploads share process-local admission: at most
 2 concurrent requests per authenticated machine and 16 globally, with a 64-request
@@ -1166,3 +1166,14 @@ digits, underscores and hyphens (1–128 bytes); `last_used` is empty or canonic
 RFC3339Nano, and evidence sources are a fixed allowlist (atime, all-container
 references, process start ticks, unknown or empty). Displayed free text uses the
 shared bounded-text scrubber; raw private paths remain identity bindings.
+
+
+### P2-04 human quarantine contract
+
+Exact manifests and consumed human approvals bind pinned quarantine/delete/restore
+jobs. Human mutations require admin and fresh reauth; they are not token eligible.
+MCP uses redacted projections; delegation remains deferred. Daily expiry
+(`10 6 * * *` UTC) selects only due items from consumed original quarantine approvals
+under the current policy. The assigned machine alone uploads private action receipts
+and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
+for routes, human UI, recovery, readiness and metrics.

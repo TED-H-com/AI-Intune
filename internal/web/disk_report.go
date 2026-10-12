@@ -9,6 +9,8 @@ import (
 )
 
 type diskReportView struct {
+	Admin                bool
+	Decisions            map[string]string
 	Report               store.DiskReportPage
 	Category, Confidence string
 }
@@ -40,5 +42,6 @@ func (s *Server) diskReport(w http.ResponseWriter, r *http.Request) {
 		s.diskOpsError(w, r, err, "/")
 		return
 	}
-	s.render(w, r, "disk_report.html", page{Title: "Deep disk analysis", DiskReport: &diskReportView{Report: out, Category: q.Get("category"), Confidence: q.Get("confidence")}})
+	decisions, _ := s.operator.DiskReportDecisions(out.ID)
+	s.render(w, r, "disk_report.html", page{Title: "Deep disk analysis", DiskReport: &diskReportView{Admin: humanWebAdmin(r), Decisions: decisions, Report: out, Category: q.Get("category"), Confidence: q.Get("confidence")}})
 }

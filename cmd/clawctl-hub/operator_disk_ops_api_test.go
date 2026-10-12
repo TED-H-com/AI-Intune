@@ -251,7 +251,7 @@ func TestDiskJSONFreshHumanGatePrecedesLedgerLookup(t *testing.T) {
 	if _, err := f.store.DB().Exec(`DROP TABLE operator_idempotency`); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/v1/operator/disk-ops/policies", "/v1/operator/disk-ops/approvals/example-approval/decision"} {
+	for _, path := range []string{"/v1/operator/disk-ops/policies", "/v1/operator/disk-ops/approvals/example-approval/decision", "/v1/operator/disk-ops/actions/preview", "/v1/operator/disk-ops/actions/decide", "/v1/operator/disk-ops/restores/preview", "/v1/operator/disk-ops/restores"} {
 		// A missing receipt table would fail any attempted lookup. Local sessions
 		// must instead fail the transport authorization gate, even on a retry.
 		assertDiskJSONLocalDenied(t, f.mux, path, "existing-retry-key", `{"id":"example-approval","decision":"approved","reason":"reviewed manifest"}`)

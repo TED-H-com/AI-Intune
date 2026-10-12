@@ -192,3 +192,49 @@ func TestDiskReportMCPDefensiveProjection(t *testing.T) {
 		}
 	}
 }
+
+type fakeDiskActionsHub struct {
+	fakeHub
+	calls int
+}
+
+func (f *fakeDiskActionsHub) DiskActionPreview(context.Context, store.DiskActionRequest) (store.DiskActionPreview, error) {
+	f.calls++
+	return store.DiskActionPreview{Items: []diskreport.Item{{ID: "candidate", PrivatePath: "/home/private-account/project/file", DisplayPath: "/home/private-account/project/file", OriginalParent: []uint64{1, 2}, Identity: diskreport.Identity{Dev: 1, Inode: 2}}}}, nil
+}
+func (f *fakeDiskActionsHub) DiskRestorePreview(c context.Context, _ store.DiskRestoreRequest) (store.DiskActionPreview, error) {
+	return f.DiskActionPreview(c, store.DiskActionRequest{})
+}
+func (f *fakeDiskActionsHub) DiskActionDecide(context.Context, store.OpsApprovalDecisionRequest, string, bool) (store.OpsApprovalDecisionResult, error) {
+	f.calls++
+	return store.OpsApprovalDecisionResult{}, nil
+}
+func (f *fakeDiskActionsHub) DiskQuarantineList(context.Context, string) ([]store.DiskQuarantineItem, error) {
+	f.calls++
+	return []store.DiskQuarantineItem{{ItemID: "candidate", DisplayPath: "/home/private-account/project/file"}}, nil
+}
+func TestDiskActionsMCPBindingsAndDefensiveProjection(t *testing.T) {
+	f := &fakeDiskActionsHub{}
+	s := &Service{Hub: f}
+	for name, args := range map[string]string{"disk_action_preview": `{"report_id":"report-fixture","report_digest":"sha256:` + strings.Repeat("a", 64) + `","action":"quarantine","item_ids":["candidate"],"reason":"review exact items"}`, "disk_restore_preview": `{"quarantine_id":"manifest-fixture","item_ids":["candidate"],"reason":"restore reviewed item"}`, "disk_quarantine_list": `{"machine_id":"machine-fixture"}`} {
+		out, err := s.Call(context.Background(), name, json.RawMessage(args))
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		raw, _ := json.Marshal(out)
+		for _, secret := range []string{"private-account", "private_path", "original_parent", "\"inode\":2"} {
+			if strings.Contains(string(raw), secret) {
+				t.Fatalf("%s projection leaked %s", name, secret)
+			}
+		}
+	}
+	calls := f.calls
+	for _, args := range []string{`{"id":"approval-fixture","decision":"approved","reason":"restore"}`, `{"id":"approval-fixture","decision":"rejected","reason":"restore","preview_digest":"sha256:` + strings.Repeat("a", 64) + `","idempotency_key":"fixture-key"}`} {
+		if _, err := s.Call(context.Background(), "disk_restore_apply", json.RawMessage(args)); err == nil || f.calls != calls {
+			t.Fatal("unbound restore called Hub", err)
+		}
+	}
+	if _, err := s.Call(context.Background(), "disk_action_preview", json.RawMessage(`{"report_id":"report-fixture","paths":["/tmp/file"]}`)); err == nil || f.calls != calls {
+		t.Fatal("unknown path field accepted")
+	}
+}

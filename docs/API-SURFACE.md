@@ -3,13 +3,13 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 277 個 HTTP operations（26 non-operator＋251 operator；129 條 operator JSON）、
+> 逐一對照 288 個 HTTP operations（28 non-operator＋260 operator；134 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 277-operation tally above (26 non-operator + 251 operator). The inventory/contract excludes these six public account operations and totals 271. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 288-operation tally above (28 non-operator + 260 operator). The inventory/contract excludes these six public account operations and totals 282. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -61,6 +61,7 @@ Operator auth boundary、Tailscale grant、deterministic CLI discovery 與 write
 | `POST` | `/v1/jobs/{id}/reject` | machine bearer + fencing token | activation 前拒單 |
 | `GET` | `/v1/capabilities` | machine bearer | 協定能力協商 |
 | `GET`, `HEAD` | `/v1/artifacts/{sha256}` | machine bearer + active exact job/digest binding | 只下載該 machine 當前 active job 綁定的 Hub artifact；不提供 catalog enumeration 或 path substitution |
+| `GET` | `/v1/ops-manifests/{id}` | assigned machine bearer; running exact job, live lease, manifest digest, consumed approval and current policy | Strict `job_id`/`digest` query. No-store signed private grant; helper verifies independently pinned local public key and renews before every mutation. Default signing authority is absent. |
 
 ### Verifier transport
 
@@ -907,7 +908,7 @@ Docker keeps only the two fixed §4.1 age-filtered commands, including confirmat
 | POST | `/v1/disk-reports/{job_id}/complete` | Machine bearer; canonical digest and <=500 item count |
 | GET | `/v1/operator/disk-ops/reports` | View; optional machine_id, latest 100 finalized report summaries |
 | GET | `/v1/operator/disk-ops/reports/{id}` | View; cursor and limit 1..100, sanitized display paths; exact-allowlisted view tokens eligible |
-| GET | `/disk-reports/{id}` | Human viewer; full private path only for admin; category/confidence filters and disabled action controls |
+| GET | `/disk-reports/{id}` | Human viewer; full private path only for admin; category/confidence filters and human-admin action controls |
 
 Manual deep scans use existing script preview/apply routes, human admin only,
 with pinned policy/hash/mode, preview digest, idempotency and audit. No new
@@ -925,3 +926,13 @@ digits, underscores and hyphens (1–128 bytes); `last_used` is empty or canonic
 RFC3339Nano, and evidence sources are a fixed allowlist (atime, all-container
 references, process start ticks, unknown or empty). Displayed free text uses the
 shared bounded-text scrubber; raw private paths remain identity bindings.
+
+### P2-04 human quarantine contract
+
+Exact manifests and consumed human approvals bind pinned quarantine/delete/restore
+jobs. Human mutations require admin and fresh reauth; they are not token eligible.
+MCP uses redacted projections; delegation remains deferred. Daily expiry
+(`10 6 * * *` UTC) selects only due items from consumed original quarantine approvals
+under the current policy. The assigned machine alone uploads private action receipts
+and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
+for routes, human UI, recovery, readiness and metrics.

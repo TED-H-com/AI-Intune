@@ -70,6 +70,8 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return nil, &CallError{Code: "invalid_arguments", Message: "context is required"}
 	}
 	switch name {
+	case "disk_action_preview", "disk_action_decide", "disk_quarantine_list", "disk_restore_preview", "disk_restore_apply":
+		return s.diskActionCall(ctx, name, raw)
 	case "disk_approval_list", "disk_approval_decision_preview", "disk_approval_decision_apply":
 		return s.diskApprovalCall(ctx, name, raw)
 	case "disk_report_get", "disk_ops_status", "disk_policy_list", "disk_policy_get", "disk_policy_upsert_preview", "disk_policy_upsert_apply":

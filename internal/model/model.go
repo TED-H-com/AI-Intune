@@ -90,9 +90,10 @@ type Checkin struct {
 	// DeviceSyncV1 says this exact agent process has the fixed device-sync v1
 	// executor. Old agents omit it; the Hub must treat omission as unsupported
 	// and must not infer support from agent_version text.
-	DeviceSyncV1 bool `json:"device_sync_v1,omitempty"`
-	DiskOpsV2    bool `json:"disk_ops_v2,omitempty"`
-	ScriptV1     bool `json:"script_v1,omitempty"`
+	DeviceSyncV1  bool   `json:"device_sync_v1,omitempty"`
+	DiskActionKey string `json:"disk_action_key,omitempty"`
+	DiskOpsV2     bool   `json:"disk_ops_v2,omitempty"`
+	ScriptV1      bool   `json:"script_v1,omitempty"`
 
 	// MaintenanceDiskCleanV1 says this process has the embedded disk-clean
 	// executor. Omission means unsupported. The Hub must not infer it from

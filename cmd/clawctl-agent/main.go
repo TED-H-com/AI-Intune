@@ -37,6 +37,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/catalog"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/probe"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/settingpolicy"
 )
 
@@ -521,6 +522,9 @@ func runAgent() {
 			callStart := time.Now()
 			hb.SentAt = callStart.UTC()
 			postErr := postJSON(ctx, cfg.HubURL+"/v1/checkins", cfg.AgentToken, hb, &resp)
+			if postErr == nil {
+				syncDiskActionOutbox(ctx, cfg.HubURL, cfg.AgentToken)
+			}
 			rtt := time.Since(callStart)
 			if postErr == nil {
 				now = adoptSettings(now, resp, &applied, cfg, seq)
@@ -609,6 +613,7 @@ func runAgent() {
 func advertiseJobCapabilities(checkin *model.Checkin) {
 	// Foundation support is Linux/non-root; execution adapters still require their
 	// own catalog entries and reviewed runtime profiles.
+	checkin.DiskActionKey, _ = scriptcatalog.DiskActionReadiness()
 	checkin.DiskOpsV2 = runtime.GOOS == "linux" && os.Geteuid() != 0
 	checkin.DeviceSyncV1 = true
 	checkin.ScriptV1 = runtime.GOOS == "linux" && os.Geteuid() != 0

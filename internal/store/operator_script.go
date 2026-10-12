@@ -64,6 +64,9 @@ func normalizeScript(req ScriptRunRequest) (ScriptRunRequest, scriptcatalog.Entr
 	return req, e, nil
 }
 func scriptScope(e scriptcatalog.Entry, a AuditEntry) error {
+	if scriptcatalog.IsDiskAction(e.ID) {
+		return operatorError("PRECONDITION_FAILED", "disk action requires exact manifest approval and dedicated dispatch")
+	}
 	if e.ID == "disk-deep-report-v1" {
 		return humanDiskAdmin(a)
 	}

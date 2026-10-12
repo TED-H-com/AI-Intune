@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,26 @@ func diskSafePolicyTx(tx dbTx, req ScriptRunRequest, entry scriptcatalog.Entry) 
 	}
 	if json.Unmarshal(req.Args, &args) != nil {
 		return nil, operatorError("BAD_REQUEST", "invalid disk args")
+	}
+	if scriptcatalog.IsDiskAction(entry.ID) && entry.ID != "disk-quarantine-expire-v1" {
+		var binding struct {
+			ID       string `json:"manifest_id"`
+			Digest   string `json:"manifest_digest"`
+			Approval string `json:"approval_id"`
+		}
+		if json.Unmarshal(req.Args, &binding) != nil {
+			return nil, operatorError("BAD_REQUEST", "invalid action binding")
+		}
+		var body string
+		if err := tx.QueryRow(`SELECT body FROM ops_manifests WHERE id=? AND digest=? AND approval_id=?`, binding.ID, binding.Digest, binding.Approval).Scan(&body); err != nil {
+			return nil, operatorError("PRECONDITION_FAILED", "action manifest not bound")
+		}
+		var manifest DiskManifest
+		if json.Unmarshal([]byte(body), &manifest) != nil {
+			return nil, operatorError("PRECONDITION_FAILED", "invalid action manifest")
+		}
+		args.ID = manifest.PolicyID
+		args.Digest = manifest.PolicyDigest
 	}
 	var raw, digest string
 	err := tx.QueryRow(`SELECT body,digest FROM ops_policies WHERE id=? AND superseded_at IS NULL ORDER BY revision DESC LIMIT 1`, args.ID).Scan(&raw, &digest)
@@ -46,6 +67,22 @@ func (s *Store) diskSafeGateTx(tx dbTx, req ScriptRunRequest, entry scriptcatalo
 	}
 	if _, err := diskSafePolicyTx(tx, req, entry); err != nil {
 		return err
+	}
+	if scriptcatalog.IsDiskAction(entry.ID) {
+		signer := s.diskManifestSigner.Load()
+		if signer == nil {
+			return operatorError("PRECONDITION_FAILED", "disk manifest signing key unavailable")
+		}
+		capability := "disk_actions_v1:" + scriptcatalog.Digest(x509.MarshalPKCS1PublicKey(&signer.PublicKey))
+		for _, machine := range req.Targets {
+			var ready int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM machine_checkins c JOIN machine_job_capabilities cap ON cap.machine_id=c.machine_id AND cap.sent_at=c.sent_at WHERE c.rowid=(SELECT rowid FROM machine_checkins WHERE machine_id=? ORDER BY received_at DESC,rowid DESC LIMIT 1) AND cap.capability=? AND cap.supported=1`, machine, capability).Scan(&ready); err != nil {
+				return err
+			}
+			if ready != 1 {
+				return operatorError("PRECONDITION_FAILED", "target lacks the current disk action helper and pinned signing key")
+			}
+		}
 	}
 	for _, id := range req.Targets {
 		if entry.ID == "disk-deep-report-v1" && (len(admission) > 0 && admission[0]) {

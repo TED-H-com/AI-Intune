@@ -72,6 +72,10 @@ func (h *hub) agentRoutes(mux *http.ServeMux) []string {
 		"POST /v1/verifications",
 		"GET /v1/verification-assignments",
 	}
+	patterns = append(patterns, "POST /v1/disk-actions/{job_id}/results")
+	mux.HandleFunc("POST /v1/disk-actions/{job_id}/results", h.authed(h.handleDiskActionResults))
+	patterns = append(patterns, "GET /v1/ops-manifests/{id}")
+	mux.HandleFunc("GET /v1/ops-manifests/{id}", h.authed(h.handleDiskManifestFetch))
 	patterns = append(patterns, "POST /v1/disk-reports/{job_id}/chunks", "POST /v1/disk-reports/{job_id}/complete")
 	mux.HandleFunc("POST /v1/disk-reports/{job_id}/chunks", h.authed(h.handleDiskReportUpload))
 	mux.HandleFunc("POST /v1/disk-reports/{job_id}/complete", h.authed(h.handleDiskReportUpload))

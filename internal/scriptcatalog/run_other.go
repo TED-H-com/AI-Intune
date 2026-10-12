@@ -20,3 +20,7 @@ func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, _ json.Ra
 func RunReport(ctx context.Context, e Entry, args []byte, timeout int, policy json.RawMessage, sink io.Writer) (Result, error) {
 	return Run(ctx, e, args, timeout)
 }
+
+func RunDiskAction(ctx context.Context, e Entry, args []byte, timeout int, action DiskActionRun) (Result, error) {
+	return Run(ctx, e, args, timeout)
+}

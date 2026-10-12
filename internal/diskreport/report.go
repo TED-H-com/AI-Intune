@@ -28,6 +28,7 @@ type Identity struct {
 	CtimeNS int64  `json:"ctime_ns"`
 }
 type Item struct {
+	OriginalParent   []uint64 `json:"original_parent,omitempty"`
 	ID               string   `json:"id"`
 	Category         string   `json:"category"`
 	PrivatePath      string   `json:"private_path,omitempty"`
@@ -196,6 +197,7 @@ func PublicItem(i Item) Item {
 	i.DisplayPath = Display(strings.TrimPrefix(display, "~/…/"))
 	i.PrivatePath = ""
 	i.Identity = Identity{}
+	i.OriginalParent = nil
 	i.ExclusionReason = ""
 	i.ContentDigest = ""
 	i.BootID = ""
