@@ -240,3 +240,26 @@ func TestBATReportAPI(t *testing.T) {
 		t.Fatalf("apply %d %s", applied.Code, applied.Body.String())
 	}
 }
+
+func TestScriptTargetErrorAPICompatibility(t *testing.T) {
+	f := observedOperatorFixture(t)
+	disabled := false
+	if err := f.store.RecordCheckin(f.machine.id, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: jobsTestNow, JobsEnabled: &disabled, ScriptV1: false}, jobsTestNow); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := scriptcatalog.Lookup("fleet-probe-v1")
+	raw, _ := json.Marshal(store.ScriptRunRequest{ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: json.RawMessage(`{}`), Targets: []string{f.machine.id, "missing-target"}, Reason: "probe facts"})
+	w := diagnosticOperatorRequest(t, f.mux, "/v1/operator/script-runs/preview", "", string(raw))
+	var response map[string]string
+	if w.Code != http.StatusBadRequest || json.Unmarshal(w.Body.Bytes(), &response) != nil || len(response) != 2 || response["code"] != "SCRIPT_INVALID" {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, want := range []string{"jobs disabled in latest check-in", "script_v1 capability not advertised in latest check-in", "missing-target: target not found"} {
+		if !strings.Contains(response["message"], want) {
+			t.Fatal(w.Body.String())
+		}
+	}
+	if len(strings.Split(response["message"], "\n")) != 2 {
+		t.Fatal(w.Body.String())
+	}
+}

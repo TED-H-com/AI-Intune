@@ -2,6 +2,7 @@ package web
 
 import (
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -172,5 +173,41 @@ func TestScheduleWebAdminFreshReauthentication(t *testing.T) {
 	w = diskWebRequest(t, s, "POST", schedulesBack+"/apply", apply, p, true)
 	if w.Code != 303 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestSchedulePreviewTargetReasonsKeepLines(t *testing.T) {
+	s, st := newServer(t)
+	first := onlineMachine(t, st, "First target")
+	second := onlineMachine(t, st, "Second target")
+	disabled := false
+	now := time.Now().UTC()
+	for _, id := range []string{first, second} {
+		if err := st.RecordCheckin(id, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: now, JobsEnabled: &disabled, ScriptV1: true}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	form := scheduleTestForm(first)
+	form["targets"] = []string{first, second}
+	w := diskWebRequest(t, s, "POST", schedulesBack+"/preview", form, scheduleWebPrincipal(), false)
+	body := w.Body.String()
+	if w.Code != 400 || !strings.Contains(body, `white-space: pre-line`) {
+		t.Fatal(w.Code, body)
+	}
+	for _, name := range []string{"First target", "Second target"} {
+		if !strings.Contains(body, name+": jobs disabled in latest check-in") {
+			t.Fatal(body)
+		}
+	}
+}
+
+func TestScriptPreviewErrorKeepsLinesAndEscapesNames(t *testing.T) {
+	s, _ := newServer(t)
+	w := httptest.NewRecorder()
+	r := operatorauth.WithPrincipal(httptest.NewRequest("GET", "/", nil), scheduleWebPrincipal())
+	s.diskOpsError(w, r, &store.OperatorRequestError{Code: "SCRIPT_INVALID", Detail: "<first>: retired\nsecond: no check-in yet"}, "/machines")
+	body := w.Body.String()
+	if w.Code != 400 || !strings.Contains(body, `white-space: pre-line`) || !strings.Contains(body, "&lt;first&gt;: retired\nsecond: no check-in yet") {
+		t.Fatal(w.Code, body)
 	}
 }
