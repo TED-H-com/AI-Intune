@@ -1924,7 +1924,7 @@ func label(s state.State) string {
 	case state.Online:
 		return "在線"
 	case state.Degraded:
-		return "降級"
+		return statusDisplayLabel(s)
 	case state.Unreachable:
 		return "失聯"
 	case state.NeverReported:
@@ -1953,6 +1953,9 @@ var funcs = template.FuncMap{
 	"diskTime":               fmtDiskTime,
 	"diskExpiry":             fmtDiskExpiry,
 	"label":                  label,
+	"statusDisplayLabel":     statusDisplayLabel,
+	"attentionReasons":       attentionReasons,
+	"detailAttentionReasons": detailAttentionReasons,
 	"deploymentBlockerLabel": operator.DeploymentBlockerLabel,
 	"ruleLabel":              func(kind compliance.RuleKind) string { return compliance.RuleLabel(kind) },
 	"ruleBound":              func(rule compliance.Rule) string { return compliance.RuleBound(rule) },
