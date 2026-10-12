@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -390,5 +391,112 @@ func TestScriptLegacyDigestReceiptReplay(t *testing.T) {
 				t.Fatalf("duplicate execution count=%d err=%v", count, err)
 			}
 		})
+	}
+}
+
+func TestScriptTargetFailureReasons(t *testing.T) {
+	for _, tc := range []struct{ name, query, want string }{
+		{"retired", "", "retired"},
+		{"no checkin", `DELETE FROM machine_checkins WHERE machine_id=?`, "no check-in yet"},
+		{"disabled", `UPDATE machine_checkins SET jobs_enabled=0 WHERE machine_id=?`, "jobs disabled in latest check-in"},
+		{"capability absent", `DELETE FROM machine_job_capabilities WHERE machine_id=?`, "script_v1 capability not advertised in latest check-in"},
+		{"capability false", `UPDATE machine_job_capabilities SET supported=0 WHERE machine_id=?`, "script_v1 capability not advertised in latest check-in"},
+		{"os", `UPDATE machine_registry SET os='unsupported' WHERE machine_id=?`, "OS 'unsupported' not allowed for this script (allowed: "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, req, a, _ := scriptFixture(t)
+			if tc.name == "retired" {
+				revision := int64(0)
+				preview, err := st.PreviewOperatorMachineLifecycle(OperatorMachineLifecyclePreviewRequest{MachineID: req.Targets[0], DesiredState: MachineLifecycleRetired, ExpectedRevision: &revision})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := st.ApplyOperatorMachineLifecycle(operatorLifecycleRequest(req.Targets[0], preview, "retire-target")); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := st.db.Exec(tc.query, req.Targets[0]); err != nil {
+				t.Fatal(err)
+			}
+			_, err := st.ScriptRun(req, false, "", a)
+			if err == nil || !strings.Contains(err.Error(), "probe-node: "+tc.want) {
+				t.Fatalf("error = %v", err)
+			}
+			var rejection *OperatorRequestError
+			if !errors.As(err, &rejection) || rejection.Code != "SCRIPT_INVALID" {
+				t.Fatalf("error code = %v", err)
+			}
+			if tc.name == "no checkin" && strings.Contains(err.Error(), "latest check-in") {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestScriptTargetFailuresAggregateAndBoundJobs(t *testing.T) {
+	st, req, a, now := scriptFixture(t)
+	first := req.Targets[0]
+	preview, err := st.ScriptRun(req, false, "", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	out, err := st.ScriptRun(req, true, "active-fixture", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		_, err = st.db.Exec(`INSERT INTO jobs(job_id,machine_id,desired_id,revision,state,created_at) SELECT ?,machine_id,desired_id,revision,?,created_at FROM jobs WHERE job_id=?`, fmt.Sprintf("extra-%d", i), deploy.Running, out.JobIDs[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = st.db.Exec(`UPDATE machine_registry SET display_name='' WHERE machine_id=?`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.db.Exec(`UPDATE machine_checkins SET jobs_enabled=0 WHERE machine_id=?`, first); err != nil {
+		t.Fatal(err)
+	}
+	second := mustEnroll(t, st, "second-node", now)
+	req.Targets = append(req.Targets, second, "missing-machine")
+	_, err = st.ScriptRun(req, false, "", a)
+	if err == nil {
+		t.Fatal("accepted failing targets")
+	}
+	lines := strings.Split(err.Error(), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("failures = %v", err)
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{first + ": jobs disabled in latest check-in; 4 active job(s) (", "running/script_v1", "second-node: no check-in yet", "missing-machine: target not found"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q: %v", want, err)
+		}
+	}
+	if strings.Count(joined, "/script_v1") != 3 {
+		t.Fatalf("job examples not capped: %v", err)
+	}
+}
+
+func TestScriptTargetsUseLatestCheckin(t *testing.T) {
+	st, req, a, now := scriptFixture(t)
+	latest := healthyCheckin(now.Add(time.Minute))
+	disabled := false
+	latest.JobsEnabled = &disabled
+	latest.ScriptV1 = false
+	if err := st.RecordCheckin(req.Targets[0], latest, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := st.ScriptRun(req, false, "", a)
+	want := "probe-node: jobs disabled in latest check-in; script_v1 capability not advertised in latest check-in"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v", err)
+	}
+	latest = healthyCheckin(now.Add(2 * time.Minute))
+	latest.ScriptV1 = true
+	if err := st.RecordCheckin(req.Targets[0], latest, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ScriptRun(req, false, "", a); err != nil {
+		t.Fatal(err)
 	}
 }
