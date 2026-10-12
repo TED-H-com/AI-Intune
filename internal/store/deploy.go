@@ -2175,12 +2175,19 @@ func (s *Store) advanceJob(jobID, machineID, leaseToken string, requireLease boo
 
 	if ev == deploy.Start {
 		var kind, raw, target string
-		if e := tx.QueryRow(`SELECT d.resource_kind,d.spec,j.machine_id FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=?`, jobID).Scan(&kind, &raw, &target); e == nil && kind == scriptcatalog.Kind {
+		if err := tx.QueryRow(`SELECT d.resource_kind,d.spec,j.machine_id FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=?`, jobID).Scan(&kind, &raw, &target); err != nil {
+			return from, fmt.Errorf("store: read job desired state: %w", err)
+		}
+		if kind == scriptcatalog.Kind {
 			spec, e := scriptcatalog.Decode([]byte(raw))
 			if e != nil {
 				return from, e
 			}
-			if entry, ok := scriptcatalog.Lookup(spec.ScriptID); ok && scriptcatalog.IsDisk(entry.ID) {
+			entry, ok := scriptcatalog.Lookup(spec.ScriptID)
+			if !ok {
+				return from, scriptBad("unknown script id")
+			}
+			if scriptcatalog.IsDisk(entry.ID) {
 				if e = s.diskSafeGateTxAt(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{target}}, entry, now); e != nil {
 					return from, e
 				}
