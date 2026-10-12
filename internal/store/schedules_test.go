@@ -579,3 +579,62 @@ func TestScheduleManualModePauseIsAtomicAndAudited(t *testing.T) {
 		t.Fatal("mode-pause receipt did not replay")
 	}
 }
+
+func TestScheduleTimezoneBinding(t *testing.T) {
+	s, r, a, _ := scriptFixture(t)
+	req := ScheduleRequest{Name: "zone-test", ScriptID: r.ScriptID, ScriptSHA256: r.ScriptSHA256, Args: r.Args, Targets: r.Targets, Cron: "0 12 * * *", TZ: "America/New_York", Enabled: true, Reason: r.Reason}
+	preview, err := s.ScheduleManage(req, "upsert", false, "", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	req.TZ = "UTC"
+	if _, err = s.ScheduleManage(req, "upsert", true, "wrong-zone", a); err == nil {
+		t.Fatal("timezone changed without fresh preview")
+	}
+	req.TZ = "America/New_York"
+	out, err := s.ScheduleManage(req, "upsert", true, "zone-create", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loc, _ := time.LoadLocation(req.TZ)
+	if out.Schedule.NextRunAt.In(loc).Hour() != 12 {
+		t.Fatal(out.Schedule.NextRunAt)
+	}
+	got, err := s.ScheduleGet(out.Schedule.ID)
+	if err != nil || got.TZ != req.TZ {
+		t.Fatal(got, err)
+	}
+	req.TZ = "Unknown/Bad"
+	if _, err = s.ScheduleManage(req, "upsert", false, "", a); err == nil {
+		t.Fatal("invalid timezone accepted")
+	}
+}
+
+func TestScheduleMigrationTimezoneDefault(t *testing.T) {
+	s, v, _, _ := createTestSchedule(t)
+	if v.TZ != "UTC" {
+		t.Fatal(v.TZ)
+	}
+	// Simulate the legacy schema, then reopen through the additive migration.
+	var seq int
+	var name, path string
+	if err := s.DB().QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`ALTER TABLE schedules DROP COLUMN tz`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	got, err := migrated.ScheduleGet(v.ID)
+	if err != nil || got.TZ != "UTC" {
+		t.Fatal(got, err)
+	}
+}

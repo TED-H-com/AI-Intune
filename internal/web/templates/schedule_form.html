@@ -1,0 +1,17 @@
+{{define "schedule_form.html"}}{{template "head" .}}{{$v := .Schedules}}{{$e := $v.Edit}}
+<div class="page-heading"><div><h1>{{if $e.ID}}編輯{{else}}新增{{end}}排程</h1><p>Read 腳本需要 Operate；Write 腳本需要 Admin，套用時重新驗證。Catalog 的安全與核准條件仍然適用。</p></div></div>
+{{if $v.Error}}<div class="panel"><p class="st amber" role="alert">{{$v.Error}}</p></div>{{end}}
+<div class="panel"><form class="disk-form" method="post" action="/tenant/schedules/preview">
+<input type="hidden" name="id" value="{{$e.ID}}"><input type="hidden" name="expected_revision" value="{{$e.ExpectedRevision}}"><input type="hidden" name="operation" value="upsert">
+<label><span class="field-label">名稱</span><input name="name" value="{{$e.Name}}" pattern="[a-z0-9][a-z0-9-]{0,62}" maxlength="63" required><span class="small dim">小寫英數字與連字號；名稱唯一。</span></label>
+<label><span class="field-label">Script catalog</span><select name="script_id" required>{{range $v.Scripts}}<option value="{{.ID}}" {{if .Selected}}selected{{end}} {{if and (eq .Mode "write") (not $v.Admin)}}disabled{{end}}>{{.ID}} · {{.Mode}}{{if eq .Mode "write"}} ⚠ Write · Admin required{{end}}</option>{{end}}</select></label>
+<label><span class="field-label">Args · JSON object</span><textarea style="width:100%" name="args" rows="8" class="mono" required>{{printf "%s" $e.Args}}</textarea></label><p class="small dim">fleet-probe-v1 使用 {}。預覽會依 catalog schema 驗證 JSON。</p>
+<details><summary>Catalog schemas</summary>{{range $v.Scripts}}<h3>{{.ID}} · {{.Mode}}</h3><pre class="copy">{{.Schema}}</pre>{{end}}</details>
+<fieldset><legend>目標機器 · 非退役</legend>{{range $v.Machines}}<label><input type="checkbox" style="width:auto" name="targets" value="{{.ID}}" {{if .Selected}}checked{{end}}> {{.Name}} <span class="mono small dim">{{.ID}}</span></label>{{else}}<p>沒有可用機器。</p>{{end}}</fieldset>
+<label><span class="field-label">Cron · 5 fields</span><input name="cron" value="{{$e.Cron}}" required><span class="small dim">分鐘 小時 日期 月份 星期；間隔至少 5 分鐘。</span></label>
+<label><span class="field-label">時區 · IANA</span><select name="tz">{{range $v.Zones}}<option {{if eq . $e.TZ}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+<p class="small dim">DST：不存在的時間跳過；重複的時間只執行第一次。</p>
+<label><input type="checkbox" style="width:auto" name="enabled" value="true" {{if $e.Enabled}}checked{{end}}> Enabled · 啟用排程</label>
+<label><span class="field-label">Reason · 變更原因</span><textarea style="width:100%" name="reason" maxlength="500" required>{{$e.Reason}}</textarea></label>
+<div class="command-bar"><button type="submit">Preview · 預覽</button><a class="button secondary" href="/tenant/schedules">取消</a></div></form></div>
+{{template "foot" .}}{{end}}
