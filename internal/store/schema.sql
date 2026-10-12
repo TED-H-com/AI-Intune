@@ -1709,7 +1709,7 @@ CREATE INDEX IF NOT EXISTS disk_alert_delivery_time ON disk_alert_delivery_reser
 CREATE TABLE IF NOT EXISTS disk_alerts (
  id TEXT PRIMARY KEY, machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
  condition_key TEXT NOT NULL, severity TEXT NOT NULL, opened_at TEXT NOT NULL,
- cleared_at TEXT, below_since TEXT, last_reading TEXT NOT NULL,
+ cleared_at TEXT, cleared_reason TEXT NOT NULL DEFAULT '', last_seen_at TEXT NOT NULL DEFAULT '', below_since TEXT, last_reading TEXT NOT NULL,
  acknowledged_at TEXT, acknowledgement_reason TEXT NOT NULL DEFAULT '',
  UNIQUE(machine_id,condition_key,opened_at)
 );

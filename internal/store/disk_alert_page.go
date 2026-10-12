@@ -25,7 +25,7 @@ func (s *Store) DiskAlertsPageAfter(after string) (DiskAlertsPage, error) {
 		}
 		priority, id = int(after[0]-'0'), after[2:]
 	}
-	rows, err := s.rdb.Query(`SELECT id,machine_id,condition_key,severity,opened_at,cleared_at,acknowledged_at,acknowledgement_reason FROM disk_alerts WHERE (`+diskAlertPagePriority+`)>? OR ((`+diskAlertPagePriority+`)=? AND id>?) ORDER BY `+diskAlertPagePriority+`,id LIMIT ?`, priority, priority, id, DiskAlertsPageSize+1)
+	rows, err := s.rdb.Query(`SELECT id,machine_id,condition_key,severity,opened_at,cleared_at,acknowledged_at,acknowledgement_reason,cleared_reason FROM disk_alerts WHERE (`+diskAlertPagePriority+`)>? OR ((`+diskAlertPagePriority+`)=? AND id>?) ORDER BY `+diskAlertPagePriority+`,id LIMIT ?`, priority, priority, id, DiskAlertsPageSize+1)
 	if err != nil {
 		return out, err
 	}
@@ -34,7 +34,7 @@ func (s *Store) DiskAlertsPageAfter(after string) (DiskAlertsPage, error) {
 		var a DiskAlert
 		var opened string
 		var cleared, ack sql.NullString
-		if err = rows.Scan(&a.ID, &a.MachineID, &a.ConditionKey, &a.Severity, &opened, &cleared, &ack, &a.AcknowledgementReason); err != nil {
+		if err = rows.Scan(&a.ID, &a.MachineID, &a.ConditionKey, &a.Severity, &opened, &cleared, &ack, &a.AcknowledgementReason, &a.ClearedReason); err != nil {
 			return out, err
 		}
 		a.OpenedAt = parseTime(opened)

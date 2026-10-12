@@ -14,6 +14,7 @@ import (
 )
 
 type DiskAlert struct {
+	ClearedReason         string     `json:"cleared_reason,omitempty"`
 	ID                    string     `json:"id"`
 	MachineID             string     `json:"machine_id"`
 	ConditionKey          string     `json:"condition_key"`
@@ -25,7 +26,7 @@ type DiskAlert struct {
 }
 
 func (s *Store) DiskAlertsList(machine string) ([]DiskAlert, error) {
-	rows, err := s.rdb.Query(`SELECT id,machine_id,condition_key,severity,opened_at,cleared_at,acknowledged_at,acknowledgement_reason FROM disk_alerts WHERE (?='' OR machine_id=?) ORDER BY (cleared_at IS NULL) DESC,opened_at DESC LIMIT 500`, machine, machine)
+	rows, err := s.rdb.Query(`SELECT id,machine_id,condition_key,severity,opened_at,cleared_at,acknowledged_at,acknowledgement_reason,cleared_reason FROM disk_alerts WHERE (?='' OR machine_id=?) ORDER BY (cleared_at IS NULL) DESC,opened_at DESC LIMIT 500`, machine, machine)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +36,7 @@ func (s *Store) DiskAlertsList(machine string) ([]DiskAlert, error) {
 		var a DiskAlert
 		var opened string
 		var cleared, ack sql.NullString
-		if err = rows.Scan(&a.ID, &a.MachineID, &a.ConditionKey, &a.Severity, &opened, &cleared, &ack, &a.AcknowledgementReason); err != nil {
+		if err = rows.Scan(&a.ID, &a.MachineID, &a.ConditionKey, &a.Severity, &opened, &cleared, &ack, &a.AcknowledgementReason, &a.ClearedReason); err != nil {
 			return nil, err
 		}
 		a.OpenedAt = parseTime(opened)
@@ -71,8 +72,17 @@ func (s *Store) DiskAlertReading(machine, key, severity string, value *int, thre
 		if value == nil || *value < threshold {
 			return nil
 		}
+		if strings.HasPrefix(key, "mount:") {
+			var open int
+			if err = tx.QueryRow(`SELECT COUNT(*) FROM disk_alerts WHERE machine_id=? AND cleared_at IS NULL AND condition_key LIKE 'mount:%'`, machine).Scan(&open); err != nil {
+				return err
+			}
+			if open >= 8 {
+				return nil
+			}
+		}
 		id = "disk-" + scriptcatalog.Digest([]byte(machine + "\x00" + key + "\x00" + fmtTime(measured)))[:32]
-		_, err = tx.Exec(`INSERT INTO disk_alerts(id,machine_id,condition_key,severity,opened_at,last_reading) VALUES (?,?,?,?,?,?)`, id, machine, key, severity, fmtTime(measured), fmtTime(measured))
+		_, err = tx.Exec(`INSERT INTO disk_alerts(id,machine_id,condition_key,severity,opened_at,last_reading,last_seen_at) VALUES (?,?,?,?,?,?,?)`, id, machine, key, severity, fmtTime(measured), fmtTime(measured), fmtTime(measured))
 		if err != nil {
 			return err
 		}
@@ -84,7 +94,7 @@ func (s *Store) DiskAlertReading(machine, key, severity string, value *int, thre
 	var next any
 	if value != nil && *value < threshold-2 {
 		if below.Valid && measured.Sub(parseTime(below.String)) >= 5*time.Minute {
-			_, err = tx.Exec(`UPDATE disk_alerts SET cleared_at=?,last_reading=? WHERE id=?`, fmtTime(measured), fmtTime(measured), id)
+			_, err = tx.Exec(`UPDATE disk_alerts SET cleared_at=?,last_reading=?,last_seen_at=? WHERE id=?`, fmtTime(measured), fmtTime(measured), fmtTime(measured), id)
 			if err != nil {
 				return err
 			}
@@ -96,7 +106,7 @@ func (s *Store) DiskAlertReading(machine, key, severity string, value *int, thre
 			next = fmtTime(measured)
 		}
 	}
-	_, err = tx.Exec(`UPDATE disk_alerts SET below_since=?,last_reading=? WHERE id=?`, next, fmtTime(measured), id)
+	_, err = tx.Exec(`UPDATE disk_alerts SET below_since=?,last_reading=?,last_seen_at=CASE WHEN ? THEN ? ELSE last_seen_at END WHERE id=?`, next, fmtTime(measured), value != nil, fmtTime(measured), id)
 	if err != nil {
 		return err
 	}
@@ -241,7 +251,7 @@ func (s *Store) ReconcileDiskAlerts(now time.Time) error {
 			return e
 		}
 	}
-	return nil
+	return s.ExpireMissingDiskMounts(now)
 }
 
 type DiskAlertAckRequest struct {
@@ -533,7 +543,7 @@ func (s *Store) DiskAlertNotificationBatchSeverity(after, severity string, times
 	// Only unresolved due notifications or unsent recoveries reach the notifier.
 	// The ledger's (kind,delivered,sent_at) index supplies each correlated lookup;
 	// historical successes are not materialized or visited by the Go sweep.
-	rows, err := s.rdb.Query(`SELECT a.id,a.machine_id,a.condition_key,a.severity,a.opened_at,a.cleared_at,
+	rows, err := s.rdb.Query(`SELECT a.id,a.machine_id,a.condition_key,a.severity,a.opened_at,a.cleared_at,a.cleared_reason,
  CASE WHEN a.cleared_at IS NULL AND a.severity='critical' THEN 0 WHEN a.cleared_at IS NULL THEN 1 WHEN a.severity='critical' THEN 2 ELSE 3 END AS priority
  FROM disk_alerts a WHERE (?='' OR a.severity=?)
  AND (CASE WHEN a.cleared_at IS NULL AND a.severity='critical' THEN 0 WHEN a.cleared_at IS NULL THEN 1 WHEN a.severity='critical' THEN 2 ELSE 3 END,a.id)>(?,?)
@@ -556,7 +566,7 @@ func (s *Store) DiskAlertNotificationBatchSeverity(after, severity string, times
 		var opened string
 		var cleared sql.NullString
 		var p int
-		if err = rows.Scan(&a.ID, &a.MachineID, &a.ConditionKey, &a.Severity, &opened, &cleared, &p); err != nil {
+		if err = rows.Scan(&a.ID, &a.MachineID, &a.ConditionKey, &a.Severity, &opened, &cleared, &a.ClearedReason, &p); err != nil {
 			return nil, err
 		}
 		a.OpenedAt = parseTime(opened)

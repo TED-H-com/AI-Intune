@@ -708,3 +708,13 @@ remains an explicit read. Canary history retains 90 calendar days (the maximum
 supported policy window); the existing disk scheduler reconciliation prunes up to
 1,000 expired rows per tick using the day index. Handoff reads only its required
 policy window through today, so retention preserves every supported canary gate.
+
+Mount alerts accept only `/` and canonical data mounts declared by the current
+machine disk policy. Undeclared labels are ignored; `disk_ops_status.ignored_mounts`
+is a per-status count saturated at 32, without retaining fabricated labels.
+Each machine has at most eight open mount condition rows. Missing/stale readings
+remain unknown and do not prove recovery. After 24 hours without fresh evidence,
+the episode closes with `cleared_reason=mount_missing` (usage still unknown),
+then follows the existing 90-day cleared-alert retention. Fresh evidence resets
+the missing interval. Legacy fabricated conditions expire in indexed batches of
+at most 1,000 per scheduler reconciliation.

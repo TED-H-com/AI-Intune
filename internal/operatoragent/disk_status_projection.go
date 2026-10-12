@@ -52,5 +52,5 @@ func redactedDiskStatus(s store.DiskOpsStatus) map[string]any {
 			v[scope] = map[string]any{"required_days": c.RequiredDays, "agreed_days": c.AgreedDays, "satisfied": c.Satisfied}
 		}
 		return v
-	}(), "actions": s.Actions, "supervision": supervision, "machine_id": s.MachineID, "mounts": mounts, "thresholds": s.Thresholds, "last_safe_tier": project(s.LastSafeTier), "preview": project(s.Preview), "skip_count": len(s.Skips), "ownership": ownership, "writes_enabled": s.WritesEnabled}
+	}(), "ignored_mounts": s.IgnoredMounts, "actions": s.Actions, "supervision": supervision, "machine_id": s.MachineID, "mounts": mounts, "thresholds": s.Thresholds, "last_safe_tier": project(s.LastSafeTier), "preview": project(s.Preview), "skip_count": len(s.Skips), "ownership": ownership, "writes_enabled": s.WritesEnabled}
 }

@@ -611,6 +611,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS disk_mount_missing_expiry ON disk_alerts(COALESCE(NULLIF(last_seen_at,''),opened_at),id) WHERE cleared_at IS NULL AND condition_key LIKE 'mount:%'`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: mount expiry index: %w", err)
+	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS hub_accounts_email ON hub_accounts(email) WHERE email IS NOT NULL`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate account email index: %w", err)
@@ -843,6 +847,7 @@ func addMissingColumns(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 	want := map[string]map[string]string{
+		"disk_alerts":      {"cleared_reason": "TEXT NOT NULL DEFAULT ''", "last_seen_at": "TEXT NOT NULL DEFAULT ''"},
 		"disk_canary_days": {"received_at": "TEXT NOT NULL DEFAULT ''"},
 		"schedules":        {"execution_mode": "TEXT NOT NULL DEFAULT '' CHECK(execution_mode IN ('','read','write'))"},
 		"hub_accounts":     {"auth_generation": "INTEGER NOT NULL DEFAULT 0", "email": "TEXT", "role": "TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin'))"},

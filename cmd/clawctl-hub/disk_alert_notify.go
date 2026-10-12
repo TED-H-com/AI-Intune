@@ -49,6 +49,9 @@ func (h *hub) sendDiskAlerts(now time.Time) {
 				state := "open"
 				if a.ClearedAt != nil {
 					state = "cleared"
+					if a.ClearedReason == "mount_missing" {
+						state = "mount_missing (usage unknown)"
+					}
 				}
 				lane := a.Severity
 				if a.ClearedAt != nil {

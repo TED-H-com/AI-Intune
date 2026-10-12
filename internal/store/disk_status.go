@@ -30,6 +30,7 @@ type DiskSafeEnvelope struct {
 	} `json:"operation"`
 }
 type DiskOpsStatus struct {
+	IgnoredMounts    int                   `json:"ignored_mounts"`
 	MachineID        string                `json:"machine_id"`
 	Mounts           []DiskMountUsage      `json:"mounts"`
 	Thresholds       DiskThresholds        `json:"thresholds"`
@@ -108,7 +109,32 @@ func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
 				policy = active
 			}
 		}
+		allowed := map[string]bool{"/": true}
+		// Only the current human-owned policy can authorize mount identities.
+		policyID := args.ID
+		// A current machine schedule takes precedence over a report from an older policy ID.
+		var scheduledID string
+		e = s.rdb.QueryRow(`SELECT json_extract(args,'$.policy_id') FROM schedules WHERE script_id IN ('disk-safe-preview-v2','disk-safe-clean-v2') AND json_extract(args,'$.scope')=? AND EXISTS(SELECT 1 FROM json_each(targets) WHERE value=?) ORDER BY CASE WHEN script_id='disk-safe-clean-v2' THEN 0 ELSE 1 END,id LIMIT 1`, envelope.Summary.Scope, id).Scan(&scheduledID)
+		if e != nil && e != sql.ErrNoRows {
+			return out, e
+		}
+		if e == nil {
+			policyID = scheduledID
+		}
+		if current, e := s.DiskPolicy(policyID); e == nil && current.SupersededAt == nil {
+			if active, _, _, e := CanonicalDiskPolicy(current.Body); e == nil {
+				for _, mount := range active.DataMounts {
+					allowed[mount] = true
+				}
+			}
+		}
 		for _, mount := range envelope.Operation.Mounts {
+			if !allowed[mount.Mount] {
+				if out.IgnoredMounts < 32 {
+					out.IgnoredMounts++
+				}
+				continue
+			}
 			if mount.TotalBytes <= 0 || mount.AvailableBytes < 0 || mount.AvailableBytes > mount.TotalBytes || mount.Percent < 0 || mount.Percent > 100 || len(mount.Mount) > 128 || mount.Mount == "" {
 				continue
 			}
