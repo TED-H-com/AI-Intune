@@ -1156,6 +1156,27 @@ func newCred(provider, path string, expiresAt *time.Time, note string, now time.
 	}
 }
 
+// grokRefreshMaxAge bounds refresh evidence: grok refreshes on every use, so
+// an access token expired more than 30 days ago indicates a stopped refresh chain.
+const grokRefreshMaxAge = 30 * 24 * time.Hour
+
+// refreshableCred omits expired grok access-token expiry when recent refresh
+// capability is present. Token presence is file evidence, not a live check.
+func refreshableCred(c model.Credential, hasRefreshToken bool, now time.Time) model.Credential {
+	if hasRefreshToken && c.Status == model.CredExpired && c.ExpiresAt != nil && now.Sub(*c.ExpiresAt) <= grokRefreshMaxAge {
+		c.Status = model.CredConfigured
+		c.ExpiresAt = nil
+		c.Note = "refreshable; access token refreshed on use"
+	}
+	return c
+}
+
+// hasRefreshToken inspects only presence; token contents never enter facts.
+func hasRefreshToken(raw json.RawMessage) bool {
+	var token string
+	return json.Unmarshal(raw, &token) == nil && strings.TrimSpace(token) != ""
+}
+
 // credUnreadable：檔案不在 = absent（沒裝這家），讀不動 = unknown + 原因。
 // ⚠ 兩者必須分開。把「讀不到」講成「沒裝」會讓一台權限壞掉的機器看起來很乾淨。
 func credUnreadable(provider string, err error) model.Credential {
@@ -1349,7 +1370,7 @@ func grokCred(home string, now time.Time) model.Credential {
 	if err != nil {
 		return credUnreadable("grok", err)
 	}
-	exp, err := grokExpiry(b)
+	exp, refresh, err := grokAuthFacts(b)
 	if err != nil {
 		return credUnparseable("grok", path, err)
 	}
@@ -1357,7 +1378,7 @@ func grokCred(home string, now time.Time) model.Credential {
 	if exp == nil {
 		note = "no expires_at under any " + grokKeyPrefix + "::* key"
 	}
-	return newCred("grok", path, exp, note, now)
+	return refreshableCred(newCred("grok", path, exp, note, now), refresh, now)
 }
 
 // grokExpiry 掃出最晚的一個 expires_at。
@@ -1369,9 +1390,14 @@ func grokCred(home string, now time.Time) model.Credential {
 // 但別家（gemini）用 epoch 數字，所以兩種都吃。Python 原型只吃數字，
 // 因此 samplehub1 的 grok 一直被誤報成 unknown。
 func grokExpiry(raw []byte) (*time.Time, error) {
+	exp, _, err := grokAuthFacts(raw)
+	return exp, err
+}
+
+func grokAuthFacts(raw []byte) (*time.Time, bool, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// key 排序後再掃，讓多個 session 存在時的結果是可重現的。
 	keys := make([]string, 0, len(top))
@@ -1381,6 +1407,7 @@ func grokExpiry(raw []byte) (*time.Time, error) {
 	sort.Strings(keys)
 
 	var best *time.Time
+	var refresh bool
 	for _, k := range keys {
 		if !strings.HasPrefix(k, grokKeyPrefix) {
 			continue
@@ -1395,12 +1422,13 @@ func grokExpiry(raw []byte) (*time.Time, error) {
 			items = []map[string]json.RawMessage{one}
 		}
 		for _, item := range items {
+			refresh = refresh || hasRefreshToken(item["refresh_token"])
 			if t := flexTime(item["expires_at"]); t != nil && (best == nil || t.After(*best)) {
 				best = t
 			}
 		}
 	}
-	return best, nil
+	return best, refresh, nil
 }
 
 func geminiCred(home string, now time.Time) model.Credential {
