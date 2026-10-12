@@ -24,6 +24,7 @@ type DiskCanary struct {
 }
 
 func (s *Store) DiskCanaryGet(machine, scope string, now time.Time) (DiskCanary, error) {
+	now = now.UTC()
 	out := DiskCanary{RequiredDays: 7, Days: []DiskCanaryDay{}}
 	status, err := s.diskCanaryPolicy(machine, scope)
 	if err != nil {
@@ -32,7 +33,12 @@ func (s *Store) DiskCanaryGet(machine, scope string, now time.Time) (DiskCanary,
 	if status.CanaryDays > 0 {
 		out.RequiredDays = status.CanaryDays
 	}
-	rows, err := s.rdb.Query(`SELECT day,local_summary_at,hub_summary_at,local_candidate_bytes,hub_candidate_bytes,agreement,policy_digest FROM disk_canary_days WHERE machine_id=? AND scope=? AND day>=? ORDER BY day`, machine, scope, now.AddDate(0, 0, 1-out.RequiredDays).Format("2006-01-02"))
+	policyRaw, _ := json.Marshal(status)
+	_, _, currentDigest, err := CanonicalDiskPolicy(policyRaw)
+	if err != nil {
+		return out, err
+	}
+	rows, err := s.rdb.Query(`SELECT day,local_summary_at,hub_summary_at,local_candidate_bytes,hub_candidate_bytes,agreement,policy_digest FROM disk_canary_days WHERE machine_id=? AND scope=? AND day>=? AND day<=? ORDER BY day`, machine, scope, now.AddDate(0, 0, 1-out.RequiredDays).Format("2006-01-02"), now.UTC().Format("2006-01-02"))
 	if err != nil {
 		return out, err
 	}
@@ -43,8 +49,6 @@ func (s *Store) DiskCanaryGet(machine, scope string, now time.Time) (DiskCanary,
 			return out, err
 		}
 		out.Days = append(out.Days, d)
-		policyRaw, _ := json.Marshal(status)
-		_, _, currentDigest, _ := CanonicalDiskPolicy(policyRaw)
 		if d.Agreement && d.PolicyDigest == currentDigest {
 			out.AgreedDays++
 		}
@@ -113,4 +117,18 @@ func (s *Store) RecordDiskCanary(machine string, status DiskOpsStatus, now time.
 		}
 	}
 	return nil
+}
+
+// Retain the maximum supported policy window (90 days), including today.
+// Each scheduler tick deletes at most 1,000 expired rows through the day index.
+func (s *Store) PruneDiskCanaryDays(now time.Time) error {
+	tx, err := s.beginWrite(context.Background(), "disk_canary_retention")
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM disk_canary_days WHERE rowid IN (SELECT rowid FROM disk_canary_days WHERE day<? ORDER BY day LIMIT 1000)`, now.UTC().AddDate(0, 0, 1-90).Format("2006-01-02")); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

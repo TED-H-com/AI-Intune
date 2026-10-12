@@ -701,3 +701,10 @@ unsent recoveries in SQL, with open criticals first and stable seek cursors.
 Cleared alert episodes expire after ninety days using an indexed cutoff; unresolved
 alerts remain available. Delivery-health clearing continues independently of the
 notification queue after a successful send or recovery.
+
+The authenticated Disk alert banner reads only indexed open critical/warning counts,
+with one in-process cache entry refreshed every 30 seconds. Detailed supervision
+remains an explicit read. Canary history retains 90 calendar days (the maximum
+supported policy window); the existing disk scheduler reconciliation prunes up to
+1,000 expired rows per tick using the day index. Handoff reads only its required
+policy window through today, so retention preserves every supported canary gate.

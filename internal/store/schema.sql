@@ -1727,3 +1727,7 @@ CREATE TABLE IF NOT EXISTS disk_canary_days (
  local_summary_at TEXT NOT NULL, hub_summary_at TEXT NOT NULL, agreement INTEGER NOT NULL, policy_digest TEXT NOT NULL, local_candidate_bytes INTEGER NOT NULL, hub_candidate_bytes INTEGER NOT NULL,
  PRIMARY KEY(machine_id,scope,day)
 );
+
+-- Only open alert severity counts are needed by the cached HTML banner.
+CREATE INDEX IF NOT EXISTS disk_alert_banner_open ON disk_alerts(severity) WHERE cleared_at IS NULL;
+CREATE INDEX IF NOT EXISTS disk_canary_retention ON disk_canary_days(day);

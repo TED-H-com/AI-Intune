@@ -114,3 +114,7 @@ func (s *Service) DiskAlertsPageAfter(after string) (store.DiskAlertsPage, error
 func (s *Service) DiskAlertMountLabels(machines []string) (map[string][]store.DiskMountUsage, error) {
 	return s.store.DiskAlertMountLabels(machines)
 }
+
+func (s *Service) DiskAlertBannerCounts() (store.DiskAlertBannerCounts, error) {
+	return s.store.DiskAlertBannerCounts()
+}

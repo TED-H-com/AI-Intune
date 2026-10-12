@@ -49,6 +49,7 @@ type TerminalLinks interface {
 }
 
 type Server struct {
+	diskAlertBanner diskAlertBannerCache
 	// drill 讀還原演練的章；nil = 不看。用 SetDrillStampReader 塞。
 	drill DrillStampReader
 	// terminalLinks 是機器有沒有連上 agent。nil = 沒有任何一台連著。
@@ -378,7 +379,7 @@ type page struct {
 	DiskAction            *diskActionView
 	DiskQuarantine        *diskQuarantineView
 	DiskReport            *diskReportView
-	DiskBanner            *store.DiskSupervision
+	DiskBanner            *store.DiskAlertBannerCounts
 	DiskAlerts            *diskAlertsPage
 	DiskMachine           *diskMachinePage
 	DiskPolicies          *diskPoliciesPage
@@ -1563,7 +1564,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 	data.Access = accessFromRequest(r)
 	if s.operator != nil {
-		if summary, err := s.operator.DiskSupervision(""); err == nil && (summary.OpenCritical > 0 || summary.OpenWarn > 0) {
+		if summary, err := s.diskAlertBanner.get(time.Now(), s.operator.DiskAlertBannerCounts); err == nil && (summary.OpenCritical > 0 || summary.OpenWarn > 0) {
 			data.DiskBanner = &summary
 		}
 	}
