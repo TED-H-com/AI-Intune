@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/teddashh/AI-Intune/internal/maintenance"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
+	"math/big"
 	"time"
 )
 
@@ -28,19 +29,23 @@ type DiskSafeEnvelope struct {
 	} `json:"operation"`
 }
 type DiskOpsStatus struct {
-	Actions       DiskActionMetrics `json:"actions"`
-	MachineID     string            `json:"machine_id"`
-	Mounts        []DiskMountUsage  `json:"mounts"`
-	Thresholds    DiskThresholds    `json:"thresholds"`
-	LastSafeTier  *DiskSafeEnvelope `json:"last_safe_tier"`
-	Preview       *DiskSafeEnvelope `json:"preview"`
-	Skips         map[string]string `json:"skips"`
-	Ownership     map[string]string `json:"ownership"`
-	WritesEnabled bool              `json:"writes_enabled"`
+	MachineID        string                `json:"machine_id"`
+	Mounts           []DiskMountUsage      `json:"mounts"`
+	Thresholds       DiskThresholds        `json:"thresholds"`
+	LastSafeTier     *DiskSafeEnvelope     `json:"last_safe_tier"`
+	Preview          *DiskSafeEnvelope     `json:"preview"`
+	Skips            map[string]string     `json:"skips"`
+	Ownership        map[string]string     `json:"ownership"`
+	Canary           map[string]DiskCanary `json:"canary"`
+	Supervision      DiskSupervision       `json:"supervision"`
+	Alerts           []DiskAlert           `json:"alerts"`
+	OwnershipRecords []DiskOwnership       `json:"ownership_records"`
+	WritesEnabled    bool                  `json:"writes_enabled"`
+	Actions          DiskActionMetrics     `json:"actions"`
 }
 
 func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
-	out := DiskOpsStatus{MachineID: id, Mounts: []DiskMountUsage{}, Thresholds: DefaultDiskPolicy().Thresholds, Skips: map[string]string{}, Ownership: map[string]string{"user": "hub", "root": "local-timer"}, WritesEnabled: s.DiskOpsWritesEnabled()}
+	out := DiskOpsStatus{MachineID: id, Mounts: []DiskMountUsage{}, Thresholds: DefaultDiskPolicy().Thresholds, Skips: map[string]string{}, Ownership: map[string]string{"user": "local-owned", "root": "local-owned"}, WritesEnabled: s.DiskOpsWritesEnabled()}
 	var exists int
 	if err := s.rdb.QueryRow(`SELECT COUNT(*) FROM machine_registry WHERE machine_id=?`, id).Scan(&exists); err != nil {
 		return out, err
@@ -55,7 +60,7 @@ func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
 		return out, err
 	}
 	if total > 0 && avail >= 0 && avail <= total {
-		out.Mounts = append(out.Mounts, DiskMountUsage{Mount: "/", TotalBytes: total, AvailableBytes: avail, Percent: int(100 * (total - avail) / total), MeasuredAt: measured})
+		out.Mounts = append(out.Mounts, DiskMountUsage{Mount: "/", TotalBytes: total, AvailableBytes: avail, Percent: diskUsagePercent(total, avail), MeasuredAt: measured})
 	}
 	for _, script := range []string{"disk-safe-clean-v2", "disk-safe-preview-v2"} {
 		var raw, spec string
@@ -134,6 +139,42 @@ func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
 			}
 		}
 	}
+	for _, scope := range []string{"user", "root"} {
+		v, e := s.DiskOwnershipGet(id, scope)
+		if e != nil {
+			return out, e
+		}
+		out.Ownership[scope] = v.State
+		out.OwnershipRecords = append(out.OwnershipRecords, v)
+	}
+	if out.LastSafeTier == nil && out.Preview == nil {
+		p, e := s.diskCanaryPolicy(id, "user")
+		if e != nil {
+			return out, e
+		}
+		out.Thresholds = p.Thresholds
+	}
+	out.Canary = map[string]DiskCanary{}
+	for _, scope := range []string{"user", "root"} {
+		v, e := s.DiskCanaryGet(id, scope, s.now().UTC())
+		if e != nil {
+			return out, e
+		}
+		out.Canary[scope] = v
+	}
+	out.Supervision, err = s.DiskSupervision(id)
+	if err != nil {
+		return out, err
+	}
+	out.Alerts, err = s.DiskAlertsList(id)
+	if err != nil {
+		return out, err
+	}
 	out.Actions, err = s.DiskActionMetrics(id, s.now().UTC())
 	return out, err
+}
+
+func diskUsagePercent(total, available int64) int {
+	used := new(big.Int).Mul(big.NewInt(total-available), big.NewInt(100))
+	return int(used.Quo(used, big.NewInt(total)).Int64())
 }

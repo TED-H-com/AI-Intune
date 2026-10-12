@@ -904,7 +904,7 @@ func (s *Store) ClaimJob(jobID, machineID string, now time.Time, lease time.Dura
 			return "", e
 		}
 		if entry, ok := scriptcatalog.Lookup(spec.ScriptID); ok && scriptcatalog.IsDisk(entry.ID) {
-			if e = s.diskSafeGateTx(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{machineID}}, entry); e != nil {
+			if e = s.diskSafeGateTxAt(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{machineID}}, entry, now); e != nil {
 				return "", e
 			}
 		}
@@ -2173,6 +2173,20 @@ func (s *Store) advanceJob(jobID, machineID, leaseToken string, requireLease boo
 		return "", fmt.Errorf("store: read job state: %w", err)
 	}
 
+	if ev == deploy.Start {
+		var kind, raw, target string
+		if e := tx.QueryRow(`SELECT d.resource_kind,d.spec,j.machine_id FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=?`, jobID).Scan(&kind, &raw, &target); e == nil && kind == scriptcatalog.Kind {
+			spec, e := scriptcatalog.Decode([]byte(raw))
+			if e != nil {
+				return from, e
+			}
+			if entry, ok := scriptcatalog.Lookup(spec.ScriptID); ok && scriptcatalog.IsDisk(entry.ID) {
+				if e = s.diskSafeGateTxAt(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{target}}, entry, now); e != nil {
+					return from, e
+				}
+			}
+		}
+	}
 	to, err := deploy.Advance(deploy.Job{State: from, Irreversible: irreversible}, ev)
 	if err != nil {
 		return from, err
@@ -2202,6 +2216,12 @@ func (s *Store) advanceJob(jobID, machineID, leaseToken string, requireLease boo
 		return from, ErrJobNotFound
 	}
 	if deploy.IsTerminal(to) {
+		var machine, scope string
+		if e := tx.QueryRow(`SELECT j.machine_id,json_extract(d.spec,'$.args.scope') FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND d.resource_kind='script_v1' AND d.resource_id='disk-safe-clean-v2'`, jobID).Scan(&machine, &scope); e == nil {
+			if e = s.finishDiskRollbackTx(tx, machine, scope, now); e != nil {
+				return "", e
+			}
+		}
 		if err := s.recordScriptCompletionTx(tx, jobID); err != nil {
 			return "", err
 		}

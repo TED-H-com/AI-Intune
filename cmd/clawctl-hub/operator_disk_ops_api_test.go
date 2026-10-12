@@ -65,7 +65,7 @@ func mustDiskOpsJSON(t *testing.T, v any) []byte {
 	return raw
 }
 func TestDiskOpsRoutesDenyTokenWritesAndPolicyPaths(t *testing.T) {
-	for _, pattern := range []string{"GET /v1/operator/disk-ops/policies", "GET /v1/operator/disk-ops/policies/{id}", "POST /v1/operator/disk-ops/policies/preview", "POST /v1/operator/disk-ops/policies"} {
+	for _, pattern := range []string{"GET /v1/operator/disk-ops/policies", "GET /v1/operator/disk-ops/policies/{id}", "POST /v1/operator/disk-ops/policies/preview", "POST /v1/operator/disk-ops/policies", "POST /v1/operator/disk-ops/ownership/preview", "POST /v1/operator/disk-ops/ownership", "POST /v1/operator/disk-ops/alerts/ack/preview", "POST /v1/operator/disk-ops/alerts/ack"} {
 		p := operatorRoutePolicies[pattern]
 		if p.ServiceTokenEligible != serviceIneligible {
 			t.Fatalf("token eligible: %s", pattern)
@@ -141,7 +141,7 @@ func TestDiskWebRoutesEnforceCSRFAndLockedCSP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/tenant/disk-policies/preview", "/tenant/disk-policies/apply", "/tenant/approvals/preview", "/tenant/approvals/apply"} {
+	for _, path := range []string{"/tenant/disk-policies/preview", "/tenant/disk-policies/apply", "/tenant/approvals/preview", "/tenant/approvals/apply", "/tenant/disk-alerts/ack/preview", "/tenant/disk-alerts/ack", "/machines/example-id/disk/ownership"} {
 		r := newBoundaryRequest("POST", path, strings.NewReader("id=example-id"))
 		r.RemoteAddr = "100.100.10.20:4321"
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -251,7 +251,7 @@ func TestDiskJSONFreshHumanGatePrecedesLedgerLookup(t *testing.T) {
 	if _, err := f.store.DB().Exec(`DROP TABLE operator_idempotency`); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/v1/operator/disk-ops/policies", "/v1/operator/disk-ops/approvals/example-approval/decision", "/v1/operator/disk-ops/actions/preview", "/v1/operator/disk-ops/actions/decide", "/v1/operator/disk-ops/restores/preview", "/v1/operator/disk-ops/restores"} {
+	for _, path := range []string{"/v1/operator/disk-ops/policies", "/v1/operator/disk-ops/approvals/example-approval/decision", "/v1/operator/disk-ops/actions/preview", "/v1/operator/disk-ops/actions/decide", "/v1/operator/disk-ops/restores/preview", "/v1/operator/disk-ops/restores", "/v1/operator/disk-ops/ownership", "/v1/operator/disk-ops/alerts/ack"} {
 		// A missing receipt table would fail any attempted lookup. Local sessions
 		// must instead fail the transport authorization gate, even on a retry.
 		assertDiskJSONLocalDenied(t, f.mux, path, "existing-retry-key", `{"id":"example-approval","decision":"approved","reason":"reviewed manifest"}`)

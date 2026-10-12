@@ -201,8 +201,14 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		h.writeStoreError(w, "下發期望", machineID, err)
 		return
 	}
+	transitions, err := h.store.DiskTimerTransitions(machineID)
+	if err != nil {
+		h.writeStoreError(w, "disk timer transitions", machineID, err)
+		return
+	}
 	settings, settingsDigest := h.resolveAgentSettings(machineID)
 	writeJSON(w, http.StatusOK, model.CheckinResponse{
+		DiskTimerTransitions:       transitions,
 		ReceivedAt:                 received,
 		CheckinIntervalSeconds:     settings.CheckinIntervalSeconds,
 		ObservationIntervalSeconds: settings.ObservationIntervalSeconds,

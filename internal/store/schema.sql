@@ -1682,3 +1682,47 @@ CREATE TABLE IF NOT EXISTS disk_expiry_jobs (
 );
 CREATE TRIGGER IF NOT EXISTS disk_expiry_job_immutable BEFORE UPDATE ON disk_expiry_jobs
  BEGIN SELECT RAISE(ABORT,'immutable expiry authorization'); END;
+CREATE TABLE IF NOT EXISTS disk_ownership (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ scope TEXT NOT NULL CHECK(scope IN ('root','user')),
+ state TEXT NOT NULL CHECK(state IN ('local-owned','handoff-pending','hub-owned','rolled-back','rollback-pending')),
+ revision INTEGER NOT NULL, changed_at TEXT NOT NULL, transition_nonce TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(machine_id,scope)
+);
+CREATE TABLE IF NOT EXISTS disk_timer_observations (
+ receipt_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), scope TEXT NOT NULL,
+ observed_at TEXT NOT NULL, received_at TEXT NOT NULL, body TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS disk_timer_receipts ON disk_timer_observations(machine_id,scope,receipt_seq DESC);
+CREATE INDEX IF NOT EXISTS disk_timer_retention ON disk_timer_observations(received_at,receipt_seq);
+CREATE TABLE IF NOT EXISTS disk_timer_ingestion (
+ machine_id TEXT PRIMARY KEY REFERENCES machine_registry(machine_id), received_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS disk_alert_delivery_reservations (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), condition_key TEXT NOT NULL,
+ lane TEXT NOT NULL, reserved_at TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, delivered INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS disk_alert_delivery_key ON disk_alert_delivery_reservations(machine_id,condition_key,lane,reserved_at);
+CREATE INDEX IF NOT EXISTS disk_alert_delivery_time ON disk_alert_delivery_reservations(reserved_at);
+CREATE TABLE IF NOT EXISTS disk_alerts (
+ id TEXT PRIMARY KEY, machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ condition_key TEXT NOT NULL, severity TEXT NOT NULL, opened_at TEXT NOT NULL,
+ cleared_at TEXT, below_since TEXT, last_reading TEXT NOT NULL,
+ acknowledged_at TEXT, acknowledgement_reason TEXT NOT NULL DEFAULT '',
+ UNIQUE(machine_id,condition_key,opened_at)
+);
+CREATE INDEX IF NOT EXISTS disk_alert_condition_history ON disk_alerts(machine_id,condition_key);
+CREATE INDEX IF NOT EXISTS disk_alert_cleared_retention ON disk_alerts(cleared_at,id) WHERE cleared_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS disk_alert_notification_order ON disk_alerts(CASE WHEN cleared_at IS NULL AND severity='critical' THEN 0 WHEN cleared_at IS NULL THEN 1 WHEN severity='critical' THEN 2 ELSE 3 END,id);
+CREATE UNIQUE INDEX IF NOT EXISTS disk_alert_open ON disk_alerts(machine_id,condition_key) WHERE cleared_at IS NULL;
+CREATE TABLE IF NOT EXISTS disk_handoff_receipts (
+ actor TEXT NOT NULL, idempotency_key TEXT NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL,
+ PRIMARY KEY(actor,idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS disk_canary_days (
+ machine_id TEXT NOT NULL, scope TEXT NOT NULL, day TEXT NOT NULL,
+ local_summary_at TEXT NOT NULL, hub_summary_at TEXT NOT NULL, agreement INTEGER NOT NULL, policy_digest TEXT NOT NULL, local_candidate_bytes INTEGER NOT NULL, hub_candidate_bytes INTEGER NOT NULL,
+ PRIMARY KEY(machine_id,scope,day)
+);

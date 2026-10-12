@@ -119,7 +119,7 @@ for mount in ['/', '/home']:
             raise ValueError()
         disks[mount] = pct
         if pct >= 85:
-            flag(mount + ' disk at ' + str(pct) + '%', 2 if pct >= 95 else 1)
+            flag(mount + ' disk at ' + str(pct) + '%', 2 if pct >= 93 else 1)
     except (AttributeError, ValueError, IndexError):
         disks[mount] = None
         flag(mount + ' disk usage unavailable')

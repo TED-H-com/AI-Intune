@@ -664,3 +664,40 @@ concurrent globally. Initial, renewal and expiry grants share the gate before
 SQLite writer acquisition or RSA signing. Throttling returns 429 plus
 `Retry-After`. The process-local limiter retains at most 4096 machine buckets,
 evicting only idle fully refilled entries; all error paths release permits.
+## P2-05 ownership and alerts
+
+Use the [timer handoff/rollback runbook](MAINTENANCE-TIMERS.md#hub-timer-handoff-and-rollback-p2-05)
+to establish one apply owner per machine/scope. New ownership defaults local-owned;
+existing Hub cleanup schedules will refuse writes until reviewed handoff completes.
+Compare schedules remain read-only and work with disk writes disabled. Root handoff
+requires a separately installed reviewed helper and is unavailable in this adapter.
+
+`data_mounts` is an optional policy list of up to 15 absolute mount locations;
+`/` and each configured location are measured independently. Policy warning and
+critical defaults remain 85% and 93%. Each threshold has its own episode. Clearing
+requires two strictly-below-threshold-minus-two readings at least five minutes
+apart; equality and unknown readings do not clear. Critical notifications are throttled across episodes on stable machine/condition
+keys to one initial delivery and then at most every six hours. Warnings send once
+per episode and at most once per 24 hours per stable key. Episode history is
+retained. Failed sends keep the existing backoff. Delivery attempts also have
+persisted budgets of 20 per machine and 200 globally per rolling hour; critical
+alerts are processed first. Recovery is deduplicated and suppressed while the
+condition is open again. Unknown delivery outcomes hold the condition cooldown
+conservatively across restarts. Private notifier configuration is opt-in.
+Authenticated banners and **Disk alerts** history/acknowledgement work without it.
+
+Migration note: the local daily-check critical threshold changes from **95% to
+93%**. Until the updated daily-check script is installed locally, 93–94% can be
+critical in the Hub while the old local check reports warning. Install the new
+script deliberately and retain existing summary readers. Public defaults contain
+no fleet labels, notifier recipients or deployment dates.
+
+
+Cleanup admission, claim and Start require a known, disabled/inactive local timer
+and inactive cleanup service with a Hub receipt no more than fifteen minutes old.
+Missing, malformed, future or stale Hub receipts fail closed; agent timestamps do
+not establish freshness. Notification sweeps select only due open alerts and
+unsent recoveries in SQL, with open criticals first and stable seek cursors.
+Cleared alert episodes expire after ninety days using an indexed cutoff; unresolved
+alerts remain available. Delivery-health clearing continues independently of the
+notification queue after a successful send or recovery.

@@ -16,6 +16,7 @@ type diskPolicyHub interface {
 func diskPolicyTools() []Tool {
 	id := strField(1, 128, idPattern, "Policy ID")
 	out := []Tool{{Name: "disk_report_get", Description: "Read ranked deep disk report items with sanitized display paths only.", InputSchema: obj(map[string]any{"id": id, "cursor": strField(1, 10, "^[0-9]+$", "Page cursor"), "limit": intBound(1, 100, "Page size")}, "id"), Annotations: readAnn("disk_report_get")}, {Name: "disk_policy_list", Description: "List disk policy revisions. Human view only; protected paths are represented by counts and digests.", InputSchema: obj(map[string]any{}), Annotations: readAnn("disk_policy_list")}, {Name: "disk_policy_get", Description: "Get latest disk policy revision. Human view only.", InputSchema: obj(map[string]any{"id": id}, "id"), Annotations: readAnn("disk_policy_get")}}
+	out = append(out, Tool{Name: "disk_alerts_list", Description: "Read redacted disk alert episodes and history.", InputSchema: obj(map[string]any{}), Annotations: readAnn("disk_alerts_list")}, Tool{Name: "disk_ownership_get", Description: "Read per-scope disk apply ownership and local timer facts.", InputSchema: obj(map[string]any{"machine_id": id, "scope": strEnum("user", "root")}, "machine_id", "scope"), Annotations: readAnn("disk_ownership_get")})
 	out = append([]Tool{{Name: "disk_ops_status", Description: "Read disk usage and safe-tier results with paths represented by digests. Human view only.", InputSchema: obj(map[string]any{"machine_id": strField(1, 128, idPattern, "Machine ID")}, "machine_id"), Annotations: readAnn("disk_ops_status")}}, out...)
 	for _, phase := range []string{"preview", "apply"} {
 		name := "disk_policy_upsert_" + phase
@@ -36,6 +37,8 @@ func diskPolicyTools() []Tool {
 }
 func diskPolicySchema() map[string]any {
 	return obj(map[string]any{
+		"data_mounts":         map[string]any{"type": "array", "maxItems": 15, "items": strField(1, 128, "^/", "Data mount")},
+		"canary_days":         intBound(1, 90, "Comparison days; omitted defaults to seven"),
 		"schema_version":      intBound(1, 1, ""),
 		"safe_tier":           obj(map[string]any{"user_tmp_min_days": intBound(10, 3650, ""), "var_tmp_min_days": intBound(14, 3650, ""), "docker_min_hours": intBound(168, 87600, ""), "docker_mode": strEnum("dangling-and-build-cache"), "journald_max_mib": intBound(500, 1048576, ""), "cargo_min_days": intBound(30, 3650, ""), "uv_mode": strEnum("lock-aware-prune"), "npm_mode": strEnum("verify-only"), "tool_cache_mode": strEnum("native-gc-holder-aware")}, "user_tmp_min_days", "var_tmp_min_days", "docker_min_hours", "docker_mode", "journald_max_mib", "cargo_min_days", "uv_mode", "npm_mode", "tool_cache_mode"),
 		"protect_paths":       map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": strField(1, 1024, "^/", "Additional protected path")},
@@ -45,6 +48,49 @@ func diskPolicySchema() map[string]any {
 	}, "schema_version", "safe_tier", "protect_paths", "thresholds", "quarantine_ttl_days", "scan_budgets")
 }
 func (s *Service) diskPolicyCall(ctx context.Context, name string, raw json.RawMessage) (any, error) {
+	if name == "disk_alerts_list" {
+		var req struct{}
+		if e := decodeArgs(raw, &req); e != nil {
+			return nil, e
+		}
+		h, ok := s.Hub.(interface {
+			DiskAlertsList(context.Context) ([]store.DiskAlert, error)
+		})
+		if !ok {
+			return nil, &CallError{Code: "not_configured", Message: "disk alerts client unavailable"}
+		}
+		v, e := h.DiskAlertsList(ctx)
+		if e != nil {
+			return nil, hubErr(e)
+		}
+		for i := range v {
+			v[i].AcknowledgementReason = ""
+		}
+		return v, nil
+	}
+	if name == "disk_ownership_get" {
+		var req struct {
+			MachineID string `json:"machine_id"`
+			Scope     string `json:"scope"`
+		}
+		if e := decodeArgs(raw, &req); e != nil {
+			return nil, e
+		}
+		if req.MachineID == "" || len(req.MachineID) > 128 || (req.Scope != "user" && req.Scope != "root") {
+			return nil, &CallError{Code: "invalid_arguments", Message: "machine and scope required"}
+		}
+		h, ok := s.Hub.(interface {
+			DiskOwnershipGet(context.Context, string, string) (store.DiskOwnership, error)
+		})
+		if !ok {
+			return nil, &CallError{Code: "not_configured", Message: "disk ownership client unavailable"}
+		}
+		v, e := h.DiskOwnershipGet(ctx, req.MachineID, req.Scope)
+		if e != nil {
+			return nil, hubErr(e)
+		}
+		return v, nil
+	}
 	if name == "disk_report_get" {
 		var req struct {
 			ID     string `json:"id"`

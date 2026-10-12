@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 282 個 production operations 基線
+## 292 個 production operations 基線
 
-此數字按 HTTP method + route 計數：22 個 non-operator operations、260 個 operator
-operations；其中 134 個為 operator JSON、126 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=102`、`operate=28`、`admin=130`。這組數字由 route/API/service/Web/CLI
-合約測試固定；282-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：22 個 non-operator operations、270 個 operator
+operations；其中 140 個為 operator JSON、130 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=105`、`operate=28`、`admin=137`。這組數字由 route/API/service/Web/CLI
+合約測試固定；292-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -91,7 +91,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 
 | 22 | `POST /v1/disk-actions/{job_id}/results` | Machine credential | 否 | Private exact action receipts; immutable replay ledger |
 
-### Operator HTML/BFF 與 JSON（260）
+### Operator HTML/BFF 與 JSON（270）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -353,7 +353,7 @@ HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-134 條 operator JSON 路由見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+140 條 operator JSON 路由見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
@@ -369,7 +369,7 @@ domain service 見 `internal/operator/`。
 
 | 271 | `GET /v1/operator/disk-ops/reports` | operator.DiskReports | 否 | View; finalized summaries, no private paths |
 | 272 | `GET /v1/operator/disk-ops/reports/{id}` | operator.DiskReport | 否 | View; cursor/limit <=100; sanitized display paths |
-| 273 | `GET /disk-reports/{id}` | operator.DiskReportHuman | 否 | Human viewer; admin may see full paths; decisions disabled until P2-04 |
+| 273 | `GET /disk-reports/{id}` | operator.DiskReportHuman | 否 | Human viewer; admin may see full paths; exact human decisions, quarantine and restore available |
 | 274 | `POST /v1/operator/disk-ops/actions/preview` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
 | 275 | `POST /v1/operator/disk-ops/actions/decide` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
 | 276 | `GET /v1/operator/disk-ops/quarantine/{machine_id}` | JSON | 讀取 | P2-04 human-only quarantine / restore |
@@ -379,6 +379,17 @@ domain service 見 `internal/operator/`。
 | 280 | `POST /disk-actions/apply` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
 | 281 | `GET /machines/{id}/quarantine` | HTML | 讀取 | P2-04 human-only quarantine / restore |
 | 282 | `POST /machines/{id}/quarantine/restore` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+
+| 283 | `GET /v1/operator/disk-ops/alerts` | JSON | No | P2-05; exact view permission; shared operator service and audited human mutations |
+| 284 | `GET /v1/operator/disk-ops/ownership/{machine_id}/{scope}` | JSON | No | P2-05; exact view permission; shared operator service and audited human mutations |
+| 285 | `POST /v1/operator/disk-ops/ownership/preview` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 286 | `POST /v1/operator/disk-ops/ownership` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 287 | `POST /v1/operator/disk-ops/alerts/ack/preview` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 288 | `POST /v1/operator/disk-ops/alerts/ack` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 289 | `GET /tenant/disk-alerts` | HTML | No | P2-05; exact view permission; shared operator service and audited human mutations |
+| 290 | `POST /tenant/disk-alerts/ack/preview` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 291 | `POST /tenant/disk-alerts/ack` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 292 | `POST /machines/{id}/disk/ownership` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
 
 ## Workload / submenu parity matrix
 
@@ -755,8 +766,8 @@ manual/weekly/pressure coalescing. The machine Disk UI previews/applies manual
 reports and Sunday UTC templates with an explicit offset; the ranked viewer
 filters the full report before pagination and uses human-readable sizes.
 JSON and optional MCP `disk_report_get` expose sanitized display paths. Human
-admins can inspect full paths in HTML. Approval/rejection and bulk controls are
-disabled until P2-04; no agent delegation or cleanup actions ship in this slice.
+admins can inspect full paths in HTML. P2-04 adds exact human approval, rejection, quarantine and restore controls;
+agent delegation remains deferred.
 
 ### P2-04 human quarantine contract
 
@@ -767,3 +778,13 @@ MCP uses redacted projections; delegation remains deferred. Daily expiry
 under the current policy. The assigned machine alone uploads private action receipts
 and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
 for routes, human UI, recovery, readiness and metrics.
+### P2-05 timer handoff and disk alerts
+
+Delivered: machine Ownership panel with local timer facts, canary agreement table,
+reauthenticated handoff/rollback reviews and exact local commands; fleet Disk alerts
+history and reason-bound acknowledgement; authenticated global alert banner;
+MCP `disk_alerts_list`, `disk_ownership_get`; disk status and hub supervision counts.
+Six JSON and four HTML operations are listed in
+[API-SURFACE](API-SURFACE.md#timer-handoff-and-disk-alerts-p2-05).
+Root helper is unavailable in the current adapter, so root remains local-owned.
+Screenshots use generic fixture data under `docs/screenshots/phase2/p2-05/`.

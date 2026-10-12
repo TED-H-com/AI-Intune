@@ -90,10 +90,11 @@ type Checkin struct {
 	// DeviceSyncV1 says this exact agent process has the fixed device-sync v1
 	// executor. Old agents omit it; the Hub must treat omission as unsupported
 	// and must not infer support from agent_version text.
-	DeviceSyncV1  bool   `json:"device_sync_v1,omitempty"`
-	DiskActionKey string `json:"disk_action_key,omitempty"`
-	DiskOpsV2     bool   `json:"disk_ops_v2,omitempty"`
-	ScriptV1      bool   `json:"script_v1,omitempty"`
+	DeviceSyncV1  bool                   `json:"device_sync_v1,omitempty"`
+	DiskOpsV2     bool                   `json:"disk_ops_v2,omitempty"`
+	DiskTimers    []DiskTimerObservation `json:"disk_timers,omitempty"`
+	ScriptV1      bool                   `json:"script_v1,omitempty"`
+	DiskActionKey string                 `json:"disk_action_key,omitempty"`
 
 	// MaintenanceDiskCleanV1 says this process has the embedded disk-clean
 	// executor. Omission means unsupported. The Hub must not infer it from
@@ -117,6 +118,7 @@ type Checkin struct {
 }
 
 type CheckinResponse struct {
+	DiskTimerTransitions map[string]DiskTimerTransition `json:"disk_timer_transitions,omitempty"`
 	// ReceivedAt 回送給 Agent，讓它能自己發現時鐘漂移並記在 log 裡。
 	ReceivedAt                 time.Time `json:"received_at"`
 	CheckinIntervalSeconds     int       `json:"checkin_interval_seconds"`
@@ -1264,4 +1266,39 @@ type IndependentVerificationRequest struct {
 	ObservedVersion string    `json:"observed_version"`
 	Passed          bool      `json:"passed"`
 	VerifiedAt      time.Time `json:"verified_at"`
+}
+
+// DiskTimerObservation contains only fixed local maintenance unit facts.
+// Known=false is unknown, never proof that a local apply owner stopped.
+type DiskTimerObservation struct {
+	TransitionRevision    int64                     `json:"transition_revision,omitempty"`
+	TransitionNonce       string                    `json:"transition_nonce,omitempty"`
+	ReceivedAt            time.Time                 `json:"received_at,omitempty"`
+	ReceiptSequence       int64                     `json:"receipt_sequence,omitempty"`
+	Scope                 string                    `json:"scope"`
+	ObservedAt            time.Time                 `json:"observed_at"`
+	Known                 bool                      `json:"known"`
+	Installed             bool                      `json:"installed"`
+	Enabled               bool                      `json:"enabled"`
+	Active                bool                      `json:"active"`
+	ServiceActive         bool                      `json:"service_active"`
+	WeeklyTimer           *DiskLocalUnitObservation `json:"weekly_timer,omitempty"`
+	SummaryAt             time.Time                 `json:"summary_at,omitempty"`
+	SummaryCandidateBytes *int64                    `json:"summary_candidate_bytes,omitempty"`
+	SummaryLockSkipped    *bool                     `json:"summary_lock_skipped,omitempty"`
+	SummaryAgeSeconds     *int64                    `json:"summary_age_seconds,omitempty"`
+}
+
+// DiskLocalUnitObservation is a fixed read-only auxiliary timer projection.
+type DiskLocalUnitObservation struct {
+	Known     bool `json:"known"`
+	Installed bool `json:"installed"`
+	Enabled   bool `json:"enabled"`
+	Active    bool `json:"active"`
+}
+
+// DiskTimerTransition is a Hub-issued handoff challenge; it authorizes no action.
+type DiskTimerTransition struct {
+	Revision int64  `json:"revision"`
+	Nonce    string `json:"nonce"`
 }

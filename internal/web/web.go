@@ -378,6 +378,8 @@ type page struct {
 	DiskAction            *diskActionView
 	DiskQuarantine        *diskQuarantineView
 	DiskReport            *diskReportView
+	DiskBanner            *store.DiskSupervision
+	DiskAlerts            *diskAlertsPage
 	DiskMachine           *diskMachinePage
 	DiskPolicies          *diskPoliciesPage
 	DiskPolicyReview      *diskPolicyReviewPage
@@ -1531,9 +1533,53 @@ func stripReceivedAt(received []time.Time, interval time.Duration) []Block {
 // ---------------------------------------------------------------- helpers
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data page) {
+	if data.DiskAlerts != nil && s.operator != nil {
+		labels := map[string][]store.DiskMountUsage{}
+		for _, a := range data.DiskAlerts.Items {
+			if _, ok := labels[a.MachineID]; !ok {
+				if status, e := s.operator.DiskOpsStatus(a.MachineID); e == nil {
+					labels[a.MachineID] = status.Mounts
+				} else {
+					labels[a.MachineID] = nil
+				}
+			}
+		}
+		data.DiskAlerts.Labels = labels
+	}
 	locale := navigationLocaleFromRequest(r)
 	data.Locale = navigationLocaleFor(r, data.Title)
+	if data.DiskMachine != nil {
+		t := &data.DiskMachine.Status.Thresholds
+		defaults := store.DefaultDiskPolicy().Thresholds
+		if data.DiskMachine.Canary == nil {
+			data.DiskMachine.Canary = data.DiskMachine.Status.Canary
+		}
+		if data.DiskMachine.Canary == nil {
+			data.DiskMachine.Canary = map[string]store.DiskCanary{}
+		}
+		for _, scope := range []string{"user", "root"} {
+			c := data.DiskMachine.Canary[scope]
+			if c.RequiredDays == 0 {
+				c.RequiredDays = 7
+			}
+			data.DiskMachine.Canary[scope] = c
+		}
+		if t.WarnPercent == 0 {
+			t.WarnPercent = defaults.WarnPercent
+		}
+		if t.CriticalPercent == 0 {
+			t.CriticalPercent = defaults.CriticalPercent
+		}
+		if t.DeepReportAbovePercent == 0 {
+			t.DeepReportAbovePercent = defaults.DeepReportAbovePercent
+		}
+	}
 	data.Access = accessFromRequest(r)
+	if s.operator != nil {
+		if summary, err := s.operator.DiskSupervision(""); err == nil && (summary.OpenCritical > 0 || summary.OpenWarn > 0) {
+			data.DiskBanner = &summary
+		}
+	}
 	localizeAccessView(&data.Access, locale)
 	if s.agentBundles != nil {
 		data.AgentBundles = append([]agentBundleView(nil), s.agentBundles.views...)
@@ -1799,6 +1845,8 @@ func subNavigationFor(data page) subNavigation {
 		return reportsSubNavigation("稽核記錄")
 	case "tenant-disk-policies":
 		return tenantSubNavigation("Disk policies")
+	case "tenant-disk-alerts":
+		return tenantSubNavigation("Disk alerts")
 	case "tenant-approvals":
 		return tenantSubNavigation("Approvals")
 	case "tenant-maintenance":
@@ -1832,6 +1880,7 @@ func tenantSubNavigation(current string) subNavigation {
 		subNavigationItem{Label: "維護", Href: "/tenant/maintenance"},
 		subNavigationItem{Label: "Disk policies", Href: "/tenant/disk-policies"},
 		subNavigationItem{Label: "Approvals", Href: "/tenant/approvals"},
+		subNavigationItem{Label: "Disk alerts", Href: "/tenant/disk-alerts"},
 		subNavigationItem{Label: "資料揭露", Href: "/tenant/data"},
 	)
 }
@@ -1905,6 +1954,10 @@ var funcs = template.FuncMap{
 			ids = append(ids, i.ID)
 		}
 		return strings.Join(ids, ",")
+	},
+	"diskAlertTable": diskAlertTable,
+	"diskMountLabels": func(machine string, mounts []store.DiskMountUsage) map[string][]store.DiskMountUsage {
+		return map[string][]store.DiskMountUsage{machine: mounts}
 	},
 	"diskReportCategories": func() []string {
 		return []string{"app-update-backups", "installer-leftovers", "release-build-directories", "unused-docker-images", "caches-models", "orphaned-processes", "agent-session-stores", "duplicate-archives"}

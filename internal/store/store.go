@@ -589,6 +589,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if err := migrateDiskTimerEvidence(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate disk timer evidence: %w", err)
+	}
 	if _, err := db.Exec(schemaSQL); err != nil {
 		if conflictErr := rejectDuplicateDesiredStateResourceRevisions(db); conflictErr != nil &&
 			errors.Is(conflictErr, ErrDesiredResourceRevisionConflict) {
@@ -1738,6 +1742,9 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities VALUES (?,? ,?,1)`, machineID, fmtTime(c.SentAt), "disk_actions_v1:"+c.DiskActionKey); err != nil {
 			return err
 		}
+	}
+	if err := s.recordDiskTimersTx(tx, machineID, c, receivedAt); err != nil {
+		return err
 	}
 	if c.DiskOpsV2 {
 		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities(machine_id,sent_at,capability,supported) VALUES (?,?,'disk_ops_v2',1)`, machineID, fmtTime(c.SentAt)); err != nil {

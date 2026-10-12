@@ -23,6 +23,13 @@ func (h *hub) scheduleLoop(ctx context.Context) {
 				resumed = true
 				continue
 			}
+			if err := h.store.ReconcileDiskOwnership(jobNow()); err != nil {
+				log.Print("disk ownership reconciliation failed")
+			}
+			if err := h.store.ReconcileDiskAlerts(jobNow()); err != nil {
+				log.Print("disk alert reconciliation failed")
+			}
+			h.sendDiskAlerts(jobNow())
 			if err := h.store.ReconcileDiskPressure(jobNow()); err != nil {
 				log.Print("disk pressure reconciliation failed")
 			}

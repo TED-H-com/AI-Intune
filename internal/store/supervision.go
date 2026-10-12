@@ -383,6 +383,7 @@ type HubBackup struct {
 	Source     string    `json:"source"`
 }
 type HubStatus struct {
+	Disk                        DiskSupervision  `json:"disk"`
 	CachedAt                    *time.Time       `json:"cached_at"`
 	SchemaVersion               int              `json:"schema_version"`
 	EvaluatedAt                 time.Time        `json:"evaluated_at"`
@@ -404,6 +405,10 @@ func (s *Store) HubStatusContext(ctx context.Context, now time.Time) (HubStatus,
 	err := s.rdb.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN
  (SELECT received_at FROM machine_checkins c WHERE c.machine_id=m.machine_id AND received_at <= ? ORDER BY received_at DESC LIMIT 1) >= ? THEN 1 ELSE 0 END),0)
  FROM machine_registry m WHERE retired_at IS NULL`, fmtTime(now), fmtTime(now.Add(-10*time.Minute))).Scan(&r.Machines.Active, &r.Machines.Reporting)
+	if err != nil {
+		return r, err
+	}
+	r.Disk, err = s.DiskSupervision("")
 	if err != nil {
 		return r, err
 	}

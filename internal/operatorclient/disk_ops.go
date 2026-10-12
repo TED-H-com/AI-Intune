@@ -172,3 +172,44 @@ func (c *Client) DiskReport(ctx context.Context, id, cursor string, limit int) (
 	err = decodeStrictJSONDocument(r.body, "disk report", &out)
 	return out, err
 }
+
+func (c *Client) DiskOwnershipGet(ctx context.Context, machine, scope string) (store.DiskOwnership, error) {
+	var out store.DiskOwnership
+	req, err := c.newOperatorRequest(ctx, http.MethodGet, "/v1/operator/disk-ops/ownership/"+url.PathEscape(machine)+"/"+url.PathEscape(scope), nil)
+	if err != nil {
+		return out, err
+	}
+	r, err := c.doRaw(req)
+	if err != nil {
+		return out, err
+	}
+	if r.status != 200 {
+		return out, errors.New("disk ownership read failed")
+	}
+	if err = validateSettingReadHeaders(r.header); err != nil {
+		return out, err
+	}
+	err = decodeStrictJSONDocument(r.body, "disk ownership", &out)
+	return out, err
+}
+func (c *Client) DiskAlertsList(ctx context.Context) ([]store.DiskAlert, error) {
+	req, err := c.newOperatorRequest(ctx, http.MethodGet, "/v1/operator/disk-ops/alerts", nil)
+	if err != nil {
+		return nil, err
+	}
+	r, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	if r.status != 200 {
+		return nil, errors.New("disk alerts read failed")
+	}
+	if err = validateSettingReadHeaders(r.header); err != nil {
+		return nil, err
+	}
+	var out struct {
+		Items []store.DiskAlert `json:"items"`
+	}
+	err = decodeStrictJSONDocument(r.body, "disk alerts", &out)
+	return out.Items, err
+}

@@ -17,6 +17,8 @@ import (
 // built-in credentials/backups, generated images, models, user data and all
 // repositories are unconditional and cannot be overridden by this document.
 type DiskPolicy struct {
+	DataMounts        []string        `json:"data_mounts,omitempty"`
+	CanaryDays        int             `json:"canary_days,omitempty"`
 	SchemaVersion     int             `json:"schema_version"`
 	SafeTier          DiskSafeTier    `json:"safe_tier"`
 	ProtectPaths      []string        `json:"protect_paths"`
@@ -61,7 +63,7 @@ func (p DiskPolicy) Protections() DiskProtectionRules {
 }
 
 func DefaultDiskPolicy() DiskPolicy {
-	return DiskPolicy{1, DiskSafeTier{10, 14, 168, "dangling-and-build-cache", 500, 30, "lock-aware-prune", "verify-only", "native-gc-holder-aware"}, []string{}, DiskThresholds{85, 93, 80}, 7, DiskScanBudgets{500, 200000, 600}}
+	return DiskPolicy{nil, 0, 1, DiskSafeTier{10, 14, 168, "dangling-and-build-cache", 500, 30, "lock-aware-prune", "verify-only", "native-gc-holder-aware"}, []string{}, DiskThresholds{85, 93, 80}, 7, DiskScanBudgets{500, 200000, 600}}
 }
 func CanonicalDiskPolicy(raw json.RawMessage) (DiskPolicy, json.RawMessage, string, error) {
 	var p DiskPolicy
@@ -76,7 +78,7 @@ func CanonicalDiskPolicy(raw json.RawMessage) (DiskPolicy, json.RawMessage, stri
 	t := p.SafeTier
 	b := p.ScanBudgets
 	h := p.Thresholds
-	if p.SchemaVersion != 1 || p.QuarantineTTLDays != 7 || t.UserTmpMinDays < 10 || t.UserTmpMinDays > 3650 || t.VarTmpMinDays < 14 || t.VarTmpMinDays > 3650 || t.DockerMinHours < 168 || t.DockerMinHours > 87600 || t.CargoMinDays < 30 || t.CargoMinDays > 3650 || t.JournaldMaxMiB < 500 || t.JournaldMaxMiB > 1048576 || t.DockerMode != "dangling-and-build-cache" || t.UVMode != "lock-aware-prune" || t.NPMMode != "verify-only" || t.ToolCacheMode != "native-gc-holder-aware" || h.DeepReportAbovePercent < 1 || h.DeepReportAbovePercent >= h.WarnPercent || h.WarnPercent >= h.CriticalPercent || h.CriticalPercent > 100 || b.MaxItems < 1 || b.MaxItems > 500 || b.MaxEntries < 1 || b.MaxEntries > 200000 || b.MaxSeconds < 1 || b.MaxSeconds > 600 || len(p.ProtectPaths) > 100 {
+	if len(p.DataMounts) > 15 || p.CanaryDays < 0 || p.CanaryDays > 90 || p.SchemaVersion != 1 || p.QuarantineTTLDays != 7 || t.UserTmpMinDays < 10 || t.UserTmpMinDays > 3650 || t.VarTmpMinDays < 14 || t.VarTmpMinDays > 3650 || t.DockerMinHours < 168 || t.DockerMinHours > 87600 || t.CargoMinDays < 30 || t.CargoMinDays > 3650 || t.JournaldMaxMiB < 500 || t.JournaldMaxMiB > 1048576 || t.DockerMode != "dangling-and-build-cache" || t.UVMode != "lock-aware-prune" || t.NPMMode != "verify-only" || t.ToolCacheMode != "native-gc-holder-aware" || h.DeepReportAbovePercent < 1 || h.DeepReportAbovePercent >= h.WarnPercent || h.WarnPercent >= h.CriticalPercent || h.CriticalPercent > 100 || b.MaxItems < 1 || b.MaxItems > 500 || b.MaxEntries < 1 || b.MaxEntries > 200000 || b.MaxSeconds < 1 || b.MaxSeconds > 600 || len(p.ProtectPaths) > 100 {
 		return p, nil, "", errors.New("disk policy outside safe bounds")
 	}
 	p.ProtectPaths = append([]string{}, p.ProtectPaths...)
@@ -84,6 +86,12 @@ func CanonicalDiskPolicy(raw json.RawMessage) (DiskPolicy, json.RawMessage, stri
 	for i, v := range p.ProtectPaths {
 		if len(v) > 1024 || !strings.HasPrefix(v, "/") || path.Clean(v) != v || strings.ContainsAny(v, "\x00\r\n") || scriptcatalog.Redact(v) != v || (i > 0 && p.ProtectPaths[i-1] == v) {
 			return p, nil, "", errors.New("invalid or duplicate additive protect path")
+		}
+	}
+	sort.Strings(p.DataMounts)
+	for i, v := range p.DataMounts {
+		if len(v) > 128 || !strings.HasPrefix(v, "/") || v == "/" || path.Clean(v) != v || strings.ContainsAny(v, "\x00\r\n") || scriptcatalog.Redact(v) != v || (i > 0 && p.DataMounts[i-1] == v) {
+			return p, nil, "", errors.New("invalid data mount")
 		}
 	}
 	canonical, _ := json.Marshal(p)

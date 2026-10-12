@@ -498,6 +498,7 @@ func runAgent() {
 	go func() {
 		notifyReady()
 		var skewTrack clockSkewTracker
+		timerTransitions := map[string]model.DiskTimerTransition{}
 		for {
 			lastTurn.Store(time.Now().UnixNano())
 			hb, err := probe.Heartbeat(ctx, seq.Add(1))
@@ -513,6 +514,7 @@ func runAgent() {
 			jobsEnabled := cfg.JobsEnabled
 			hb.JobsEnabled = &jobsEnabled
 			advertiseJobCapabilities(&hb)
+			echoDiskTimerTransitions(&hb, timerTransitions)
 			now := applied.Load()
 			hb.SettingsDigest = now.digest
 
@@ -527,6 +529,7 @@ func runAgent() {
 			}
 			rtt := time.Since(callStart)
 			if postErr == nil {
+				timerTransitions = resp.DiskTimerTransitions
 				now = adoptSettings(now, resp, &applied, cfg, seq)
 				// ⚠ 期望由 Hub 下發，agent 不自己決定要量什麼。規則與 token
 				// 是同一份證據的身分，必須用同一次 atomic Store 發布。
@@ -615,6 +618,9 @@ func advertiseJobCapabilities(checkin *model.Checkin) {
 	// own catalog entries and reviewed runtime profiles.
 	checkin.DiskActionKey, _ = scriptcatalog.DiskActionReadiness()
 	checkin.DiskOpsV2 = runtime.GOOS == "linux" && os.Geteuid() != 0
+	if checkin.DiskOpsV2 {
+		checkin.DiskTimers = observeDiskTimers(time.Now().UTC())
+	}
 	checkin.DeviceSyncV1 = true
 	checkin.ScriptV1 = runtime.GOOS == "linux" && os.Geteuid() != 0
 	checkin.MaintenanceDiskCleanV1 = true

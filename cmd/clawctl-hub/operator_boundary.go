@@ -433,6 +433,16 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /v1/operator/jobs-summary":                                       {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/approvals-summary":                                  {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/hub-status":                                         {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/disk-ops/alerts":                                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/disk-ops/ownership/{machine_id}/{scope}":            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /v1/operator/disk-ops/ownership/preview":                        {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /v1/operator/disk-ops/ownership":                                {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /v1/operator/disk-ops/alerts/ack/preview":                       {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /v1/operator/disk-ops/alerts/ack":                               {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/disk-alerts/ack/preview":                                {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/disk-alerts/ack":                                        {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /tenant/disk-alerts":                                             {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/{id}/disk/ownership":                                  {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 }
 
 const (

@@ -1,6 +1,10 @@
 package operatorclient
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +241,35 @@ func TestHubDisclosureCategoryTextFitsStrictClientContract(t *testing.T) {
 			if err := validateDataCategory(invalid); err == nil {
 				t.Fatalf("category %s accepted unsafe holds", category.Key)
 			}
+		}
+	}
+}
+
+func TestDataAndMachineDisclosureContractsWithoutSockets(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	base, _ := url.Parse("http://hub.example.test")
+	c := &Client{base: base, http: &http.Client{Transport: assignedUserTransport(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		if strings.HasSuffix(r.URL.Path, "/m1/data") {
+			_ = json.NewEncoder(w).Encode(dataClientMachine(t, now))
+		} else {
+			_ = json.NewEncoder(w).Encode(dataClientDisclosure(t, now))
+		}
+		return w.Result(), nil
+	})}}
+	disclosure, e := c.DataDisclosure(t.Context())
+	if e != nil || disclosure.Tables != len(store.MachineDataTables()) {
+		t.Fatal(disclosure, e)
+	}
+	machine, e := c.MachineData(t.Context(), "m1")
+	if e != nil || len(machine.Categories) != len(operator.DataCategoryKeys()) {
+		t.Fatal(machine, e)
+	}
+	for _, category := range disclosure.Categories {
+		if len(category.Holds) > 512 {
+			t.Fatal("description exceeds public client limit")
 		}
 	}
 }

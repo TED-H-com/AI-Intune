@@ -510,3 +510,14 @@ func TestEveryDisclosedCategoryCarriesThePinnedSentences(t *testing.T) {
 		})
 	}
 }
+
+func TestDataDisclosureCategoryTextFitsClientLimit(t *testing.T) {
+	disclosure := disclosureAt(t, store.DefaultRetention())
+	for _, c := range disclosure.Categories {
+		for name, text := range map[string]string{"holds": c.Holds, "free_text": c.FreeText, "source_sentence": c.SourceSentence, "retention_sentence": c.RetentionSentence, "retirement_sentence": c.RetirementSentence, "free_text_sentence": c.FreeTextSentence} {
+			if len(text) > 512 {
+				t.Errorf("%s/%s is %d bytes; client limit is 512", c.Key, name, len(text))
+			}
+		}
+	}
+}
