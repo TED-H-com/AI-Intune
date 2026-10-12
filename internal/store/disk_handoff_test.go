@@ -275,7 +275,7 @@ func TestDiskCanarySevenPolicyBoundDailyComparisons(t *testing.T) {
 		env.Summary.Scope = "user"
 		env.Summary.TS = day.Format(time.RFC3339)
 		env.Summary.CandidateBytes = candidate
-		status := DiskOpsStatus{Preview: env, OwnershipRecords: []DiskOwnership{{Scope: "user", State: "local-owned", Observation: &model.DiskTimerObservation{SummaryAt: day, SummaryCandidateBytes: &candidate}}}}
+		status := DiskOpsStatus{Preview: env, OwnershipRecords: []DiskOwnership{{Scope: "user", State: "local-owned", Observation: &model.DiskTimerObservation{ReceivedAt: day, SummaryAt: day, SummaryCandidateBytes: &candidate}}}}
 		if e = s.RecordDiskCanary(machine, status, day); e != nil {
 			t.Fatal(e)
 		}

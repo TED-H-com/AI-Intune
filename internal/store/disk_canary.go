@@ -90,12 +90,20 @@ func (s *Store) RecordDiskCanary(machine string, status DiskOpsStatus, now time.
 		if e != nil || currentDigest != p.Operation.PolicyDigest {
 			continue
 		}
+		// Evidence ordering uses Hub receipts, never agent summary timestamps.
+		received := p.ReceivedAt
+		if local.ReceivedAt.After(received) {
+			received = local.ReceivedAt
+		}
+		if received.IsZero() || received.After(now) {
+			continue
+		}
 		agreement := *local.SummaryCandidateBytes == p.Summary.CandidateBytes
 		tx, err := s.beginWrite(context.Background(), "disk_canary")
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO disk_canary_days(machine_id,scope,day,local_summary_at,hub_summary_at,local_candidate_bytes,hub_candidate_bytes,agreement,policy_digest) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(machine_id,scope,day) DO UPDATE SET local_summary_at=excluded.local_summary_at,hub_summary_at=excluded.hub_summary_at,local_candidate_bytes=excluded.local_candidate_bytes,hub_candidate_bytes=excluded.hub_candidate_bytes,agreement=excluded.agreement,policy_digest=excluded.policy_digest WHERE policy_digest<>excluded.policy_digest`, machine, owner.Scope, at.UTC().Format("2006-01-02"), fmtTime(local.SummaryAt), fmtTime(at), *local.SummaryCandidateBytes, p.Summary.CandidateBytes, agreement, p.Operation.PolicyDigest)
+		_, err = tx.Exec(`INSERT INTO disk_canary_days(machine_id,scope,day,local_summary_at,hub_summary_at,local_candidate_bytes,hub_candidate_bytes,agreement,policy_digest,received_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(machine_id,scope,day) DO UPDATE SET local_summary_at=excluded.local_summary_at,hub_summary_at=excluded.hub_summary_at,local_candidate_bytes=excluded.local_candidate_bytes,hub_candidate_bytes=excluded.hub_candidate_bytes,agreement=CASE WHEN disk_canary_days.policy_digest<>excluded.policy_digest THEN excluded.agreement ELSE disk_canary_days.agreement AND excluded.agreement END,policy_digest=excluded.policy_digest,received_at=excluded.received_at WHERE excluded.received_at>disk_canary_days.received_at`, machine, owner.Scope, at.UTC().Format("2006-01-02"), fmtTime(local.SummaryAt), fmtTime(at), *local.SummaryCandidateBytes, p.Summary.CandidateBytes, agreement, p.Operation.PolicyDigest, received.UTC().Format("2006-01-02T15:04:05.000000000Z"))
 		if err != nil {
 			tx.Rollback()
 			return err

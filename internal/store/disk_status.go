@@ -17,8 +17,9 @@ type DiskMountUsage struct {
 	MeasuredAt     string `json:"measured_at,omitempty"`
 }
 type DiskSafeEnvelope struct {
-	Summary   maintenance.Summary `json:"summary"`
-	Operation struct {
+	ReceivedAt time.Time           `json:"-"`
+	Summary    maintenance.Summary `json:"summary"`
+	Operation  struct {
 		SkipCode     string           `json:"skip_code"`
 		Schema       string           `json:"schema"`
 		PolicyID     string           `json:"policy_id"`
@@ -63,8 +64,8 @@ func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
 		out.Mounts = append(out.Mounts, DiskMountUsage{Mount: "/", TotalBytes: total, AvailableBytes: avail, Percent: diskUsagePercent(total, avail), MeasuredAt: measured})
 	}
 	for _, script := range []string{"disk-safe-clean-v2", "disk-safe-preview-v2"} {
-		var raw, spec string
-		err = s.rdb.QueryRow(`SELECT v.stdout_excerpt,d.spec FROM verification_results v JOIN jobs j ON j.job_id=v.job_id JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.machine_id=? AND d.resource_kind='script_v1' AND d.resource_id=? AND v.rule_id='script_v1' AND v.exit_code=0 AND v.passed=1 AND v.evidence_role=? AND v.producer_kind=? AND v.producer_id=? AND v.authority=? ORDER BY v.rowid DESC LIMIT 1`, id, script, JobVerificationRoleExecutor, JobVerificationProducerExecutorAgent, id, JobVerificationAuthorityMachineLease).Scan(&raw, &spec)
+		var raw, spec, received string
+		err = s.rdb.QueryRow(`SELECT v.stdout_excerpt,d.spec,v.received_at FROM verification_results v JOIN jobs j ON j.job_id=v.job_id JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.machine_id=? AND d.resource_kind='script_v1' AND d.resource_id=? AND v.rule_id='script_v1' AND v.exit_code=0 AND v.passed=1 AND v.evidence_role=? AND v.producer_kind=? AND v.producer_id=? AND v.authority=? ORDER BY v.received_at DESC,v.rowid DESC LIMIT 1`, id, script, JobVerificationRoleExecutor, JobVerificationProducerExecutorAgent, id, JobVerificationAuthorityMachineLease).Scan(&raw, &spec, &received)
 		if err == sql.ErrNoRows {
 			continue
 		}
@@ -74,6 +75,10 @@ func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
 		var envelope DiskSafeEnvelope
 		if len(raw) > 64<<10 || json.Unmarshal([]byte(raw), &envelope) != nil {
 			continue
+		}
+		envelope.ReceivedAt, err = time.Parse(time.RFC3339Nano, received)
+		if err != nil {
+			return out, err
 		}
 		summary, _ := json.Marshal(envelope.Summary)
 		if _, e := maintenance.ParseSummary(summary); e != nil {

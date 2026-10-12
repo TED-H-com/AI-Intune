@@ -1723,6 +1723,7 @@ CREATE TABLE IF NOT EXISTS disk_handoff_receipts (
 );
 CREATE TABLE IF NOT EXISTS disk_canary_days (
  machine_id TEXT NOT NULL, scope TEXT NOT NULL, day TEXT NOT NULL,
+ received_at TEXT NOT NULL DEFAULT '',
  local_summary_at TEXT NOT NULL, hub_summary_at TEXT NOT NULL, agreement INTEGER NOT NULL, policy_digest TEXT NOT NULL, local_candidate_bytes INTEGER NOT NULL, hub_candidate_bytes INTEGER NOT NULL,
  PRIMARY KEY(machine_id,scope,day)
 );
