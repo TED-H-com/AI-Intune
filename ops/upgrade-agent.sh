@@ -178,18 +178,33 @@ if [[ "$got" != "$want" ]]; then
   exit 1
 fi
 
-sudo install -d -m 0755 "$system_bin_dir" "$(dirname "$system_unit")"
-sudo install -m 0755 -o root -g root "$bin.new" "$system_bin.new"
-sudo mv -f "$system_bin.new" "$system_bin"
+if [[ "$system_bin_dir" != /usr/local/bin || "$(dirname "$system_unit")" != /etc/systemd/system ]]; then
+  echo "Custom system directories: a narrow sudoers drop-in for the default paths will not match." >&2
+fi
+sudo -n install -d -m 0755 "$system_bin_dir" "$(dirname "$system_unit")"
+sudo -n install -m 0755 -o root -g root "$bin.new" "$system_bin.new"
+sudo -n mv -f "$system_bin.new" "$system_bin"
 if command -v restorecon >/dev/null &&
    { { command -v selinuxenabled >/dev/null && selinuxenabled; } || [[ -e /sys/fs/selinux/enforce ]]; }; then
-  sudo restorecon -F "$system_bin"
+  echo "SELinux restorecon is outside the narrow sudoers rule and needs full sudo authorization." >&2
+  sudo -n restorecon -F "$system_bin" || {
+    echo "SELinux relabel failed; rerun interactively with full sudo password authorization." >&2
+    exit 1
+  }
 fi
 rm -f -- "$bin.new"
 if [[ -f "$bin" ]]; then echo "Legacy binary $bin retained; no longer used by the system unit."; fi
 chmod 0644 "$hermes_unit.new" "$openclaw_unit.new"
-sudo install -m 0644 "$rendered_unit" "$system_unit.new"
-sudo mv -f "$system_unit.new" "$system_unit"
+unit_changed=0
+if ! cmp -s "$rendered_unit" "$system_unit"; then
+  unit_changed=1
+  echo "Agent unit changed: installing it is outside the narrow sudoers rule and needs a full sudo password." >&2
+  if ! sudo -n install -m 0644 "$rendered_unit" "$system_unit.new" ||
+     ! sudo -n mv -f "$system_unit.new" "$system_unit"; then
+    echo "Agent unit install failed; rerun interactively with full sudo password authorization." >&2
+    exit 1
+  fi
+fi
 rm -f -- "$raw_unit"
 mv -f "$hermes_unit.new" "$hermes_unit"
 if [[ ! -e "$openclaw_unit" && ! -L "$openclaw_unit" ]] ||
@@ -198,22 +213,26 @@ if [[ ! -e "$openclaw_unit" && ! -L "$openclaw_unit" ]] ||
 else
   rm -f -- "$openclaw_unit.new"
 fi
-sudo systemctl daemon-reload
+if [[ $unit_changed -eq 1 ]]; then
+  sudo -n systemctl daemon-reload
+fi
 [[ "$(systemctl show clawctl-agent.service -p LoadState --value)" == "loaded" ]] || { echo "Agent system unit did not load" >&2; exit 1; }
 [[ "$(systemctl show clawctl-agent.service -p FragmentPath --value)" == "$system_unit" ]] || { echo "Agent system unit path mismatch before migration" >&2; exit 1; }
 [[ "$(systemctl show clawctl-agent.service -p User --value)" == "$agent_user" ]] || { echo "Agent systemd User contract mismatch before migration" >&2; exit 1; }
 [[ "$(systemctl show clawctl-agent.service -p ProtectSystem --value)" == "strict" ]] || { echo "ProtectSystem sandbox is not loaded before migration" >&2; exit 1; }
 [[ "$(systemctl show clawctl-agent.service -p ProtectHome --value)" == "read-only" ]] || { echo "ProtectHome sandbox is not loaded before migration" >&2; exit 1; }
-sudo systemctl enable clawctl-agent.service
+if [[ "$(systemctl is-enabled clawctl-agent.service 2>/dev/null || true)" != enabled ]]; then
+  sudo -n systemctl enable clawctl-agent.service
+fi
 if [[ -e "$legacy_unit" || -L "$legacy_unit" ]]; then
   [[ -f "$legacy_unit" && ! -L "$legacy_unit" ]] || { echo "Legacy agent unit path is not safe" >&2; exit 1; }
   systemctl --user disable --now clawctl-agent.service
   rm -f -- "$legacy_unit"
   systemctl --user daemon-reload
 fi
-sudo systemctl reset-failed clawctl-agent.service 2>/dev/null || true
+sudo -n systemctl reset-failed clawctl-agent.service 2>/dev/null || true
 started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-sudo systemctl restart clawctl-agent.service
+sudo -n systemctl restart clawctl-agent.service
 systemctl is-active --quiet clawctl-agent.service
 "$system_bin" verify --since "$started_at" --timeout 2m
 
@@ -250,7 +269,6 @@ upgrade_local() {
   arch="$(uname -m)"
   source="$(arch_binary "$arch")" || { echo "Unsupported architecture: $arch" >&2; return 1; }
   echo "Upgrading local agent: $arch"
-  sudo -n true 2>/dev/null || sudo -v || return
   bash -s <<<"$(current_agent_contract)" || return
   install -d -m 0755 "$HOME/.local/bin" "$HOME/.config/systemd/user"
   install -d -m 0700 "$HOME/.local/share/clawctl"

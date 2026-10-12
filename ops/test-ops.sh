@@ -1650,7 +1650,93 @@ expect 'macOS install script indicates which script to run on Linux' 1 has 'On L
 run linux_installer_names_macos_fixture
 expect 'Linux install script indicates which script to run on macOS' 1 has 'ops/install-agent-macos.sh'
 
-run appears_in_order3 'got="$(timeout 5 "$bin.new" version' 'sudo mv -f "$system_unit.new" "$system_unit"' 'sudo systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
+upgrade_agent_sudo_fixture() (
+  local mode=$1 fixture="$TMP/upgrade-sudo-$1" script
+  mkdir -p "$fixture/home/.local/bin" "$fixture/home/.local/share/clawctl" "$fixture/home/.config/clawctl" "$fixture/home/.config/systemd/user"
+  export HOME="$fixture/home" UPGRADE_SUDO_LOG="$fixture/sudo.log" UPGRADE_MODE="$mode"
+  unset CLAWCTL_SYSTEM_BIN_DIR CLAWCTL_SYSTEM_UNIT_DIR
+  printf '{}\n' >"$HOME/.config/clawctl/agent.json"
+  chmod 0600 "$HOME/.config/clawctl/agent.json"
+  touch "$HOME/.local/bin/clawctl-agent.new" "$HOME/.config/systemd/user/clawctl-hermes.service.new" "$HOME/.config/systemd/user/openclaw-gateway.service.new"
+  cp "$AGENT_UNIT" "$HOME/.local/share/clawctl/clawctl-agent.service.new"
+  eval "$(sed -n '/^remote_script() {$/,/^upgrade_local() {$/p' "$UPGRADE_AGENT" | sed '$d')"
+  # Run the actual remote body, which the local path also uses. Stop after the
+  # service restart: the remaining checks concern Hub readiness, not sudo.
+  script="$(remote_script)"
+  # Isolate the host SELinux filesystem fallback as well as selinuxenabled.
+  script="${script//\/sys\/fs\/selinux\/enforce/$fixture/selinux-enforce}"
+  script="${script%%systemctl is-active --quiet clawctl-agent.service*}"
+  sudo() {
+    printf '%s\n' "$*" >>"$UPGRADE_SUDO_LOG"
+    [[ $1 == -n ]] || return 90
+    shift
+    case "$*" in
+      "true"|"install -d -m 0755 /usr/local/bin /etc/systemd/system"| \
+      "install -m 0755 -o root -g root $HOME/.local/bin/clawctl-agent.new /usr/local/bin/clawctl-agent.new"| \
+      "mv -f /usr/local/bin/clawctl-agent.new /usr/local/bin/clawctl-agent"| \
+      "systemctl daemon-reload"|"systemctl enable clawctl-agent.service"| \
+      "systemctl reset-failed clawctl-agent.service"|"systemctl restart clawctl-agent.service"| \
+      "systemctl status clawctl-agent.service") return 0 ;;
+      "install -m 0644 $HOME/.local/share/clawctl/clawctl-agent.service.rendered /etc/systemd/system/clawctl-agent.service.new"| \
+      "mv -f /etc/systemd/system/clawctl-agent.service.new /etc/systemd/system/clawctl-agent.service")
+        [[ $UPGRADE_MODE != identical && $UPGRADE_MODE != disabled && $UPGRADE_MODE != denied ]] ;;
+      *) touch "$UPGRADE_SUDO_LOG.unexpected"; echo "Unexpected sudo arguments: $*" >&2; return 90 ;;
+    esac
+  }
+  cmp() {
+    [[ $# == 3 && $1 == -s && $2 == "$HOME/.local/share/clawctl/clawctl-agent.service.rendered" && $3 == /etc/systemd/system/clawctl-agent.service ]] || return 90
+    [[ $UPGRADE_MODE == identical || $UPGRADE_MODE == disabled ]]
+  }
+  systemctl() {
+    case "$*" in
+      "is-enabled clawctl-agent.service")
+        if [[ $UPGRADE_MODE == disabled ]]; then echo disabled; return 1; else echo enabled; fi ;;
+      "show clawctl-agent.service -p LoadState --value") echo loaded ;;
+      "show clawctl-agent.service -p FragmentPath --value") echo /etc/systemd/system/clawctl-agent.service ;;
+      "show clawctl-agent.service -p User --value") echo agenttest ;;
+      "show clawctl-agent.service -p ProtectSystem --value") echo strict ;;
+      "show clawctl-agent.service -p ProtectHome --value") echo read-only ;;
+      *) echo "Unexpected systemctl arguments: $*" >&2; return 90 ;;
+    esac
+  }
+  id() { case "$*" in -un) echo agenttest ;; -u) echo 1001 ;; *) return 90 ;; esac; }
+  timeout() { [[ $# == 3 && $1 == 5 && $2 == "$HOME/.local/bin/clawctl-agent.new" && $3 == version ]] || return 90; echo test-version; }
+  selinuxenabled() { return 1; }
+  restorecon() { echo 'Unexpected restorecon' >&2; return 90; }
+  export -f sudo cmp systemctl id timeout selinuxenabled restorecon
+  local result=0
+  bash -s test-version <<<"$script" >"$fixture/output" 2>&1 || result=$?
+  [[ ! -e "$UPGRADE_SUDO_LOG.unexpected" ]] || return 90
+  if [[ $mode == denied ]]; then
+    [[ $result != 0 ]] || return 91
+    grep -Fq 'rerun interactively' "$fixture/output" || return 92
+    ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 93
+    return 0
+  fi
+  [[ $result == 0 ]] || { cat "$fixture/output"; return 94; }
+  if [[ $mode == changed ]]; then
+    grep -Fxq -- "-n install -m 0644 $HOME/.local/share/clawctl/clawctl-agent.service.rendered /etc/systemd/system/clawctl-agent.service.new" "$UPGRADE_SUDO_LOG" || return 95
+    grep -Fxq -- '-n mv -f /etc/systemd/system/clawctl-agent.service.new /etc/systemd/system/clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 96
+    grep -Fxq -- '-n systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 97
+    grep -Fq 'full sudo password' "$fixture/output" || return 98
+  else
+    ! grep -Fq 'install -m 0644' "$UPGRADE_SUDO_LOG" || return 99
+    ! grep -Fq '/etc/systemd/system/clawctl-agent.service.new' "$UPGRADE_SUDO_LOG" || return 100
+    ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 101
+  fi
+  if [[ $mode == disabled ]]; then
+    grep -Fxq -- '-n systemctl enable clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 102
+  else
+    ! grep -Fq 'systemctl enable' "$UPGRADE_SUDO_LOG" || return 103
+  fi
+  grep -Fxq -- '-n systemctl restart clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 104
+)
+for upgrade_mode in identical changed disabled denied; do
+  run upgrade_agent_sudo_fixture "$upgrade_mode"
+  expect "agent upgrade narrow sudo contract: $upgrade_mode" 0 is_silent
+done
+
+run appears_in_order3 'got="$(timeout 5 "$bin.new" version' 'sudo -n mv -f "$system_unit.new" "$system_unit"' 'sudo -n systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
 expect 'agent upgrade validates binary before publishing unit and restarting' 0 is_silent
 
 run appears_before 'Managed agent preflight failed: $target' 'scp -q -o BatchMode=yes "$source"' "$UPGRADE_AGENT"
@@ -1659,10 +1745,10 @@ expect 'agent upgrade validates the enrolled service account before transfer' 0 
 run grep -Fq 'writable_roots="$(systemctl show clawctl-agent.service -p ReadWritePaths --value)"' "$UPGRADE_AGENT"
 expect 'agent upgrade verifies the live writable-root contract' 0 is_silent
 
-run appears_in_order3 'sudo systemctl reset-failed clawctl-agent.service' 'sudo systemctl restart clawctl-agent.service' '"$system_bin" verify --since "$started_at" --timeout 2m' "$UPGRADE_AGENT"
+run appears_in_order3 'sudo -n systemctl reset-failed clawctl-agent.service' 'sudo -n systemctl restart clawctl-agent.service' '"$system_bin" verify --since "$started_at" --timeout 2m' "$UPGRADE_AGENT"
 expect 'agent upgrade requires a fresh Hub readiness receipt' 0 is_silent
 
-run appears_in_order3 'sudo systemctl daemon-reload' 'systemctl --user disable --now clawctl-agent.service' 'sudo systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
+run appears_in_order3 'sudo -n systemctl daemon-reload' 'systemctl --user disable --now clawctl-agent.service' 'sudo -n systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
 expect 'agent upgrade migrates from the user manager without overlapping agents' 0 is_silent
 
 run appears_before '[[ "$restarts" == "0" ]]' 'echo "Managed: agent=$running_version service=active jobs=enabled processes=1 restarts=0"' "$UPGRADE_AGENT"
