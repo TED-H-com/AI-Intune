@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 249 個 production operations 基線
+## 263 個 production operations 基線
 
-此數字按 HTTP method + route 計數：18 個 non-operator operations、231 個 operator
-operations；其中 119 個為 operator JSON、112 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=91`、`operate=28`、`admin=112`。這組數字由 route/API/service/Web/CLI
-合約測試固定；249-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：18 個 non-operator operations、245 個 operator
+operations；其中 126 個為 operator JSON、119 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=95`、`operate=28`、`admin=122`。這組數字由 route/API/service/Web/CLI
+合約測試固定；263-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -84,7 +84,7 @@ Machine bearer 與 operator auth 不互相繼承；實作邊界見
 `cmd/clawctl-hub/api.go`、`cmd/clawctl-hub/operator_boundary.go`。Verifier bearer 與這兩者也不互相繼承，
 resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 
-### Operator HTML/BFF 與 JSON（231）
+### Operator HTML/BFF 與 JSON（245）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -313,7 +313,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 240 | `POST /v1/operator/schedules/{operation}/{phase}` | JSON | Preview / Mutation | `operate` for read scripts, `admin` for write scripts; `upsert` / `set-enabled`, `preview` / `apply`; apply binds preview digest, expected revision and idempotency key |
 | 241 | `POST /v1/operator/schedules/{id}/run-now` | JSON | Mutation | `operate` for read scripts, `admin` for write scripts; required Idempotency-Key, saved job-ID replay, approved hash and overlap guard |
 | 242 | `GET /v1/operator/jobs-summary` | JSON | 讀取 | `view`; bounded supervision counts, latency and Hub threshold flags |
-| 243 | `GET /v1/operator/approvals-summary` | JSON | 讀取 | `view`; observed approvals; unpersisted preview/pending metrics are null |
+| 243 | `GET /v1/operator/approvals-summary` | JSON | 讀取 | `view`; observed approvals; disk_ops ledger counts/oldest pending age; legacy unpersisted preview metrics remain null |
 | 244 | `GET /v1/operator/hub-status` | JSON | 讀取 | `view`; uptime, storage sizes, restore evidence and machine coverage; no paths or secrets |
 
 | 245 | `GET /account/service-tokens` | HTML | Admin | Local human session and MFA; service token management |
@@ -321,12 +321,26 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 247 | `POST /account/service-tokens/revoke` | HTML | Admin | Local human session and MFA; service token management |
 | 248 | `GET /v1/operator/service-tokens/self` | JSON | Read | Service token only; own metadata, no allowlist requirement |
 | 249 | `POST /v1/operator/service-tokens/rotate` | JSON | Yes | Service token only; newest chain token; 10-minute overlap |
+| 250 | `GET /v1/operator/disk-ops/policies` | JSON | Read | Human view; immutable disk policy history; paths included, token-ineligible |
+| 251 | `GET /v1/operator/disk-ops/policies/{id}` | JSON | Read | Human view; latest revision; token-ineligible |
+| 252 | `POST /v1/operator/disk-ops/policies/preview` | JSON | Preview / Mutation | Human admin; normalized policy/revision/digest/30-minute expiry |
+| 253 | `POST /v1/operator/disk-ops/policies` | JSON | Preview / Mutation | Human admin; default-off flag, preview binding, idempotency and atomic audit |
+| 254 | `GET /v1/operator/disk-ops/approvals` | JSON | Read | View; path-free ledger, exact view-token allowlist eligible |
+| 255 | `GET /tenant/disk-policies` | HTML | Read | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 256 | `GET /tenant/disk-policies/{id}` | HTML | Read | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 257 | `POST /tenant/disk-policies/preview` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 258 | `POST /tenant/disk-policies/apply` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 259 | `GET /tenant/approvals` | HTML | Read | Human view; state/machine/operation filters; decisions visible to admins only |
+| 260 | `POST /tenant/approvals/preview` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 261 | `POST /tenant/approvals/apply` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 262 | `POST /v1/operator/disk-ops/approvals/{id}/decision/preview` | JSON | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 263 | `POST /v1/operator/disk-ops/approvals/{id}/decision` | JSON | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
 
 HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-119 條 operator JSON 路由見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+126 條 operator JSON 路由見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
@@ -699,3 +713,9 @@ calls from an admin-approved digest-pinned connector tree, structured JSON
 classifications (excerpts off by default), bounded reads, fixed no-symlink mapping
 and explicit unknown cleanup/Jev gates; disabled
 hourly schedule example and [comparison runbook](runbooks/BAT-SWEEP-PILOT.md).
+
+P2-01 disk policy security: JSON applies reject local-account sessions before
+replay (local users apply through the reauthenticated UI); protection removals
+require per-path digest-bound acknowledgement; MCP projects only path counts and
+digests; sanitized decision reasons are retained on the approval ledger and audit.
+See `docs/API-SURFACE.md` for the exact request fields and transport restrictions.

@@ -24,6 +24,7 @@ type AgentReadiness struct {
 	AgentStartedAt         *time.Time
 	AgentVersion           string
 	JobsEnabled            *bool
+	DiskOpsV2              *bool
 	DeviceSyncV1           *bool
 	MaintenanceDiskCleanV1 *bool
 	IdentityReceivedAt     *time.Time
@@ -38,9 +39,9 @@ func (s *Store) AgentReadiness(machineID string) (AgentReadiness, error) {
 	}
 	var result AgentReadiness
 	var receivedAt, sentAt, agentStartedAt, agentVersion sql.NullString
-	var jobsEnabled, deviceSyncV1, diskCleanV1 sql.NullInt64
+	var jobsEnabled, deviceSyncV1, diskCleanV1, diskOpsV2 sql.NullInt64
 	err := s.rdb.QueryRow(`
-SELECT m.machine_id,c.received_at,c.sent_at,c.agent_started_at,c.agent_version,c.jobs_enabled,cap.supported,diskcap.supported
+SELECT m.machine_id,c.received_at,c.sent_at,c.agent_started_at,c.agent_version,c.jobs_enabled,cap.supported,diskcap.supported,v2cap.supported
   FROM machine_registry m
   LEFT JOIN machine_checkins c ON c.rowid=(
     SELECT rowid FROM machine_checkins
@@ -51,8 +52,9 @@ SELECT m.machine_id,c.received_at,c.sent_at,c.agent_started_at,c.agent_version,c
 	  ON cap.machine_id=c.machine_id AND cap.sent_at=c.sent_at AND cap.capability=?
 	LEFT JOIN machine_job_capabilities diskcap
 	  ON diskcap.machine_id=c.machine_id AND diskcap.sent_at=c.sent_at AND diskcap.capability=?
+ LEFT JOIN machine_job_capabilities v2cap ON v2cap.machine_id=c.machine_id AND v2cap.sent_at=c.sent_at AND v2cap.capability='disk_ops_v2'
 	 WHERE m.machine_id=?`, model.DeviceSyncJobKind, model.MaintenanceDiskCleanCapability, machineID).Scan(
-		&result.MachineID, &receivedAt, &sentAt, &agentStartedAt, &agentVersion, &jobsEnabled, &deviceSyncV1, &diskCleanV1)
+		&result.MachineID, &receivedAt, &sentAt, &agentStartedAt, &agentVersion, &jobsEnabled, &deviceSyncV1, &diskCleanV1, &diskOpsV2)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentReadiness{}, ErrNotFound
 	}
@@ -92,6 +94,10 @@ SELECT m.machine_id,c.received_at,c.sent_at,c.agent_started_at,c.agent_version,c
 	if diskCleanV1.Valid {
 		supported := diskCleanV1.Int64 == 1
 		result.MaintenanceDiskCleanV1 = &supported
+	}
+	if diskOpsV2.Valid {
+		supported := diskOpsV2.Int64 == 1
+		result.DiskOpsV2 = &supported
 	}
 	var identityPayload, identityReceivedAt, identityMeasuredAt string
 	err = s.rdb.QueryRow(`

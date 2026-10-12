@@ -1,0 +1,11 @@
+{{define "disk_approval_review.html"}}{{template "head" .}}
+{{$r := .DiskApprovalReview}}{{$p := $r.Preview}}{{$a := $p.Approval}}{{$q := $p.Request}}
+<div class="page-heading"><div><h1>Review approval decision</h1><p>{{$a.ID}}: pending → {{$q.Decision}}. This decision does not run a disk operation.</p></div></div>
+<div class="panel"><table><tbody><tr><th>Machine</th><td class="mono">{{$a.MachineID}}</td></tr><tr><th>Operation</th><td>{{$a.Operation}}</td></tr><tr><th>Initiator</th><td>{{$a.Actor}}</td></tr><tr><th>Policy revision</th><td>{{$a.PolicyID}} / {{$a.PolicyRevision}}</td></tr><tr><th>Policy digest</th><td class="mono small" style="overflow-wrap:anywhere">{{$a.PolicyDigest}}</td></tr><tr><th>Item digest</th><td class="mono small" style="overflow-wrap:anywhere">{{$a.ItemDigest}}</td></tr><tr><th>Deadline</th><td>{{$a.Deadline.Format "2006-01-02 15:04 UTC"}}</td></tr><tr><th>Reason</th><td>{{$q.Reason}}</td></tr></tbody></table>
+<p>Approval expires at the original deadline. Policy replacement or another decision invalidates this preview.</p>
+<form method="post" action="/tenant/approvals/apply">
+<input type="hidden" name="id" value="{{$q.ID}}"><input type="hidden" name="decision" value="{{$q.Decision}}"><input type="hidden" name="policy_revision" value="{{$q.PolicyRevision}}"><input type="hidden" name="policy_digest" value="{{$q.PolicyDigest}}"><input type="hidden" name="item_digest" value="{{$q.ItemDigest}}"><input type="hidden" name="deadline" value="{{diskTime $q.Deadline}}"><input type="hidden" name="reason" value="{{$q.Reason}}"><input type="hidden" name="preview_digest" value="{{$p.PreviewDigest}}"><input type="hidden" name="idempotency_key" value="{{$r.IdempotencyKey}}">
+<label><span class="field-label">Type {{$q.ID}} to confirm</span><input name="confirm_id" required autocomplete="off"></label>
+{{template "disk_reauthentication" .}}
+<div class="command-bar" style="margin-top:14px"><button type="submit" {{if not $r.WritesEnabled}}disabled{{end}}>Apply {{$q.Decision}} decision</button><a class="button secondary" href="/tenant/approvals">Cancel</a></div>{{if not $r.WritesEnabled}}<p>Disk writes are disabled in Hub configuration.</p>{{end}}</form></div>
+{{template "foot" .}}{{end}}

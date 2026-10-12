@@ -1040,6 +1040,10 @@ func (s *Server) renderActionStatus(w http.ResponseWriter, r *http.Request, stat
 		nav = "deployments-detail"
 	} else if strings.HasPrefix(back, "/jobs/") {
 		nav = "jobs-detail"
+	} else if back == diskPoliciesBack {
+		nav = "tenant-disk-policies"
+	} else if back == diskApprovalsBack {
+		nav = "tenant-approvals"
 	} else if back == "/tenant/maintenance" {
 		nav = "tenant-maintenance"
 	}
