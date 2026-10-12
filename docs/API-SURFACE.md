@@ -3,13 +3,13 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 298 個 HTTP operations（28 non-operator＋270 operator；140 條 operator JSON）、
+> 逐一對照 305 個 HTTP operations（28 non-operator＋277 operator；140 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 298-operation tally above (28 non-operator + 270 operator). The inventory/contract excludes these six public account operations and totals 292. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 305-operation tally above (28 non-operator + 277 operator). The inventory/contract excludes these six public account operations and totals 299. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -598,6 +598,13 @@ for read catalog scripts and admin for write catalog scripts. Jobs expose
 `schedule_name` for supervision grouping. Numeric five-field cron uses UTC,
 including lists, ranges, and steps; consecutive occurrences must be at least
 five minutes apart. Results and read responses use `Cache-Control: no-store`.
+
+The Schedules Web surface adds seven HTML operator routes. `GET /tenant/schedules`
+and `GET /tenant/schedules/{id}` require view. `GET /tenant/schedules/new`,
+`GET /tenant/schedules/{id}/edit`, `POST /tenant/schedules/preview`,
+`POST /tenant/schedules/apply`, and `POST /tenant/schedules/{id}/run-now` require
+operate. Mutations share the catalog script permission checks above, including
+admin for write catalog scripts, and the preview/apply and run-now contracts.
 
 The catalog also exposes `bat-sweep-report-v1`: bounded connector-host arrays,
 required connector tree digest, optional excerpts (default false), admin approval
