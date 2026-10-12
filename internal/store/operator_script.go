@@ -370,8 +370,13 @@ func validateScriptTargetsTx(tx dbTx, req ScriptRunRequest, e scriptcatalog.Entr
 				reasons = append(reasons, "script_v1 capability not advertised in latest check-in")
 			}
 		}
-		if !e.AllowsOS(osName) {
-			reasons = append(reasons, fmt.Sprintf("OS '%s' not allowed for this script (allowed: %s)", osName, strings.Join(e.AllowedOS, ", ")))
+		platformOS, _, err := latestProfileAssignmentPlatformIdentity(tx, id, osName, "")
+		if err != nil {
+			return err
+		}
+		family := scriptcatalog.OSFamily(platformOS)
+		if !e.AllowsOS(family) {
+			reasons = append(reasons, fmt.Sprintf("OS '%s' (family '%s') not allowed for this script (allowed: %s)", osName, family, strings.Join(e.AllowedOS, ", ")))
 		}
 		rows, err := tx.Query(`SELECT j.state,COALESCE(d.resource_kind,'unknown') FROM jobs j LEFT JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.machine_id=? AND j.state NOT IN (?,?,?,?,?) ORDER BY j.created_at,j.job_id`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention)
 		if err != nil {

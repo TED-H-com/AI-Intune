@@ -18,6 +18,7 @@ import (
 	appcatalog "github.com/teddashh/AI-Intune/internal/catalog"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 )
 
 const (
@@ -242,6 +243,13 @@ func latestProfileAssignmentPlatformIdentity(q operatorProfileAssignmentQueryer,
 	identity, ok := unmarshalInto[model.Identity](payload)
 	if !ok {
 		return "", "", errors.New("store: machine platform observation is invalid")
+	}
+	// Kernel releases such as "6.8.0" are not platform evidence.
+	if family := scriptcatalog.OSFamily(identity.Kernel); family != "" {
+		return family, identity.Arch, nil
+	}
+	if strings.TrimSpace(identity.OS) == "" {
+		return registryOS, identity.Arch, nil
 	}
 	return identity.OS, identity.Arch, nil
 }
