@@ -435,7 +435,7 @@ test_autopilot() (
   trap 'rm -rf "$tmpdir"' EXIT
   mkdir "$tmpdir/bin"
   export PATH="$tmpdir/bin:$PATH" STUB_DIR="$tmpdir" FLY_API_TOKEN=stub-auth
-  unset FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL
+  unset FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL FLY_BUILDER
   cat > "$tmpdir/bin/fly" <<'STUB'
 #!/bin/bash
 set -euo pipefail
@@ -454,11 +454,19 @@ case "$1 $2" in
     echo 'unrelated log content that must stay private'
     echo "first-run setup: open ${STUB_LOG_URL:-https://test-hub.fly.dev}/setup and enter setup code stub-first-run-code" ;;
   'deploy .')
-    if [[ "${STUB_FAIL:-}" == other ]]; then echo 'unrelated failure'; exit 1; fi
-    if [[ "${STUB_FAIL:-}" == depot ]]; then
-      if [[ " $* " == *' --depot=false '* ]]; then
-        touch "$STUB_DIR/fallback"
-      else echo 'authentication handshake failed'; exit 1; fi
+    if [[ " $* " == *' --local-only '* ]]; then
+      echo "${FLY_API_TOKEN} local output"
+      [[ "${STUB_LOCAL_FAIL:-0}" == 0 ]] || exit 1
+    elif [[ " $* " == *' --depot=false '* ]]; then
+      touch "$STUB_DIR/fallback"
+      case "${STUB_FAIL:-}" in
+        transport) echo "${FLY_API_TOKEN} h2c failed to dial gRPC: Unavailable"; exit 1 ;;
+        remote-build) echo 'Dockerfile RUN failed'; exit 1 ;;
+      esac
+    elif [[ "${STUB_FAIL:-}" == other ]]; then
+      echo 'Dockerfile RUN failed'; exit 1
+    elif [[ -n "${STUB_FAIL:-}" ]]; then
+      echo "${FLY_API_TOKEN} authentication handshake failed: EOF"; exit 1
     fi ;;
   'apps destroy')
     if [[ "${STUB_CLEANUP_FAIL:-0}" == 1 && "$3" == fly-builder-new ]]; then exit 1; fi ;;
@@ -469,6 +477,12 @@ STUB
 #!/bin/bash
 printf '%s\n' "$*" >> "$STUB_DIR/curl-calls"
 if [[ "${*: -1}" == */setup ]]; then printf '%s' "${STUB_SETUP_STATUS:-404}"; else printf 200; fi
+STUB
+  cat > "$tmpdir/bin/docker" <<'STUB'
+#!/bin/bash
+printf 'docker:%s\n' "$*" >> "$STUB_DIR/calls"
+echo "${FLY_API_TOKEN} Docker daemon diagnostic"
+exit "${STUB_DOCKER_FAIL:-0}"
 STUB
   chmod +x "$tmpdir/bin/"*
   reset_stub() { : > "$tmpdir/calls"; : > "$tmpdir/curl-calls"; rm -f "$tmpdir/fallback"; }
@@ -541,6 +555,51 @@ STUB
   grep -q '^deploy .*--depot=false' "$tmpdir/calls"
   grep -q '^apps destroy fly-builder-new --yes$' "$tmpdir/calls"
   ! grep -q '^apps destroy fly-builder-keep' "$tmpdir/calls"
+  reset_stub
+  STUB_FAIL=transport deploy
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 3 ]]
+  grep -q '^deploy .*--depot=false --local-only$' "$tmpdir/calls"
+  grep -q '^docker:info$' "$tmpdir/calls"
+  [[ $(grep -n '^apps destroy fly-builder-new' "$tmpdir/calls" | cut -d: -f1) -lt $(grep -n '^deploy .*--local-only' "$tmpdir/calls" | cut -d: -f1) ]]
+  ! grep -q "$FLY_API_TOKEN" "$tmpdir/output"
+  reset_stub
+  if STUB_FAIL=transport STUB_DOCKER_FAIL=1 deploy; then exit 1; fi
+  grep -q -- '--local-only' "$tmpdir/output"
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 2 ]]
+  ! grep -q "$FLY_API_TOKEN" "$tmpdir/output"
+  reset_stub
+  if STUB_FAIL=remote-build deploy; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 2 ]]
+  grep -q '^apps destroy fly-builder-new' "$tmpdir/calls"
+  ! grep -q '^docker:' "$tmpdir/calls"
+  reset_stub
+  STUB_FAIL=transport deploy --builder local
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 1 ]]
+  grep -q '^deploy .*--local-only$' "$tmpdir/calls"
+  ! grep -q -- '--depot=' "$tmpdir/calls"
+  reset_stub
+  FLY_BUILDER=local deploy --dry-run
+  grep -q -- '--local-only' "$tmpdir/output"
+  [[ ! -s "$tmpdir/calls" ]]
+  reset_stub
+  deploy --dry-run
+  grep -q 'Fallback chain: Depot' "$tmpdir/output"
+  grep -q -- '--local-only' "$tmpdir/output"
+  reset_stub
+  if STUB_FAIL=transport deploy --builder depot; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 1 ]]
+  reset_stub
+  STUB_FAIL=depot deploy --builder remote
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 1 ]]
+  grep -q '^apps destroy fly-builder-new' "$tmpdir/calls"
+  reset_stub
+  if STUB_FAIL=transport STUB_CLEANUP_FAIL=1 deploy; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 2 ]]
+  ! grep -q '^docker:' "$tmpdir/calls"
+  reset_stub
+  if STUB_FAIL=transport STUB_LOCAL_FAIL=1 deploy; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 3 ]]
+  ! grep -q "$FLY_API_TOKEN" "$tmpdir/output"
   reset_stub
   if STUB_FAIL=depot STUB_CLEANUP_FAIL=1 deploy; then echo 'fail: teardown failure accepted'; exit 1; fi
   grep -q 'Warning: builder teardown failed for fly-builder-new' "$tmpdir/output"
