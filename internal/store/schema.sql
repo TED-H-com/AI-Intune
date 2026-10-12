@@ -1622,3 +1622,27 @@ CREATE TRIGGER IF NOT EXISTS ops_approval_state_transition BEFORE UPDATE OF stat
  (OLD.state='pending' AND NEW.state IN ('approved','rejected','expired')) OR
  (OLD.state='approved' AND NEW.state IN ('rejected','expired','consumed')))
  BEGIN SELECT RAISE(ABORT,'invalid ops approval transition'); END;
+
+-- P2-03: private typed reports. Paths are never copied to audit/evidence.
+CREATE TABLE IF NOT EXISTS disk_reports (
+ id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id),
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ created_at TEXT NOT NULL, completed_at TEXT, digest TEXT NOT NULL DEFAULT '',
+ metadata TEXT NOT NULL DEFAULT '{}', total_bytes INTEGER NOT NULL DEFAULT 0,
+ next_sequence INTEGER NOT NULL DEFAULT 0, item_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS disk_report_chunks (
+ report_id TEXT NOT NULL REFERENCES disk_reports(id) ON DELETE CASCADE,
+ sequence INTEGER NOT NULL, digest TEXT NOT NULL, data BLOB NOT NULL,
+ PRIMARY KEY(report_id,sequence)
+);
+CREATE TABLE IF NOT EXISTS disk_report_items (
+ report_id TEXT NOT NULL REFERENCES disk_reports(id) ON DELETE CASCADE,
+ position INTEGER NOT NULL, item_id TEXT NOT NULL, private_path TEXT NOT NULL,
+ body TEXT NOT NULL, PRIMARY KEY(report_id,position), UNIQUE(report_id,item_id)
+);
+CREATE TABLE IF NOT EXISTS disk_deep_trigger_slots (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ slot TEXT NOT NULL, outcome TEXT NOT NULL, job_id TEXT REFERENCES jobs(job_id),
+ PRIMARY KEY(machine_id,slot)
+);

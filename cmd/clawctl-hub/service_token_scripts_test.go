@@ -432,7 +432,7 @@ func TestScriptEvidenceEligibilityCannotBeAssignedToOtherRoutes(t *testing.T) {
 }
 
 func TestServiceTokenDiskV2EvidenceIsHumanOnly(t *testing.T) {
-	for _, id := range []string{"disk-safe-preview-v2", "disk-safe-clean-v2"} {
+	for _, id := range []string{"disk-safe-preview-v2", "disk-safe-clean-v2", "disk-deep-report-v1"} {
 		entry, ok := scriptcatalog.Lookup(id)
 		if !ok {
 			t.Fatal(id)

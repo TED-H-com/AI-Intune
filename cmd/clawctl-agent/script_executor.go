@@ -1,20 +1,33 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/diskpolicy"
+	"github.com/teddashh/AI-Intune/internal/diskreport"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
+	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
-type scriptExecutor struct{}
+type scriptExecutor struct{ hubURL, token string }
+type boundedReportBuffer struct{ bytes.Buffer }
 
-func (scriptExecutor) Run(ctx context.Context, job model.JobResponse) ([]model.JobVerificationRequest, error) {
+func (b *boundedReportBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > diskreport.MaxBytes {
+		return 0, fmt.Errorf("report limit exceeded")
+	}
+	return b.Buffer.Write(p)
+}
+
+func (executor scriptExecutor) Run(ctx context.Context, job model.JobResponse) ([]model.JobVerificationRequest, error) {
 	reject := func() ([]model.JobVerificationRequest, error) {
 		return nil, &rejectError{Code: deploy.PreconditionFailed, Detail: "script catalog identity, hash, args, OS or timeout mismatch"}
 	}
@@ -29,10 +42,10 @@ func (scriptExecutor) Run(ctx context.Context, job model.JobResponse) ([]model.J
 	if os.Geteuid() == 0 {
 		return nil, &rejectError{Code: deploy.PreconditionFailed, Detail: "script_v1 refuses root execution in phase 1"}
 	}
-	if scriptcatalog.IsDiskSafe(e.ID) && spec.ExecutionMode != e.Mode {
+	if scriptcatalog.IsDisk(e.ID) && spec.ExecutionMode != e.Mode {
 		return reject()
 	}
-	if scriptcatalog.IsDiskSafe(e.ID) {
+	if scriptcatalog.IsDisk(e.ID) {
 		_, canonical, digest, policyErr := diskpolicy.CanonicalDiskPolicy(spec.Policy)
 		var args struct {
 			Digest string `json:"policy_digest"`
@@ -46,7 +59,46 @@ func (scriptExecutor) Run(ctx context.Context, job model.JobResponse) ([]model.J
 	if err != nil {
 		return reject()
 	}
-	result, err := scriptcatalog.RunPolicy(ctx, e, args, job.ExecutionTimeout, spec.Policy)
+	var result scriptcatalog.Result
+	if e.ID == "disk-deep-report-v1" {
+		if executor.hubURL == "" || executor.token == "" {
+			return reject()
+		}
+		var private boundedReportBuffer
+		result, err = scriptcatalog.RunReport(ctx, e, args, job.ExecutionTimeout, spec.Policy, &private)
+		if err == nil && result.ExitCode == 0 && !result.TimedOut {
+			var canonical []byte
+			var report diskreport.Report
+			report, canonical, err = diskreport.Decode(private.Bytes())
+			endpoint := strings.TrimRight(executor.hubURL, "/") + "/v1/disk-reports/" + url.PathEscape(job.JobID)
+			var receipt diskreport.Receipt
+			if err == nil {
+				for offset, sequence := 0, 0; offset < len(canonical); sequence++ {
+					end := offset + diskreport.MaxChunk
+					if end > len(canonical) {
+						end = len(canonical)
+					}
+					data := canonical[offset:end]
+					err = postJSONStrict(ctx, endpoint+"/chunks", executor.token, diskreport.Chunk{Sequence: sequence, Digest: diskreport.Digest(data), Data: data}, &receipt)
+					if err != nil {
+						break
+					}
+					offset = end
+				}
+			}
+			if err == nil {
+				err = postJSONStrict(ctx, endpoint+"/complete", executor.token, diskreport.Complete{Digest: diskreport.Digest(canonical), ItemCount: len(report.Items)}, &receipt)
+			}
+			if err == nil {
+				safe, _ := json.Marshal(receipt)
+				result.Stdout = string(safe)
+				result.StdoutTruncated = false
+				result.StdoutSHA256 = scriptcatalog.Digest(safe)
+			}
+		}
+	} else {
+		result, err = scriptcatalog.RunPolicy(ctx, e, args, job.ExecutionTimeout, spec.Policy)
+	}
 	if err != nil {
 		return nil, err
 	}

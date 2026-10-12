@@ -25,7 +25,7 @@ for fixture in "$output_dir"/*.html; do
   if ! "$browser_path" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
       --disable-crashpad-for-testing --disable-crash-reporter --disable-breakpad --no-zygote --single-process \
       --user-data-dir="$browser_profile" --hide-scrollbars --no-first-run \
-      --no-default-browser-check --window-size=1440,2200 --force-device-scale-factor=1 \
+      --no-default-browser-check --window-size="${CLAWCTL_SCREENSHOT_VIEWPORT:-1440,2200}" --force-device-scale-factor=1 \
       --screenshot="$png_path" "file://$fixture" > /tmp/p201-screenshot-browser.log 2>&1; then
     printf 'Headless browser could not run; fixture HTML saved to %s\n' "$output_dir"
     exit 0

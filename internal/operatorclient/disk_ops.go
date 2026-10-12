@@ -3,6 +3,7 @@ package operatorclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"net/http"
 	"net/url"
@@ -148,5 +149,26 @@ func (c *Client) DiskOpsStatus(ctx context.Context, id string) (store.DiskOpsSta
 		return out, err
 	}
 	err = decodeStrictJSONDocument(r.body, "disk status", &out)
+	return out, err
+}
+
+func (c *Client) DiskReport(ctx context.Context, id, cursor string, limit int) (store.DiskReportPage, error) {
+	var out store.DiskReportPage
+	path := "/v1/operator/disk-ops/reports/" + url.PathEscape(id) + "?cursor=" + url.QueryEscape(cursor) + "&limit=" + fmt.Sprint(limit)
+	req, err := c.newOperatorRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return out, err
+	}
+	r, err := c.doRaw(req)
+	if err != nil {
+		return out, err
+	}
+	if r.status != 200 {
+		return out, errors.New("disk report read failed")
+	}
+	if err = validateSettingReadHeaders(r.header); err != nil {
+		return out, err
+	}
+	err = decodeStrictJSONDocument(r.body, "disk report", &out)
 	return out, err
 }

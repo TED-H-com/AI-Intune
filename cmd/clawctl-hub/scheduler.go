@@ -23,6 +23,9 @@ func (h *hub) scheduleLoop(ctx context.Context) {
 				resumed = true
 				continue
 			}
+			if err := h.store.ReconcileDiskPressure(jobNow()); err != nil {
+				log.Print("disk pressure reconciliation failed")
+			}
 			if err := h.store.TickSchedules(jobNow()); err != nil {
 				log.Print("scheduler tick failed")
 			}
