@@ -260,7 +260,16 @@ type ApprovalSummaryWindow struct {
 	PreviewToApply DurationPercentiles `json:"preview_to_apply"`
 }
 
+type DiskApprovalCounts struct {
+	Pending                 int      `json:"pending"`
+	Approved                int      `json:"approved"`
+	Rejected                int      `json:"rejected"`
+	Expired                 int      `json:"expired"`
+	Consumed                int      `json:"consumed"`
+	OldestPendingAgeSeconds *float64 `json:"oldest_pending_age_seconds"`
+}
 type ApprovalsSummary struct {
+	DiskOps                 DiskApprovalCounts      `json:"disk_ops"`
 	CachedAt                *time.Time              `json:"cached_at"`
 	SchemaVersion           int                     `json:"schema_version"`
 	EvaluatedAt             time.Time               `json:"evaluated_at"`
@@ -282,6 +291,37 @@ func (s *Store) ApprovalsSummaryContext(ctx context.Context, window string, now 
 	r := ApprovalsSummary{SchemaVersion: 1, EvaluatedAt: now.UTC(), ScanLimit: SupervisionScanLimit,
 		Definition:        "applied = successful canonical preview-gated audit mutation with idempotency key and request digest; excludes replays and transport rejections",
 		UnavailableReason: "successful previews and pending approvals are not persisted; created, expired, abandoned, pending age and preview-to-apply timing are unobservable", Windows: []ApprovalSummaryWindow{}}
+	diskRows, err := s.rdb.QueryContext(ctx, `SELECT CASE WHEN state IN ('pending','approved') AND deadline<=? THEN 'expired' ELSE state END,COUNT(*),MIN(created_at) FROM ops_approvals GROUP BY 1`, fmtTime(now))
+	if err != nil {
+		return r, err
+	}
+	for diskRows.Next() {
+		var state, oldest string
+		var n int
+		if err = diskRows.Scan(&state, &n, &oldest); err != nil {
+			diskRows.Close()
+			return r, err
+		}
+		switch state {
+		case "pending":
+			r.DiskOps.Pending = n
+			age := now.Sub(parseTime(oldest)).Seconds()
+			r.DiskOps.OldestPendingAgeSeconds = &age
+		case "approved":
+			r.DiskOps.Approved = n
+		case "rejected":
+			r.DiskOps.Rejected = n
+		case "expired":
+			r.DiskOps.Expired = n
+		case "consumed":
+			r.DiskOps.Consumed = n
+		}
+	}
+	if err = diskRows.Err(); err != nil {
+		diskRows.Close()
+		return r, err
+	}
+	diskRows.Close()
 	var counts [2]int
 	rows, err := s.rdb.QueryContext(ctx, `SELECT at,action,outcome,COALESCE(idempotency_key,''),COALESCE(request_digest,''),substr(COALESCE(detail,''),1,128) FROM audit_log WHERE at >= ? AND at <= ? ORDER BY at DESC,audit_id DESC LIMIT ?`, fmtTime(now.Add(-7*24*time.Hour)), fmtTime(now), SupervisionScanLimit+1)
 	if err != nil {

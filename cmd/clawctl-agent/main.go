@@ -607,6 +607,9 @@ func runAgent() {
 }
 
 func advertiseJobCapabilities(checkin *model.Checkin) {
+	// Foundation support is Linux/non-root; execution adapters still require their
+	// own catalog entries and reviewed runtime profiles.
+	checkin.DiskOpsV2 = runtime.GOOS == "linux" && os.Geteuid() != 0
 	checkin.DeviceSyncV1 = true
 	checkin.ScriptV1 = runtime.GOOS == "linux" && os.Geteuid() != 0
 	checkin.MaintenanceDiskCleanV1 = true

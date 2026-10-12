@@ -255,8 +255,8 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[37], s.setNavigationLanguage)
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
-	// ⚠ 寫入路徑全部在 actions.go，而且全部是 POST。理由寫在那個檔案的開頭。
-	return append(patterns, s.actionRoutes(mux)...)
+	// Mutation routes are POST-only and delegate to the canonical operator service.
+	return append(append(patterns, s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...)
 }
 
 type maintenancePageView struct {
@@ -340,7 +340,7 @@ func (s *Server) tailnetSettings(w http.ResponseWriter, r *http.Request) {
 
 // enrollment is the discoverable home for the already-canonical enrollment
 // preview/create flow.  The page itself is read-only; its forms still enter
-// through actions.go and the operator service, so moving the UI does not invent
+// through feature handlers and the operator service, so moving the UI does not invent
 // a second enrollment contract.
 func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
@@ -374,6 +374,10 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	DiskPolicies          *diskPoliciesPage
+	DiskPolicyReview      *diskPolicyReviewPage
+	DiskApprovals         *diskApprovalsPage
+	DiskApprovalReview    *diskApprovalReviewPage
 	Title                 string
 	Nav                   string
 	Now                   string
@@ -1535,6 +1539,15 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if len(data.SubNav.Items) == 0 {
 		data.SubNav = subNavigationFor(data)
 	}
+	if !data.Access.CanAdmin {
+		items := data.SubNav.Items[:0]
+		for _, item := range data.SubNav.Items {
+			if item.Href != "/tenant/disk-policies" {
+				items = append(items, item)
+			}
+		}
+		data.SubNav.Items = items
+	}
 	selectSubNavigationLocation(&data.SubNav, r.URL.Query().Get("section"))
 	localizeSubNavigation(&data.SubNav, locale)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1779,6 +1792,10 @@ func subNavigationFor(data page) subNavigation {
 		return reportsSubNavigation("發佈與指派")
 	case "audit":
 		return reportsSubNavigation("稽核記錄")
+	case "tenant-disk-policies":
+		return tenantSubNavigation("Disk policies")
+	case "tenant-approvals":
+		return tenantSubNavigation("Approvals")
 	case "tenant-maintenance":
 		return tenantSubNavigation("維護")
 	case "tenant-data":
@@ -1808,6 +1825,8 @@ func reportsSubNavigation(current string) subNavigation {
 func tenantSubNavigation(current string) subNavigation {
 	return makeSubNavigation("租用戶子選單", current,
 		subNavigationItem{Label: "維護", Href: "/tenant/maintenance"},
+		subNavigationItem{Label: "Disk policies", Href: "/tenant/disk-policies"},
+		subNavigationItem{Label: "Approvals", Href: "/tenant/approvals"},
 		subNavigationItem{Label: "資料揭露", Href: "/tenant/data"},
 	)
 }
@@ -1875,6 +1894,7 @@ func label(s state.State) string {
 }
 
 var funcs = template.FuncMap{
+	"diskTime":               fmtDiskTime,
 	"label":                  label,
 	"deploymentBlockerLabel": operator.DeploymentBlockerLabel,
 	"ruleLabel":              func(kind compliance.RuleKind) string { return compliance.RuleLabel(kind) },

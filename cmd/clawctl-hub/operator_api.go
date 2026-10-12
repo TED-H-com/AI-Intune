@@ -309,6 +309,20 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 	mux.HandleFunc("POST /v1/operator/schedules/{id}/run-now", h.handleScheduleRunNow)
 	mux.HandleFunc("POST /v1/operator/script-runs/preview", h.handleScriptPreview)
 	mux.HandleFunc("POST /v1/operator/script-runs", h.handleScriptApply)
+	patterns = append(patterns, "GET /v1/operator/disk-ops/policies")
+	mux.HandleFunc("GET /v1/operator/disk-ops/policies", h.handleDiskPolicies)
+	patterns = append(patterns, "GET /v1/operator/disk-ops/policies/{id}")
+	mux.HandleFunc("GET /v1/operator/disk-ops/policies/{id}", h.handleDiskPolicies)
+	patterns = append(patterns, "POST /v1/operator/disk-ops/policies/preview")
+	mux.HandleFunc("POST /v1/operator/disk-ops/policies/preview", h.handleDiskPolicies)
+	patterns = append(patterns, "POST /v1/operator/disk-ops/policies")
+	mux.HandleFunc("POST /v1/operator/disk-ops/policies", h.handleDiskPolicies)
+	patterns = append(patterns, "GET /v1/operator/disk-ops/approvals")
+	mux.HandleFunc("GET /v1/operator/disk-ops/approvals", h.handleDiskOpsApprovals)
+	for _, pattern := range []string{"POST /v1/operator/disk-ops/approvals/{id}/decision/preview", "POST /v1/operator/disk-ops/approvals/{id}/decision"} {
+		patterns = append(patterns, pattern)
+		mux.HandleFunc(pattern, h.handleDiskApprovalDecision)
+	}
 	return patterns
 }
 
