@@ -46,3 +46,12 @@ func (s *Service) RecordDiskOpsTransportRejection(actor Actor, subject string, p
 	a.Detail = store.OperatorTransportRejectionPrefix + "disk operation form or reauthentication rejected"
 	return s.store.RecordAudit(a)
 }
+
+func (s *Service) DiskOpsStatus(id string) (store.DiskOpsStatus, error) {
+	return s.store.DiskOpsStatus(id)
+}
+func (s *Service) DiskSchedules() ([]store.Schedule, error)       { return s.store.ScheduleList() }
+func (s *Service) DiskSchedule(id string) (store.Schedule, error) { return s.store.ScheduleGet(id) }
+func (s *Service) DiskScheduleRunNow(id, digest, key string, apply bool, actor Actor) (store.ScheduleResult, error) {
+	return s.store.DiskScheduleRunNow(id, digest, key, apply, auditFromActor(actor))
+}

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/maintenance"
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
@@ -349,5 +350,123 @@ func TestDiskPolicyWebRemovalConfirmation(t *testing.T) {
 	w = diskWebRequest(t, s, "POST", diskPoliciesBack+"/apply", apply, p, false)
 	if w.Code != 303 {
 		t.Fatal("checked removal rejected", w.Code, w.Body.String())
+	}
+}
+
+func TestDiskMachineScreenshotFixtures(t *testing.T) {
+	dir := os.Getenv("CLAWCTL_SCREENSHOT_DIR")
+	s, _ := newServer(t)
+	r := operatorauth.WithPrincipal(httptest.NewRequest("GET", "/machines/machine-fixture/disk", nil), diskWebPrincipal(true, false, ""))
+	status := store.DiskOpsStatus{MachineID: "machine-fixture", Mounts: []store.DiskMountUsage{{Mount: "/", TotalBytes: 100000000000, AvailableBytes: 12000000000, Percent: 88}}, Thresholds: store.DefaultDiskPolicy().Thresholds, WritesEnabled: true}
+	var summary store.DiskSafeEnvelope
+	summary.Summary.FreedBytes = 524288000
+	summary.Summary.CandidateBytes = 537919488
+	summary.Summary.TS = "2026-10-01T12:00:00Z"
+	summary.Summary.Categories = map[string]maintenance.SummaryCategory{"uv": {Status: "skipped", CandidateBytes: 1048576, Note: "deferred: cache lock held by 2"}, "npm": {Status: "ok", CandidateBytes: 536870912, FreedBytes: 524288000, Note: "native GC completed"}, "cargo": {Status: "skipped", Note: "unsupported: native age-aware GC unavailable"}, "docker": {Status: "error", Note: "native tool reported an error; retained for review"}}
+	status.LastSafeTier = &summary
+	preview := summary
+	preview.Summary.FreedBytes = 0
+	preview.Summary.Categories = map[string]maintenance.SummaryCategory{}
+	for name, category := range summary.Summary.Categories {
+		category.FreedBytes = 0
+		preview.Summary.Categories[name] = category
+	}
+	status.Preview = &preview
+	for _, f := range []struct {
+		name string
+		view *diskMachinePage
+	}{
+		{"disk-machine", &diskMachinePage{Status: status, Policies: []store.OpsPolicy{{ID: "disk-default", Revision: 1}}, Schedules: []store.Schedule{{ID: "schedule-fixture", Name: "safe-disk-user", Cron: "17 3 * * *", Enabled: true, Revision: 1, LastJobIDs: []string{"job-fixture"}}}}},
+		{"disk-cleanup-review", &diskMachinePage{Status: status, Review: "Run safe cleanup", Request: `{"scope":"user","policy_id":"disk-default","machine_id":"machine-fixture"}`, Digest: "sha256:" + strings.Repeat("a", 64), Key: "fixture-key", Operation: "script"}},
+	} {
+		w := httptest.NewRecorder()
+		s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: f.view})
+		body := w.Body.Bytes()
+		if !bytes.Contains(body, []byte("</html>")) || bytes.Contains(body, []byte("<script")) || bytes.Contains(body, []byte("ZgotmplZ")) {
+			t.Fatalf("invalid fixture %s: %s", f.name, body)
+		}
+		if f.name == "disk-machine" && (!bytes.Contains(body, []byte("cache lock held by 2")) || !bytes.Contains(body, []byte("value=\"88\""))) {
+			t.Fatal("missing usage or skips")
+		}
+		if dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, f.name+".html"), body, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestDiskMachineWebRenderAndForgedForms(t *testing.T) {
+	s, st := newServer(t)
+	id := onlineMachine(t, st, "example-device")
+	path := "/machines/" + id + "/disk"
+	w := diskWebRequest(t, s, "GET", path, nil, diskWebPrincipal(false, false, ""), false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Mount usage") || !strings.Contains(w.Body.String(), "Preview") || !strings.Contains(w.Body.String(), "Daily schedule templates") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, form := range []url.Values{{"action": {"apply"}, "operation": {"script"}, "request": {`{"targets":["other-machine"]}`}}, {"action": {"unexpected"}}} {
+		w = diskWebRequest(t, s, "POST", path+"/actions", form, diskWebPrincipal(true, false, ""), false)
+		if w.Code == 200 || w.Code == 303 {
+			t.Fatal("forged form accepted")
+		}
+	}
+}
+
+func TestDiskMachineWebCleanupPreviewApplyAndReplay(t *testing.T) {
+	s, st := newServer(t)
+	policy := createDiskWebPolicy(t, s, st)
+	id := onlineMachine(t, st, "example-device")
+	now := time.Now().UTC().Truncate(time.Second).Add(time.Second)
+	c := checkin(now)
+	c.ScriptV1 = true
+	c.DiskOpsV2 = true
+	enabled := true
+	c.JobsEnabled = &enabled
+	if err := st.RecordCheckin(id, c, now); err != nil {
+		t.Fatal(err)
+	}
+	p := diskWebPrincipal(true, false, "")
+	path := "/machines/" + id + "/disk/actions"
+	form := url.Values{"action": {"cleanup"}, "policy_id": {policy.ID}, "scope": {"user"}, "reason": {"review safe cleanup"}}
+	w := diskWebRequest(t, s, "POST", path, form, p, false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Run safe cleanup") {
+		t.Fatal("preview", w.Code, w.Body.String())
+	}
+	apply := diskWebHidden(t, w.Body.String(), "action", "operation", "request", "digest", "key")
+	for i := 0; i < 2; i++ {
+		w = diskWebRequest(t, s, "POST", path, apply, p, false)
+		if w.Code != 303 {
+			t.Fatal("apply", w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestDiskMachinePolishedSizesBadgesAndEmptyStates(t *testing.T) {
+	s, _ := newServer(t)
+	r := operatorauth.WithPrincipal(httptest.NewRequest("GET", "/machines/fixture/disk", nil), diskWebPrincipal(true, false, ""))
+	status := store.DiskOpsStatus{MachineID: "fixture", Thresholds: store.DefaultDiskPolicy().Thresholds, Mounts: []store.DiskMountUsage{{Mount: "/", TotalBytes: 1073741824, AvailableBytes: 1048576, Percent: 99}}}
+	evidence := &store.DiskSafeEnvelope{}
+	evidence.Summary.FreedBytes = 2048
+	evidence.Summary.Categories = map[string]maintenance.SummaryCategory{"uv": {Status: "skipped", Note: "cache lock held"}, "npm": {Status: "ok"}, "docker": {Status: "error"}}
+	status.LastSafeTier, status.Preview = evidence, evidence
+	for _, review := range []string{"", "Run safe cleanup"} {
+		w := httptest.NewRecorder()
+		s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: status, Review: review}})
+		body := w.Body.String()
+		for _, want := range []string{`title="1073741824 bytes">1.0 GiB`, `title="1048576 bytes">1.0 MiB`, `title="2048 bytes">2.0 KiB`, `disk-badge disk-ok`, `disk-badge disk-skipped`, `disk-badge disk-error`, `<fieldset>`, `disk-button-row`} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("review %q lacks %s", review, want)
+			}
+		}
+	}
+	w := httptest.NewRecorder()
+	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: store.DiskOpsStatus{MachineID: "fixture"}}})
+	for _, want := range []string{"No mount measurement yet", "No observation result yet", "No safe-tier cleanup", "Create a disk policy first", "No safe cleanup schedules", "No safe cleanup jobs"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatal("missing empty state", want)
+		}
 	}
 }

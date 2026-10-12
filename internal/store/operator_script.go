@@ -73,6 +73,12 @@ func scriptScope(e scriptcatalog.Entry, a AuditEntry) error {
 		}
 		return nil
 	}
+	if e.ID == "disk-safe-preview-v2" && (a.AuthCapability == "admin" || a.AuthCapability == "view") && a.AuthMethod != operatorauth.AuthMethodServiceToken {
+		return nil
+	}
+	if scriptcatalog.IsDiskSafe(e.ID) && e.Mode == "write" {
+		return humanDiskAdmin(a)
+	}
 	if (e.Mode == "write" && (a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "-admin"))) || (e.Mode == "read" && (a.AuthCapability == "operate" || strings.HasSuffix(a.AuthCapability, "-operate"))) {
 		return nil
 	}
@@ -193,11 +199,23 @@ func (s *Store) ScriptRun(req ScriptRunRequest, apply bool, key string, audit Au
 			return reject("preview digest mismatch")
 		}
 	}
+	if err := s.diskSafeGateTx(tx, req, e, apply); err != nil {
+		_, auditErr := reject(err.Error())
+		var rejected *OperatorRequestError
+		if !errors.As(auditErr, &rejected) {
+			return out, auditErr
+		}
+		return out, err
+	}
 	if err := validateScriptTargetsTx(tx, req, e); err != nil {
-		return reject("target unavailable")
+		return reject(err.Error())
 	}
 	if apply {
 		spec := scriptcatalog.Spec{ExecutionMode: e.Mode, Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: req.Args}
+		spec.Policy, err = diskSafePolicyTx(tx, req, e)
+		if err != nil {
+			return out, err
+		}
 		raw := mustScriptJSON(spec)
 		for _, id := range req.Targets {
 			desired, revision, ce := createDesiredStateTx(tx, "machine", id, scriptcatalog.Kind, e.ID, string(raw), "operator:"+audit.AuthSubject, audit.At)

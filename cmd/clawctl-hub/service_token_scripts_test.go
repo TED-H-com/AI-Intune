@@ -430,3 +430,64 @@ func TestScriptEvidenceEligibilityCannotBeAssignedToOtherRoutes(t *testing.T) {
 		t.Fatal("Hermes preset missing script evidence")
 	}
 }
+
+func TestServiceTokenDiskV2EvidenceIsHumanOnly(t *testing.T) {
+	for _, id := range []string{"disk-safe-preview-v2", "disk-safe-clean-v2"} {
+		entry, ok := scriptcatalog.Lookup(id)
+		if !ok {
+			t.Fatal(id)
+		}
+		spec := scriptcatalog.Spec{ScriptID: id, ScriptSHA256: entry.SHA256, ExecutionMode: entry.Mode, Policy: json.RawMessage(`{"protect_paths":["/private/fixture"]}`)}
+		if serviceTokenScriptEvidenceAllowed(spec, entry, id) {
+			t.Fatal("disk evidence exposed to service token", id)
+		}
+	}
+}
+
+func TestServiceTokenDiskPreviewEvidenceRouteRejectsPinnedPaths(t *testing.T) {
+	f := observedOperatorFixture(t)
+	now := time.Now().UTC()
+	account, err := f.store.CreateFirstAdmin("disk-evidence-admin", usersPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := "GET /v1/operator/jobs/{id}/evidence"
+	_, secret, err := f.store.CreateServiceToken(store.ServiceToken{Name: "disk-evidence", Scope: "view", ExpiresAt: now.Add(time.Hour), Allowlist: []string{route}}, account.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := scriptcatalog.Lookup("disk-safe-preview-v2")
+	policy := store.DefaultDiskPolicy()
+	policy.ProtectPaths = []string{"/private/fixture"}
+	body, _ := json.Marshal(policy)
+	_, _, digest, err := store.CanonicalDiskPolicy(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]string{"scope": "user", "policy_id": "fixture", "policy_digest": digest})
+	spec, _ := json.Marshal(scriptcatalog.Spec{Kind: scriptcatalog.Kind, ScriptID: entry.ID, ScriptSHA256: entry.SHA256, ExecutionMode: "read", Args: args, Policy: body})
+	jobID := f.newJob(t, "sha256:"+scriptcatalog.Digest(spec))
+	job, err := f.store.Job(jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.DB().Exec(`UPDATE desired_state SET resource_kind=?,resource_id=?,spec=? WHERE desired_id=?`, scriptcatalog.Kind, entry.ID, string(spec), job.DesiredID); err != nil {
+		t.Fatal(err)
+	}
+	boundary := newOperatorBoundary(f.mux, &boundaryAuthorizer{}, f.store, operatorRoutePolicies, testOperatorAuthority)
+	path := "/v1/operator/jobs/" + jobID + "/evidence"
+	request := newBoundaryRequest(http.MethodGet, path, nil)
+	request.Header.Set("Authorization", "Bearer "+secret)
+	response := httptest.NewRecorder()
+	boundary.ServeHTTP(response, request)
+	assertAPIError(t, response, http.StatusForbidden, "SERVICE_TOKEN_SCRIPT_EVIDENCE_ONLY")
+	if strings.Contains(response.Body.String(), "/private/fixture") || strings.Contains(response.Body.String(), "protect_paths") {
+		t.Fatal("token denial leaked policy")
+	}
+	human := operatorauth.WithPrincipal(httptest.NewRequest(http.MethodGet, path, nil), operatorauth.Principal{AuthMethod: operatorauth.AuthMethodLocalAccountSession, GrantedCapabilities: operatorauth.CapabilityNames{View: "view"}})
+	response = httptest.NewRecorder()
+	f.mux.ServeHTTP(response, human)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "/private/fixture") {
+		t.Fatal("human evidence unavailable", response.Code)
+	}
+}

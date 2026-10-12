@@ -88,7 +88,7 @@ func TestScriptCatalogAPIObjectEnvelope(t *testing.T) {
 	if err := decoder.Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Items) != 2 {
+	if len(response.Items) != len(scriptcatalog.List()) {
 		t.Fatalf("catalog %+v", response)
 	}
 }

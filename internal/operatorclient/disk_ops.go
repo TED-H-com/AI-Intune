@@ -130,3 +130,23 @@ func (c *Client) DiskApprovalDecision(ctx context.Context, req store.OpsApproval
 	}
 	return out, err
 }
+
+func (c *Client) DiskOpsStatus(ctx context.Context, id string) (store.DiskOpsStatus, error) {
+	var out store.DiskOpsStatus
+	req, err := c.newOperatorRequest(ctx, http.MethodGet, "/v1/operator/disk-ops/status/"+url.PathEscape(id), nil)
+	if err != nil {
+		return out, err
+	}
+	r, err := c.doRaw(req)
+	if err != nil {
+		return out, err
+	}
+	if r.status != 200 {
+		return out, errors.New("disk status read failed")
+	}
+	if err = validateSettingReadHeaders(r.header); err != nil {
+		return out, err
+	}
+	err = decodeStrictJSONDocument(r.body, "disk status", &out)
+	return out, err
+}

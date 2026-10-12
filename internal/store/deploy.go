@@ -887,7 +887,28 @@ func (s *Store) ClaimJob(jobID, machineID string, now time.Time, lease time.Dura
 	// 會從 1 重新開始，跟第一次執行的事件發生 replay conflict，兩次執行的
 	// 證據也無法再只靠 seq 分清。過期單由 reaper 收成 lease_expired；
 	// 要重做同一個期望狀態必須另開新 job_id。
-	res, err := s.execWrite(context.Background(), "claim_job", `
+	tx, err := s.beginWrite(context.Background(), "claim_job")
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var specRaw, kind string
+	err = tx.QueryRow(`SELECT d.spec,d.resource_kind FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=?`, jobID, machineID).Scan(&specRaw, &kind)
+	if err != nil {
+		return "", ErrJobNotFound
+	}
+	if kind == scriptcatalog.Kind {
+		spec, e := scriptcatalog.Decode([]byte(specRaw))
+		if e != nil {
+			return "", e
+		}
+		if entry, ok := scriptcatalog.Lookup(spec.ScriptID); ok && scriptcatalog.IsDiskSafe(entry.ID) {
+			if e = s.diskSafeGateTx(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{machineID}}, entry); e != nil {
+				return "", e
+			}
+		}
+	}
+	res, err := tx.Exec(`
 UPDATE jobs
    SET state = ?, lease_token = ?, lease_expires_at = ?
  WHERE job_id = ?
@@ -910,6 +931,9 @@ UPDATE jobs
 	if n != 1 {
 		// ⚠ 歸屬不符與不存在共用同一個錯誤，避免用領單結果列舉 job_id。
 		return "", ErrJobNotFound
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
 	}
 	return token, nil
 }
@@ -1069,12 +1093,16 @@ func (s *Store) RecordVerification(jobID, machineID, leaseToken, ruleID, command
 		!validJobEvidenceTime(verifiedAt) || !validJobEvidenceTime(receivedAt) {
 		return ErrInvalidJobEvidence
 	}
-	var resourceKind string
-	if err := s.rdb.QueryRow(`SELECT d.resource_kind FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=?`, jobID, machineID).Scan(&resourceKind); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	var resourceKind, resourceID string
+	if err := s.rdb.QueryRow(`SELECT d.resource_kind,d.resource_id FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=?`, jobID, machineID).Scan(&resourceKind, &resourceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if resourceKind == scriptcatalog.Kind {
-		stdoutExcerpt = scriptcatalog.Redact(stdoutExcerpt)
+		if scriptcatalog.IsDiskSafe(resourceID) && ruleID == scriptcatalog.Kind {
+			stdoutExcerpt = scriptcatalog.RedactDiskJSON([]byte(stdoutExcerpt))
+		} else {
+			stdoutExcerpt = scriptcatalog.Redact(stdoutExcerpt)
+		}
 		stderrExcerpt = scriptcatalog.Redact(stderrExcerpt)
 		if len(stdoutExcerpt) > maxJobVerificationExcerptBytes || len(stderrExcerpt) > maxJobVerificationExcerptBytes {
 			return ErrInvalidJobEvidence

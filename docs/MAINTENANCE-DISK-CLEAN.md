@@ -319,3 +319,124 @@ removed protections. Full policy bodies remain on the human UI/API. Approval
 decision reasons are limited to 500 bytes, stripped of control characters before
 digest binding, stored in `ops_approvals.decision_reason`, and included in the
 success audit. Upgrades add this column without replacing existing ledger rows.
+
+## Safe disk operations (P2-02)
+
+The machine **Disk** page (`/machines/{id}/disk`) provides usage bars, policy
+warning/critical thresholds (defaults 85/93), last safe-tier summary and skips,
+an observation Preview, reviewed safe cleanup, and daily schedule creation/edit,
+enable/disable, run-now review and recent job history. Forms use the existing
+cross-origin/CSRF boundary and server-rendered templates without scripts. Apply
+reauthenticates local human admins. Agents and notifiers are optional.
+
+`disk-safe-preview-v2` (read) and `disk-safe-clean-v2` (write) have closed args:
+`scope:user|root`, `policy_id`, `policy_digest`. The current canonical policy is
+resolved inside the job transaction and pinned in the spec. The agent validates
+that same closed contract and digest before executing its fixed adapter; arbitrary
+configuration, commands, environment and executable paths are never job arguments.
+Generic script preview/apply and schedule services supply digest binding,
+idempotency and audit. Cleanup enqueue and claim require both the default-off
+`disk_ops_v2_writes` flag and the exact latest `disk_ops_v2` capability. Disabled
+flags, absent capabilities and revoked policy digests refuse execution. Scheduled
+skips retain their reason in audit; manual admission returns the rejection.
+
+Preview performs stat/no-atime observation only: no GC commands, locks, logs or
+summary files. Directory traversal requires `O_NOATIME`; unavailable observation
+or incomplete `/proc` descriptor visibility is a skip. Temporary-file cleanup is
+owner-only, age-bound and descriptor-relative, with fresh inode/link/owner,
+repository and holder checks immediately before unlink. Symlinks and non-regular
+files are retained. User temp covers `/tmp`, `~/.cache/tmp`, `~/.local/tmp`; inaccessible
+system temp is skipped rather than changing atime. All repository roots, credentials,
+generated images, active models, lock files and additive protect paths override GC.
+
+uv uses native prune, holder counts and a 60-second timeout (timeout is skipped,
+never forced). npm uses native verify only with its locally fixed cache. Cargo is
+explicitly unsupported until a tested native age-aware GC adapter exists. Docker
+requires a verified local context/storage root and protection/holder visibility;
+its only prune commands are `docker image prune -f --filter until=168h` and
+`docker builder prune -f --filter until=168h`. Stronger Docker age policies are
+skipped until a reviewed adapter supports them. Volumes, containers and system
+prune are never permitted. Root scope returns category skips with the typed reason
+`root_helper_missing`; this PR installs no helper, executes no journald vacuum,
+and leaves root timers local-owned. The fixed future journald operation is vacuum
+to 500 MiB only, without a restart.
+
+Write runs share the existing user timer's scope lock. `last.json` retains only
+`fleet-disk-clean/v1` fields; job output is `{summary, operation}` with separate
+policy/ownership/protection/mount metadata. Cache estimates are upper bounds,
+not promised GC savings. Reported freed bytes use observed file/cache shrinkage.
+
+`GET /v1/operator/disk-ops/status/{machine_id}` and MCP `disk_ops_status` return
+bounded mount usage, current policy thresholds, last safe-tier evidence, observation
+preview, skips and ownership. Additional mounts come from adapter observations;
+per-mount measurement times distinguish their age from the latest root check-in.
+The read is human-view and service-token ineligible because mount paths are included.
+MCP status uses mount/protection digests, fixed categories and note digests; private paths remain on the human API/UI. JSON script and schedule applies by admins require fresh LocalAPI authorization before decoding or replay; local sessions use reauthenticated UI applies.
+No new token-eligible writes or delegated cleanup approvals are implemented.
+
+Daily templates use UTC, `catch_up=false`, one machine per schedule and explicit
+operator hour/minute offsets; public defaults contain no fleet names or dates.
+Root templates cannot be enabled without reviewed helper readiness (unavailable
+in this PR). Safe-tier schedules are unaffected by deployment freeze windows;
+canary selection and fleet enablement remain human deployment choices.
+
+Safety fixtures: `bash ops/test-disk-safe-v2.sh`. UI fixture export/render:
+`bash ops/screenshots/phase2-safe-disk.sh`; output is under
+`docs/screenshots/phase2/p2-02/`. If the sandbox prevents headless Chromium, the
+same script retains fixture HTML for rendering outside the sandbox.
+
+Safe-tier observations and unlinks stop before exceeding the policy `max_items`
+budget; incomplete results retain bounded counts and freed-byte evidence. Descriptor
+protection uses device/inode identity, including held-directory descendants, and is
+rechecked immediately before unlink. uv/npm inherit an anchored, no-follow cache
+directory descriptor; cache replacement causes a deferred result. Disk-v2 job
+evidence is human-only even for read scripts because output and pinned policy specs
+contain private paths. MCP status remains a path-safe digest/category projection.
+Docker keeps only the two fixed §4.1 age-filtered commands, including confirmation `-f`.
+
+### Native-cache ownership boundary
+
+The v2 adapter delegates cache-internal garbage collection to the native tool:
+`uv cache prune` owns its cache descendants and takes uv's exclusive cache lock;
+`npm cache verify` / cacache verification touches content-addressed cache entries.
+The adapter does not validate each descendant again at native-tool deletion time.
+It admits only a real, user-owned cache directory, never a symlink root, and rejects
+roots inside or containing configured protections or Git repositories. Both the
+fixed location and its resolved location are checked to cover ancestor aliases.
+
+Before admission, the bounded, no-atime safety scan rejects symlinks escaping the
+cache root, including links at depths one and two. It also rejects unresolved links,
+protected targets, inaccessible trees and exhausted entry/item/time budgets with
+a skip reason; it never follows links while traversing. Contained links remain
+native-tool owned. The current scan conservatively checks deeper descendants too.
+uv/npm receive the cache location only as `/proc/self/fd/<n>`, with the no-follow
+root directory descriptor inherited across spawn. Root replacement causes a skip.
+The native lock, together with this explicit ownership boundary, governs mutations
+inside the admitted cache; no arbitrary user temporary tree is delegated to GC.
+
+Temporary-file unlink performs its final full identity comparison (device, inode,
+file type, size, nanosecond modification/change times, owner and link count) after
+holder scanning and protection checks, directly before unlink through the same
+retained no-follow parent directory descriptor. Changed entries are retained.
+Temporary directories are retained; the adapter never recursively removes them.
+
+Protection admission normalizes configured paths and concrete built-in home paths
+before each category scan. Each keeps its absolute lexical path and, when present,
+its strict resolved path. Candidates and cache roots use both forms for containment
+in either direction; a protection symlink into a cache or temporary subtree therefore
+protects its destination. Built-in name patterns remain unconditional. Missing ordinary
+paths retain lexical protection; dangling links, loops, inaccessible ancestors or
+other resolution failures defer the category with an explicit reason.
+
+Preview defers strict symlink resolution on filesystems without `noatime`: reading
+an alias can update the symlink's access time. It checks ancestors before following
+them and returns a resolution-failure skip instead of changing fixture timestamps.
+Cleanup resolves aliases strictly; both modes retain the protected subtree.
+
+A run retains the original protection specifications, resolved targets, and alias
+`lstat` identities (including aliases in ancestor and target chains). Immediately
+before unlink or native GC admission, it re-resolves those specifications and
+compares the snapshot. Any change or resolution failure defers the item and latches
+a protection-change skip for all remaining mutations in that run, even if the alias
+is restored later. A new invocation establishes a fresh baseline. Alias access times
+and ordinary directory modification times do not participate in identity checks.

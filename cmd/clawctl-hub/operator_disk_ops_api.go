@@ -123,3 +123,17 @@ func (h *hub) requireDiskJSONFreshHuman(w http.ResponseWriter, r *http.Request, 
 	h.rejectOperatorPolicyTransport(w, r, operatorActor(r), action, 403, "FORBIDDEN", "JSON apply requires fresh human authorization; local-account users must apply through the reauthenticated Hub UI")
 	return false
 }
+
+func (h *hub) handleDiskOpsStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		writeErr(w, 400, "BAD_REQUEST", "query parameters are not supported")
+		return
+	}
+	out, err := h.retentionOperator().DiskOpsStatus(r.PathValue("machine_id"))
+	if err != nil {
+		writeSettingErr(w, "disk status", err)
+		return
+	}
+	writeJSON(w, 200, out)
+}

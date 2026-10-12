@@ -48,6 +48,7 @@ func (s *Server) diskOpsRoutes(mux *http.ServeMux) []string {
 		pattern string
 		handler http.HandlerFunc
 	}{
+		{"GET /machines/{id}/disk", s.diskMachine}, {"POST /machines/{id}/disk/actions", s.diskMachineAction},
 		{"GET /tenant/disk-policies", s.diskPolicies}, {"GET /tenant/disk-policies/{id}", s.diskPolicies},
 		{"POST /tenant/disk-policies/preview", s.previewDiskPolicy}, {"POST /tenant/disk-policies/apply", s.applyDiskPolicy},
 		{"GET /tenant/approvals", s.diskApprovals}, {"POST /tenant/approvals/preview", s.previewDiskApproval}, {"POST /tenant/approvals/apply", s.applyDiskApproval},

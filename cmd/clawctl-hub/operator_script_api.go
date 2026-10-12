@@ -48,6 +48,9 @@ func (h *hub) handleScriptRun(w http.ResponseWriter, r *http.Request, apply bool
 	if !h.requireAuditedJSON(w, r, actor, action) {
 		return
 	}
+	if apply && principal.Has(operatorauth.Admin) && !h.requireDiskJSONFreshHuman(w, r, action) {
+		return
+	}
 	var body store.ScriptRunRequest
 	if rejection := decodeOperatorBody(w, r, &body); rejection != nil {
 		h.rejectOperatorPolicyTransport(w, r, actor, action, rejection.Status, rejection.Code, rejection.Detail)

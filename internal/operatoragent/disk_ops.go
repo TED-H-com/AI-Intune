@@ -15,6 +15,7 @@ type diskPolicyHub interface {
 func diskPolicyTools() []Tool {
 	id := strField(1, 128, idPattern, "Policy ID")
 	out := []Tool{{Name: "disk_policy_list", Description: "List disk policy revisions. Human view only; protected paths are represented by counts and digests.", InputSchema: obj(map[string]any{}), Annotations: readAnn("disk_policy_list")}, {Name: "disk_policy_get", Description: "Get latest disk policy revision. Human view only.", InputSchema: obj(map[string]any{"id": id}, "id"), Annotations: readAnn("disk_policy_get")}}
+	out = append([]Tool{{Name: "disk_ops_status", Description: "Read disk usage and safe-tier results with paths represented by digests. Human view only.", InputSchema: obj(map[string]any{"machine_id": strField(1, 128, idPattern, "Machine ID")}, "machine_id"), Annotations: readAnn("disk_ops_status")}}, out...)
 	for _, phase := range []string{"preview", "apply"} {
 		name := "disk_policy_upsert_" + phase
 		props := map[string]any{"id": id, "body": diskPolicySchema(), "expected_revision": intBound(0, 2147483647, "Current revision; zero for create"), "reason": strField(1, 500, "", "Reason without secrets")}
@@ -43,6 +44,28 @@ func diskPolicySchema() map[string]any {
 	}, "schema_version", "safe_tier", "protect_paths", "thresholds", "quarantine_ttl_days", "scan_budgets")
 }
 func (s *Service) diskPolicyCall(ctx context.Context, name string, raw json.RawMessage) (any, error) {
+	if name == "disk_ops_status" {
+		h, ok := s.Hub.(interface {
+			DiskOpsStatus(context.Context, string) (store.DiskOpsStatus, error)
+		})
+		if !ok {
+			return nil, &CallError{Code: "not_configured", Message: "disk status client unavailable"}
+		}
+		var req struct {
+			MachineID string `json:"machine_id"`
+		}
+		if e := decodeArgs(raw, &req); e != nil {
+			return nil, e
+		}
+		if req.MachineID == "" {
+			return nil, &CallError{Code: "invalid_arguments", Message: "machine_id required"}
+		}
+		v, e := h.DiskOpsStatus(ctx, req.MachineID)
+		if e != nil {
+			return nil, hubErr(e)
+		}
+		return redactedDiskStatus(v), nil
+	}
 	h, ok := s.Hub.(diskPolicyHub)
 	if !ok {
 		return nil, &CallError{Code: "not_configured", Message: "disk policy client unavailable"}
