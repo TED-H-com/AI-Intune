@@ -79,7 +79,7 @@ func diskSchema() Schema {
 }
 func IsDiskSafe(id string) bool { return id == "disk-safe-preview-v2" || id == "disk-safe-clean-v2" }
 
-func IsDisk(id string) bool { return IsDiskSafe(id) || id == "disk-deep-report-v1" }
+func IsDisk(id string) bool { return IsDiskSafe(id) || id == "disk-deep-report-v1" || IsDiskAction(id) }
 func deepSchema() Schema {
 	s := diskSchema()
 	delete(s.Properties, "scope")
@@ -90,6 +90,10 @@ func deepSchema() Schema {
 }
 
 var registry = []Entry{
+	{"disk-approved-quarantine-v1", "1", "b331c74b57728aed88f4c4a32c286af9909f0adc76eb25be15aa14634f7de5f6", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskQuarantine},
+	{"disk-approved-delete-v1", "1", "fdc52c3cdd4c0ec5e44907e937df681aaa99820fab9ac6886643cb3ffc591a35", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskDelete},
+	{"disk-quarantine-expire-v1", "1", "3f61ba4510da860c47d9b6a2653bb6ba9fe265bbb688e2ac85d7617ee6f504ec", expirySchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskExpire},
+	{"disk-quarantine-restore-v1", "1", "20b7d4e22096ad03c76d0d8cbb84884e7c49b1f2383863091d7c6c8babcb24f4", actionSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskRestore},
 	{"disk-deep-report-v1", "1", "7ef5121158c2c23573aee0aa828deff7c0994c8b7a88d4eabcfb3b1cfc64bfce", deepSchema(), 600, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskDeep},
 	{"disk-safe-preview-v2", "2", "95ae88877bb530293c3fb75b774b1ed5c274bb3397bfefec04117b7bd15b94fe", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
 	{"disk-safe-clean-v2", "2", "049158e13d64e0a9de03bb3697fad76c36faa19481a98bf0fdb9037abf362f96", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},
@@ -260,17 +264,17 @@ func RedactDiskJSON(raw []byte) string {
 	var document map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	if len(raw) > 64<<10 || decoder.Decode(&document) != nil {
+	if len(raw) > 256<<10 || decoder.Decode(&document) != nil {
 		return ""
 	}
 	var clean func(any, string) any
 	clean = func(v any, key string) any {
 		switch value := v.(type) {
 		case string:
-			if key == "schema" && (value == "fleet-disk-clean/v1" || value == "disk-safe/v2") {
+			if key == "schema" && (value == "fleet-disk-clean/v1" || value == "disk-safe/v2" || value == "disk-action-result/v1") {
 				return value
 			}
-			if key == "policy_id" && regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`).MatchString(value) && !regexp.MustCompile(`^(sk-|gh[pousr]_|github_pat_)`).MatchString(value) {
+			if (key == "policy_id" || key == "manifest_id" || key == "item_id" || key == "job_id" || key == "approval_id") && regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`).MatchString(value) && !regexp.MustCompile(`^(sk-|gh[pousr]_|github_pat_)`).MatchString(value) {
 				return value
 			}
 			if (key == "policy_digest" || key == "config_digest") && len(value) == 71 && strings.HasPrefix(value, "sha256:") {
@@ -287,6 +291,10 @@ func RedactDiskJSON(raw []byte) string {
 			return Redact(value)
 		case map[string]any:
 			for k, x := range value {
+				if k == "record" {
+					delete(value, k)
+					continue
+				}
 				value[k] = clean(x, k)
 			}
 			return value

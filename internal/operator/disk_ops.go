@@ -55,3 +55,33 @@ func (s *Service) DiskSchedule(id string) (store.Schedule, error) { return s.sto
 func (s *Service) DiskScheduleRunNow(id, digest, key string, apply bool, actor Actor) (store.ScheduleResult, error) {
 	return s.store.DiskScheduleRunNow(id, digest, key, apply, auditFromActor(actor))
 }
+
+// DiskActionPreview creates only a pending human decision and redacted evidence.
+// Mutation dispatch uses DiskActionDecide, never a generic script apply.
+func (s *Service) DiskActionPreview(req store.DiskActionRequest, actor Actor) (store.DiskActionPreview, error) {
+	return s.store.DiskActionPreview(req, auditFromActor(actor))
+}
+
+// DiskActionDecide is the dedicated exact action boundary. Approval consumption
+// and job creation are atomic; generic script applies cannot dispatch it.
+func (s *Service) DiskActionDecide(req store.OpsApprovalDecisionRequest, apply bool, key string, actor Actor) (store.OpsApprovalDecisionResult, error) {
+	return s.store.DiskActionDecide(req, apply, key, auditFromActor(actor))
+}
+
+func (s *Service) DiskQuarantineList(machine string) ([]store.DiskQuarantineItem, error) {
+	return s.store.DiskQuarantineList(machine)
+}
+func (s *Service) DiskRestorePreview(req store.DiskRestoreRequest, actor Actor) (store.DiskActionPreview, error) {
+	return s.store.DiskRestorePreview(req, auditFromActor(actor))
+}
+func (s *Service) DiskManifestHuman(id string, actor Actor) (store.DiskManifest, error) {
+	return s.store.DiskManifestHuman(id, auditFromActor(actor))
+}
+
+func (s *Service) DiskReportDecisions(id string) (map[string]string, error) {
+	return s.store.DiskReportDecisions(id)
+}
+
+func (s *Service) DiskRestoreApply(req store.OpsApprovalDecisionRequest, apply bool, key string, actor Actor) (store.OpsApprovalDecisionResult, error) {
+	return s.store.DiskRestoreApply(req, apply, key, auditFromActor(actor))
+}

@@ -49,6 +49,10 @@ func (s *Server) diskOpsRoutes(mux *http.ServeMux) []string {
 		handler http.HandlerFunc
 	}{
 		{"GET /disk-reports/{id}", s.diskReport},
+		{"POST /disk-reports/{id}/actions", s.diskReportAction},
+		{"POST /disk-actions/apply", s.diskActionApply},
+		{"GET /machines/{id}/quarantine", s.diskQuarantine},
+		{"POST /machines/{id}/quarantine/restore", s.diskRestoreAction},
 		{"GET /machines/{id}/disk", s.diskMachine}, {"POST /machines/{id}/disk/actions", s.diskMachineAction},
 		{"GET /tenant/disk-policies", s.diskPolicies}, {"GET /tenant/disk-policies/{id}", s.diskPolicies},
 		{"POST /tenant/disk-policies/preview", s.previewDiskPolicy}, {"POST /tenant/disk-policies/apply", s.applyDiskPolicy},
@@ -93,7 +97,7 @@ func diskOpsForm(w http.ResponseWriter, r *http.Request, fields ...string) bool 
 		allowed[f] = true
 	}
 	for k, v := range r.PostForm {
-		if !allowed[k] || (len(v) != 1 && k != "acknowledge_removed_paths") {
+		if !allowed[k] || (len(v) != 1 && k != "acknowledge_removed_paths" && k != "item_ids") {
 			return false
 		}
 	}
@@ -300,3 +304,32 @@ func (s *Server) applyDiskApproval(w http.ResponseWriter, r *http.Request) {
 
 // fmtDiskTime uses the same seconds-level binding as the canonical service.
 func fmtDiskTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// fmtDiskExpiry presents the remaining TTL alongside the separately rendered
+// absolute UTC deadline. It does not promise that safety-deferred expiry ran.
+func fmtDiskExpiry(seconds int64) string {
+	if seconds <= 0 {
+		return "Expiry due"
+	}
+	if days := seconds / 86400; days > 0 {
+		if days == 1 {
+			return "1 day left"
+		}
+		return strconv.FormatInt(days, 10) + " days left"
+	}
+	if seconds >= 3600 {
+		hours := seconds / 3600
+		if seconds%3600 != 0 {
+			hours++
+		}
+		return "in " + strconv.FormatInt(hours, 10) + " h"
+	}
+	if seconds >= 60 {
+		minutes := seconds / 60
+		if seconds%60 != 0 {
+			minutes++
+		}
+		return "in " + strconv.FormatInt(minutes, 10) + " min"
+	}
+	return "Less than a minute left"
+}

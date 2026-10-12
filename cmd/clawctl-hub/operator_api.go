@@ -309,6 +309,10 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 	mux.HandleFunc("POST /v1/operator/schedules/{id}/run-now", h.handleScheduleRunNow)
 	mux.HandleFunc("POST /v1/operator/script-runs/preview", h.handleScriptPreview)
 	mux.HandleFunc("POST /v1/operator/script-runs", h.handleScriptApply)
+	for _, pattern := range []string{"POST /v1/operator/disk-ops/actions/preview", "POST /v1/operator/disk-ops/actions/decide", "GET /v1/operator/disk-ops/quarantine/{machine_id}", "POST /v1/operator/disk-ops/restores/preview", "POST /v1/operator/disk-ops/restores"} {
+		patterns = append(patterns, pattern)
+		mux.HandleFunc(pattern, h.handleOperatorDiskActions)
+	}
 	patterns = append(patterns, "GET /v1/operator/disk-ops/reports", "GET /v1/operator/disk-ops/reports/{id}")
 	mux.HandleFunc("GET /v1/operator/disk-ops/reports", h.handleDiskReports)
 	mux.HandleFunc("GET /v1/operator/disk-ops/reports/{id}", h.handleDiskReports)

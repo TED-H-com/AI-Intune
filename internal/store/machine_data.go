@@ -47,6 +47,12 @@ var machineDataTables = []MachineDataTable{
 	{Table: "disk_reports", TimeCol: "created_at"},
 	{Table: "disk_deep_trigger_slots", TimeCol: "slot"},
 	{Table: "ops_approvals", TimeCol: "created_at"},
+	{Table: "ops_manifests", TimeCol: "created_at"},
+	{Table: "disk_quarantine", TimeCol: "received_at"},
+	{Table: "disk_action_receipts", TimeCol: "received_at"},
+	{Table: "disk_action_items", TimeCol: "received_at"},
+	{Table: "disk_expiry_jobs", TimeCol: "created_at"},
+
 	{Table: "maintenance_summaries", TimeCol: "received_at"},
 	{Table: "maintenance_rollout_targets", TimeCol: ""},
 	{Table: "maintenance_assignments", TimeCol: "assigned_at"},

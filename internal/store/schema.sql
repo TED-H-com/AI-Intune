@@ -1646,3 +1646,39 @@ CREATE TABLE IF NOT EXISTS disk_deep_trigger_slots (
  slot TEXT NOT NULL, outcome TEXT NOT NULL, job_id TEXT REFERENCES jobs(job_id),
  PRIMARY KEY(machine_id,slot)
 );
+
+-- P2-04 exact action previews. Private bindings never enter public projections.
+CREATE TABLE IF NOT EXISTS ops_manifests (
+ id TEXT PRIMARY KEY, approval_id TEXT NOT NULL UNIQUE REFERENCES ops_approvals(id),
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ digest TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS ops_manifest_immutable BEFORE UPDATE ON ops_manifests
+ BEGIN SELECT RAISE(ABORT,'immutable ops manifest'); END;
+
+CREATE INDEX IF NOT EXISTS ops_manifests_machine ON ops_manifests(machine_id,created_at);
+
+CREATE TABLE IF NOT EXISTS disk_quarantine (
+ manifest_id TEXT NOT NULL REFERENCES ops_manifests(id), item_id TEXT NOT NULL,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), state TEXT NOT NULL,
+ identity TEXT NOT NULL, original_parent TEXT NOT NULL, quarantined_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL, received_at TEXT NOT NULL, allocated_bytes INTEGER NOT NULL,
+ PRIMARY KEY(manifest_id,item_id)
+);
+CREATE INDEX IF NOT EXISTS disk_quarantine_due ON disk_quarantine(machine_id,state,expires_at);
+CREATE TABLE IF NOT EXISTS disk_action_receipts (
+ job_id TEXT PRIMARY KEY REFERENCES jobs(job_id), machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ digest TEXT NOT NULL, received_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS disk_action_items (
+ job_id TEXT NOT NULL REFERENCES jobs(job_id), manifest_id TEXT NOT NULL, item_id TEXT NOT NULL,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), status TEXT NOT NULL,
+ reason TEXT NOT NULL, received_at TEXT NOT NULL, PRIMARY KEY(job_id,manifest_id,item_id)
+);
+CREATE TABLE IF NOT EXISTS disk_expiry_jobs (
+ job_id TEXT PRIMARY KEY REFERENCES jobs(job_id), machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ policy_id TEXT NOT NULL, policy_revision INTEGER NOT NULL, policy_digest TEXT NOT NULL,
+ selection TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS disk_expiry_job_immutable BEFORE UPDATE ON disk_expiry_jobs
+ BEGIN SELECT RAISE(ABORT,'immutable expiry authorization'); END;

@@ -36,7 +36,7 @@ func (executor scriptExecutor) Run(ctx context.Context, job model.JobResponse) (
 		return reject()
 	}
 	e, ok := scriptcatalog.Lookup(spec.ScriptID)
-	if !ok || spec.ScriptSHA256 != e.SHA256 || scriptcatalog.Digest(e.Bytes) != spec.ScriptSHA256 || !e.AllowsOS(runtime.GOOS) || job.ResourceKind != scriptcatalog.Kind || job.ResourceID != e.ID || job.ExecutionTimeout < 1 || job.ExecutionTimeout > e.MaxTimeout || job.Irreversible {
+	if !ok || spec.ScriptSHA256 != e.SHA256 || scriptcatalog.Digest(e.Bytes) != spec.ScriptSHA256 || !e.AllowsOS(runtime.GOOS) || job.ResourceKind != scriptcatalog.Kind || job.ResourceID != e.ID || job.ExecutionTimeout < 1 || job.ExecutionTimeout > e.MaxTimeout || (job.Irreversible && !scriptcatalog.IsDiskAction(e.ID)) {
 		return reject()
 	}
 	if os.Geteuid() == 0 {
@@ -51,7 +51,7 @@ func (executor scriptExecutor) Run(ctx context.Context, job model.JobResponse) (
 			Digest string `json:"policy_digest"`
 		}
 		_ = json.Unmarshal(spec.Args, &args)
-		if policyErr != nil || args.Digest != digest || string(canonical) != string(spec.Policy) {
+		if policyErr != nil || (!scriptcatalog.IsDiskAction(e.ID) && args.Digest != digest) || string(canonical) != string(spec.Policy) {
 			return reject()
 		}
 	}
@@ -60,7 +60,42 @@ func (executor scriptExecutor) Run(ctx context.Context, job model.JobResponse) (
 		return reject()
 	}
 	var result scriptcatalog.Result
-	if e.ID == "disk-deep-report-v1" {
+	if scriptcatalog.IsDiskAction(e.ID) {
+		if executor.hubURL == "" || executor.token == "" || job.Irreversible != (e.ID == "disk-approved-delete-v1" || e.ID == "disk-quarantine-expire-v1") {
+			return reject()
+		}
+		var binding struct {
+			ID     string `json:"manifest_id"`
+			Digest string `json:"manifest_digest"`
+		}
+		if e.ID == "disk-quarantine-expire-v1" {
+			var expiry struct {
+				Digest string `json:"policy_digest"`
+			}
+			_ = json.Unmarshal(args, &expiry)
+			binding.ID = "expiry"
+			binding.Digest = expiry.Digest
+		}
+		if json.Unmarshal(args, &binding) != nil || binding.ID == "" {
+			return reject()
+		}
+		renew := func(callCtx context.Context) (json.RawMessage, error) {
+			return executor.fetchDiskGrant(callCtx, job.JobID, binding.ID, binding.Digest)
+		}
+		grant, grantErr := renew(ctx)
+		if grantErr != nil {
+			return nil, &rejectError{Code: deploy.PreconditionFailed, Detail: "signed disk action grant unavailable"}
+		}
+		var private boundedReportBuffer
+		result, err = scriptcatalog.RunDiskAction(ctx, e, args, job.ExecutionTimeout, scriptcatalog.DiskActionRun{MachineID: job.MachineID, JobID: job.JobID, Authorization: grant, Renew: renew, Sink: &private})
+		if err == nil && result.ExitCode == 0 && !result.TimedOut {
+			var receipt struct {
+				Digest string `json:"digest"`
+			}
+			endpoint := strings.TrimRight(executor.hubURL, "/") + "/v1/disk-actions/" + url.PathEscape(job.JobID) + "/results"
+			err = postJSONStrict(ctx, endpoint, executor.token, json.RawMessage(private.Bytes()), &receipt)
+		}
+	} else if e.ID == "disk-deep-report-v1" {
 		if executor.hubURL == "" || executor.token == "" {
 			return reject()
 		}
