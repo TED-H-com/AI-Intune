@@ -401,7 +401,7 @@ func TestScriptTargetFailureReasons(t *testing.T) {
 		{"disabled", `UPDATE machine_checkins SET jobs_enabled=0 WHERE machine_id=?`, "jobs disabled in latest check-in"},
 		{"capability absent", `DELETE FROM machine_job_capabilities WHERE machine_id=?`, "script_v1 capability not advertised in latest check-in"},
 		{"capability false", `UPDATE machine_job_capabilities SET supported=0 WHERE machine_id=?`, "script_v1 capability not advertised in latest check-in"},
-		{"os", `UPDATE machine_registry SET os='unsupported' WHERE machine_id=?`, "OS 'unsupported' not allowed for this script (allowed: "},
+		{"os", `UPDATE machine_registry SET os='unsupported' WHERE machine_id=?`, "OS 'unsupported' (family '') not allowed for this script (allowed: "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, req, a, _ := scriptFixture(t)
