@@ -1533,19 +1533,6 @@ func stripReceivedAt(received []time.Time, interval time.Duration) []Block {
 // ---------------------------------------------------------------- helpers
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data page) {
-	if data.DiskAlerts != nil && s.operator != nil {
-		labels := map[string][]store.DiskMountUsage{}
-		for _, a := range data.DiskAlerts.Items {
-			if _, ok := labels[a.MachineID]; !ok {
-				if status, e := s.operator.DiskOpsStatus(a.MachineID); e == nil {
-					labels[a.MachineID] = status.Mounts
-				} else {
-					labels[a.MachineID] = nil
-				}
-			}
-		}
-		data.DiskAlerts.Labels = labels
-	}
 	locale := navigationLocaleFromRequest(r)
 	data.Locale = navigationLocaleFor(r, data.Title)
 	if data.DiskMachine != nil {

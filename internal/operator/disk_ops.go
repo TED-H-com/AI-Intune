@@ -107,3 +107,10 @@ func (s *Service) DiskAlertAcknowledge(req store.DiskAlertAckRequest, apply bool
 func (s *Service) DiskSupervision(machine string) (store.DiskSupervision, error) {
 	return s.store.DiskSupervision(machine)
 }
+
+func (s *Service) DiskAlertsPageAfter(after string) (store.DiskAlertsPage, error) {
+	return s.store.DiskAlertsPageAfter(after)
+}
+func (s *Service) DiskAlertMountLabels(machines []string) (map[string][]store.DiskMountUsage, error) {
+	return s.store.DiskAlertMountLabels(machines)
+}

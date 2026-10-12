@@ -9,6 +9,7 @@ import (
 )
 
 type diskAlertsPage struct {
+	Next    string
 	Labels  map[string][]store.DiskMountUsage
 	Items   []store.DiskAlert
 	Ack     *store.DiskAlertAckResult
@@ -17,13 +18,43 @@ type diskAlertsPage struct {
 }
 
 func (s *Server) diskAlerts(w http.ResponseWriter, r *http.Request) {
-	items, err := s.operator.DiskAlertsList("")
+	if len(r.URL.Query()) > 1 || (len(r.URL.Query()) == 1 && !r.URL.Query().Has("after")) || len(r.URL.Query()["after"]) > 1 {
+		http.Error(w, "Invalid pagination", http.StatusBadRequest)
+		return
+	}
+	data, err := loadDiskAlertsPage(s.operator, r.URL.Query().Get("after"))
 	if err != nil {
 		s.diskOpsError(w, r, err, "/")
 		return
 	}
-	s.render(w, r, "disk_alerts.html", page{Title: "Disk alerts", Nav: "tenant-disk-alerts", DiskAlerts: &diskAlertsPage{Items: items}})
+	s.render(w, r, "disk_alerts.html", page{Title: "Disk alerts", Nav: "tenant-disk-alerts", DiskAlerts: data})
 }
+
+type diskAlertsPageSource interface {
+	DiskAlertsPageAfter(string) (store.DiskAlertsPage, error)
+	DiskAlertMountLabels([]string) (map[string][]store.DiskMountUsage, error)
+}
+
+func loadDiskAlertsPage(source diskAlertsPageSource, after string) (*diskAlertsPage, error) {
+	result, err := source.DiskAlertsPageAfter(after)
+	if err != nil {
+		return nil, err
+	}
+	machines := []string{}
+	seen := map[string]bool{}
+	for _, a := range result.Items {
+		if !seen[a.MachineID] {
+			seen[a.MachineID] = true
+			machines = append(machines, a.MachineID)
+		}
+	}
+	labels, err := source.DiskAlertMountLabels(machines)
+	if err != nil {
+		return nil, err
+	}
+	return &diskAlertsPage{Items: result.Items, Labels: labels, Next: result.Next}, nil
+}
+
 func (s *Server) diskOwnershipAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	back := "/machines/" + id + "/disk"
