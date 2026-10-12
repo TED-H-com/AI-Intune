@@ -101,7 +101,7 @@ class Actions(unittest.TestCase):
                 self.assertEqual((q/(name+'.data.saved')).read_bytes(),b'preserved content')
                 self.assertFalse(self.file.exists())
 
-    def test_restore_final_rename_substitution_is_verified_and_rolled_back(self):
+    def test_restore_final_rename_substitution_requires_inode_recovery(self):
         self.run_action('quarantine');manifest=self.restore_manifest();mod=self.mods['restore'];rename=mod.noreplace
         def replace_after(srcfd,src,dstfd,dst):
             rename(srcfd,src,dstfd,dst)
@@ -110,10 +110,76 @@ class Actions(unittest.TestCase):
                 fd=os.open(dst,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600,dir_fd=dstfd)
                 os.write(fd,b'attacker destination');os.close(fd)
         with patch.object(mod,'noreplace',side_effect=replace_after):result=self.run_action('restore',manifest)
-        self.assertEqual(result['items'][0]['reason'],'restore_identity_changed')
-        self.assertFalse(self.file.exists())
-        self.assertEqual(self.file.with_name('old.txt.saved').read_bytes(),b'preserved content')
-        q,name,_=self.record();self.assertEqual((q/(name+'.data')).read_bytes(),b'attacker destination')
+        self.assertEqual(result['items'][0]['reason'],'needs_recovery')
+        self.assertEqual(self.file.read_bytes(),b'attacker destination')
+        q,name,record=self.record()
+        self.assertEqual(record['state'],'needs_recovery')
+        self.assertEqual(record['recovery']['expected_identity']['inode'],self.item['identity']['inode'])
+        self.assertEqual(record['recovery']['conflicting_identity']['inode'],self.file.stat().st_ino)
+        self.assertFalse((q/(name+'.data')).exists())
+        self.assertEqual(result['freed_bytes'],0)
+        # The original inode's new name is attacker-controlled. Recovery must
+        # not trust that name or silently move either entry on a later retry.
+        retry=self.run_action('restore',manifest)
+        self.assertEqual(retry['items'][0]['reason'],'needs_recovery')
+        self.assertEqual(self.file.read_bytes(),b'attacker destination')
+
+    def test_restore_verification_failure_records_needs_recovery(self):
+        self.run_action('quarantine');manifest=self.restore_manifest();mod=self.mods['restore'];rename=mod.noreplace
+        def renamed(srcfd,src,dstfd,dst):
+            rename(srcfd,src,dstfd,dst)
+            if '.op-' in src and dst=='old.txt':
+                mod.os.fsync=failed_sync
+        def failed_sync(fd):
+            os.fsync=fsync
+            raise OSError('verification interrupted')
+        fsync=os.fsync
+        try:
+            with patch.object(mod,'noreplace',side_effect=renamed):result=self.run_action('restore',manifest)
+        finally:os.fsync=fsync
+        self.assertEqual(result['items'][0]['reason'],'needs_recovery')
+        self.assertEqual(self.record()[2]['state'],'needs_recovery')
+        self.assertEqual(self.file.read_bytes(),b'preserved content')
+
+    def test_crash_after_stage_rename_recovers_all_three_adapters(self):
+        class Crash(BaseException): pass
+        for action in ['delete','restore','expire']:
+            with self.subTest(action=action):
+                self.file.write_bytes(b'preserved content')
+                self.item['identity']=self.mod.ident(self.file.stat())
+                self.item['id']='crash-'+action;self.manifest['id']='crash-manifest-'+action
+                if action!='delete': self.run_action('quarantine')
+                manifest=self.restore_manifest() if action=='restore' else self.manifest
+                mod=self.mods[action];rename=mod.noreplace
+                def crash(srcfd,src,dstfd,dst):
+                    rename(srcfd,src,dstfd,dst)
+                    if '.op-' in dst: raise Crash()
+                with patch.object(mod,'noreplace',side_effect=crash):
+                    with self.assertRaises(Crash):
+                        if action=='expire':
+                            with patch('time.time',return_value=time.time()+604802):self.run_action(action,manifest)
+                        else:self.run_action(action,manifest)
+                q,name,record=self.record();stage=record['operation_stage']
+                self.assertTrue((q/stage).exists());self.assertFalse((q/(name+'.data')).exists())
+                result=self.run_action(action,manifest)
+                self.assertEqual(result['items'][0]['status'],'recovered_quarantine' if action=='delete' else 'skipped')
+                self.assertEqual((q/(name+'.data')).read_bytes(),b'preserved content')
+                self.assertFalse((q/stage).exists());self.assertNotIn('operation_stage',self.record()[2])
+                self.assertEqual(result['freed_bytes'],0)
+                if action=='restore':
+                    self.assertEqual(self.run_action('restore',self.restore_manifest())['items'][0]['status'],'restored')
+
+    def test_recovery_rejects_invalid_stage_name_or_expired_grant(self):
+        self.run_action('quarantine');q,name,record=self.record()
+        record['operation_stage']='../outside'
+        (q/(name+'.json')).write_text(json.dumps(record))
+        self.assertEqual(self.run_action('restore',self.restore_manifest())['items'][0]['reason'],'stage_name_invalid')
+        stage=name+'.op-'+'a'*32
+        os.rename(q/(name+'.data'),q/stage)
+        record['operation_stage']=stage;(q/(name+'.json')).write_text(json.dumps(record))
+        self.grant['expires_at']='2000-01-01T00:00:00Z'
+        self.assertEqual(self.run_action('restore',self.restore_manifest())['items'][0]['reason'],'authorization_expired')
+        self.assertTrue((q/stage).exists());self.assertFalse((q/(name+'.data')).exists())
 
     def test_stage_mismatch_with_occupied_rollback_retains_both_entries(self):
         self.run_action('quarantine');mod=self.mods['expire'];rename=mod.noreplace

@@ -38,6 +38,8 @@ button,.button{
   cursor:pointer;font-weight:600;
 }
 button:hover,.button:hover{background:#005a9e;color:#fff}
+button.danger,.button.danger{background:#b42318;border-color:#b42318;color:#fff}
+button.danger:hover,.button.danger:hover{background:#912018;border-color:#912018;color:#fff}
 .button.secondary{background:#fff;color:var(--ink);border-color:var(--line-strong)}
 .button.secondary:hover{background:var(--surface-alt);color:var(--ink)}
 .skip-link{position:fixed;left:10px;top:-60px;z-index:100;background:#fff;padding:9px 14px}
@@ -360,7 +362,7 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 <div class="page-heading"><div><h1>Quarantine</h1><p>machine-fixture · retained data uses disk space · fixed seven-day TTL</p></div><a href="/machines/machine-fixture/disk">Back to disk</a></div>
 <div class="panel"><h2>Retained items</h2><p>Expiry rechecks holders, exact identity, protections and policy. Skipped items remain retained.</p><table><thead><tr><th>Original path</th><th>Size</th><th>Quarantined at</th><th>Expiry countdown</th><th>Restore</th></tr></thead><tbody><tr><td><code>~/…/release.tar.gz</code><br>quarantined</td><td>2.0 GiB</td><td>2026-10-01T12:00:00Z</td><td>6 days left<br><time datetime="2026-10-08T12:00:00Z">2026-10-08T12:00:00Z UTC</time></td><td><form method="post" action="/machines/machine-fixture/quarantine/restore"><input type="hidden" name="quarantine_id" value="manifest-fixture"><input type="hidden" name="item_ids" value="archive-1"><label>Restore reason <input name="reason" required maxlength="500"></label>
 <p>Your human administrator permission is rechecked on apply. Tailscale authentication does not provide fresh MFA.</p>
-<button>Preview restore</button></form></td></tr></tbody></table></div>
+<button>Preview restore</button></form></td></tr><tr><td><code>~/…/conflict.tar.gz</code><br><strong>needs recovery</strong></td><td>4.0 KiB</td><td>2026-10-01T12:00:00Z</td><td>6 days left<br><time datetime="2026-10-08T12:00:00Z">2026-10-08T12:00:00Z UTC</time></td><td>Manual or inode-based recovery required. Conflicting destinations are never moved or overwritten.</td></tr></tbody></table></div>
       </div>
     </main>
   </div>

@@ -268,11 +268,44 @@ def stage_entry(qfd, name, record, item, authority):
         raise Denied('staged_identity_changed')
     return stage,dict(item,identity=ident(st))
 
+def recover_stage(qfd, name, record, item, policy, grant):
+    stage=record.get('operation_stage')
+    if not stage: return False
+    if not isinstance(stage,str) or not re.fullmatch(re.escape(name)+r'\.op-[0-9a-f]{32}',stage):
+        raise Denied('stage_name_invalid')
+    fresh=renew(grant);mutation_ready(fresh)
+    pinned=dict(item,identity=record['identity'])
+    if any(pinned['identity'][k]!=item['identity'][k] for k in IDENTITY[:-1]): raise Denied('stage_identity_changed')
+    try: os.stat(stage,dir_fd=qfd,follow_symlinks=False)
+    except FileNotFoundError:
+        # Rollback may have completed before its journal update. Never infer a
+        # deletion from absence; restore's existing destination check handles a
+        # completed final rename without moving any destination pathname.
+        try: st=checked(item['private_path'],qfd,name+'.data',pinned,policy,[qfd],True)
+        except FileNotFoundError: return False
+        record.update(state='quarantined',identity=ident(st))
+        record.pop('operation_stage',None);save(qfd,name,record)
+        return True
+    checked(item['private_path'],qfd,stage,pinned,policy,[qfd],True)
+    mutation_ready(fresh)
+    # Capture only this validated, operation-local name. Occupied .data is
+    # retained unchanged and the journal continues to identify the stage.
+    noreplace(qfd,stage,qfd,name+'.data');os.fsync(qfd)
+    st=os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False)
+    if not exact(st,pinned,True):
+        record['state']='needs_recovery';record['recovery']=dict(expected_identity=pinned['identity'],conflicting_identity=ident(st),reason='stage_recovery_identity_changed')
+        save(qfd,name,record);raise Denied('needs_recovery')
+    record.update(state='quarantined',identity=ident(st))
+    record.pop('operation_stage',None);save(qfd,name,record)
+    return True
+
 def move_item(m, item, policy, grant, qfd, budget):
     path = item['private_path']; name = record_name(m,item)
     existing = load(qfd,name)
     if existing:
         if existing['manifest_digest'] != m['_digest']: raise Denied('journal_binding')
+        if existing['state']=='needs_recovery': raise Denied('needs_recovery')
+        if recover_stage(qfd,name,existing,item,policy,grant): return 'recovered_quarantine',0
         if existing['state'] in ['deleted','restored','expired']:
             return existing['state'], 0
         if existing['state'] == 'quarantined': return 'already_quarantined',0
@@ -352,6 +385,8 @@ def restore_or_expire(m,item,policy,grant,qfd,budget):
     if not record or record['manifest_id'] != original or record['item_id'] != item['id'] or record['original_path'] != item['private_path']:
         raise Denied('quarantine_binding')
     if ACTION == 'expire' and record['manifest_digest'] != m['_digest']: raise Denied('quarantine_binding')
+    if record['state']=='needs_recovery': raise Denied('needs_recovery')
+    if recover_stage(qfd,name,record,item,policy,grant): raise Denied('recovered_stage_repreview_required')
     if record['state'] in ['restored','expired','deleted']: return 'already_'+record['state'],0
     if record['state'] not in ['quarantined','restore_pending']: raise Denied('journal_incomplete')
     if ACTION == 'expire' and (record['state'] != 'quarantined' or time.time() < record['expires_at'] or record['expires_at'] < record['quarantined_at']+TTL):
@@ -383,27 +418,39 @@ def restore_or_expire(m,item,policy,grant,qfd,budget):
         mutation_ready(grant)
         if not exact(os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False),pinned): raise Denied('identity_changed')
         stage,staged=stage_entry(qfd,name,record,pinned,grant)
+        inode_fd=None
+        final_rename=False
         try:
-            checked(item['private_path'],qfd,stage,staged,policy,fds+[qfd]);parent_same(item['private_path'],fds)
+            if ACTION=='restore':
+                inode_fd=os.open(stage,os.O_PATH|os.O_NOFOLLOW,dir_fd=qfd)
+                if not exact(os.fstat(inode_fd),staged): raise Denied('staged_identity_changed')
+            checked(item['private_path'],qfd,stage,staged,policy,fds+[qfd]+([inode_fd] if inode_fd is not None else []));parent_same(item['private_path'],fds)
             mutation_ready(grant)
             if ACTION == 'restore':
                 noreplace(qfd,stage,fds[-1],leaf)
+                final_rename=True
                 os.fsync(fds[-1]);os.fsync(qfd)
-                restored=os.stat(leaf,dir_fd=fds[-1],follow_symlinks=False)
-                if not exact(restored,staged,True):
-                    # Capture the final entry back to a unique private name;
-                    # never overwrite the original quarantine entry.
-                    try:
-                        noreplace(fds[-1],leaf,qfd,stage)
-                        os.fsync(fds[-1]);os.fsync(qfd)
-                    except (Denied,OSError): raise Denied('restore_retained_for_recovery')
-                    raise Denied('restore_identity_changed')
+                expected=os.fstat(inode_fd)
+                try: restored=os.stat(leaf,dir_fd=fds[-1],follow_symlinks=False)
+                except FileNotFoundError: restored=None
+                if restored is None or (restored.st_dev,restored.st_ino)!=(expected.st_dev,expected.st_ino) or not exact(restored,staged,True):
+                    record['state']='needs_recovery'
+                    record['recovery']=dict(expected_identity=ident(expected),conflicting_identity=ident(restored) if restored is not None else None,destination_parent=record['original_parent'],reason='restore_destination_conflict')
+                    save(qfd,name,record)
+                    raise Denied('needs_recovery')
                 record['state']='restored';value=0
             else:
                 os.unlink(stage,dir_fd=qfd);record['state']='expired';value=item['allocated_bytes']
         except (Denied,OSError):
-            rollback_stage(qfd,name,stage,record,pinned)
+            if not final_rename: rollback_stage(qfd,name,stage,record,pinned)
+            elif record['state']!='needs_recovery':
+                record['state']='needs_recovery'
+                record['recovery']=dict(expected_identity=ident(os.fstat(inode_fd)),reason='restore_verification_interrupted')
+                save(qfd,name,record)
+            if final_rename: raise Denied('needs_recovery')
             raise
+        finally:
+            if inode_fd is not None: os.close(inode_fd)
         record.pop('operation_stage',None)
         os.fsync(qfd);save(qfd,name,record)
         return record['state'],value
@@ -443,7 +490,7 @@ def execute(grant,policy,manifests):
                 except (OSError,ValueError,KeyError,TypeError,AttributeError): row['reason']='filesystem_or_journal_changed'
                 original=m.get('quarantine_manifest_id',m['id'])
                 record=load(qfd,record_name(dict(id=original),item))
-                if record and record['state'] in ['quarantined','restore_pending','restored','expired','deleted']:
+                if record and record['state'] in ['quarantined','restore_pending','needs_recovery','restored','expired','deleted']:
                     row['record']={k:record[k] for k in ['state','identity','original_parent','owner_uid','quarantined_at','expires_at']}
                 result['items'].append(row)
         return result

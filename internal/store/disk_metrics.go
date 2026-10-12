@@ -18,11 +18,11 @@ type DiskActionMetrics struct {
 
 func (s *Store) DiskActionMetrics(machine string, now time.Time) (DiskActionMetrics, error) {
 	out := DiskActionMetrics{Source: "authenticated action receipts; current quarantine and cumulative item outcomes"}
-	err := s.rdb.QueryRow(`SELECT COALESCE(SUM(CASE WHEN state IN ('quarantined','restore_pending') THEN allocated_bytes ELSE 0 END),0),COALESCE(SUM(CASE WHEN state IN ('quarantined','restore_pending') AND expires_at<=? THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN state IN ('expired','deleted') THEN allocated_bytes ELSE 0 END),0) FROM disk_quarantine WHERE (?='' OR machine_id=?)`, fmtTime(now), machine, machine).Scan(&out.QuarantinedBytes, &out.TTLBacklog, &out.FreedBytes)
+	err := s.rdb.QueryRow(`SELECT COALESCE(SUM(CASE WHEN state IN ('quarantined','restore_pending','needs_recovery') THEN allocated_bytes ELSE 0 END),0),COALESCE(SUM(CASE WHEN state IN ('quarantined','restore_pending','needs_recovery') AND expires_at<=? THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN state IN ('expired','deleted') THEN allocated_bytes ELSE 0 END),0) FROM disk_quarantine WHERE (?='' OR machine_id=?)`, fmtTime(now), machine, machine).Scan(&out.QuarantinedBytes, &out.TTLBacklog, &out.FreedBytes)
 	if err != nil {
 		return out, err
 	}
-	err = s.rdb.QueryRow(`SELECT COUNT(*),COALESCE(SUM(status IN ('restored','recovered_restore')),0),COALESCE(SUM(reason='destination_occupied'),0),COALESCE(SUM(reason IN ('protected','protected_repository','protection_changed')),0) FROM disk_action_items WHERE (?='' OR machine_id=?)`, machine, machine).Scan(&out.Samples, &out.RestoreSuccess, &out.RestoreConflicts, &out.ProtectionDenials)
+	err = s.rdb.QueryRow(`SELECT COUNT(*),COALESCE(SUM(status IN ('restored','recovered_restore')),0),COALESCE(SUM(reason IN ('destination_occupied','needs_recovery')),0),COALESCE(SUM(reason IN ('protected','protected_repository','protection_changed')),0) FROM disk_action_items WHERE (?='' OR machine_id=?)`, machine, machine).Scan(&out.Samples, &out.RestoreSuccess, &out.RestoreConflicts, &out.ProtectionDenials)
 	return out, err
 }
 func (s *Store) DiskReportDecisions(report string) (map[string]string, error) {

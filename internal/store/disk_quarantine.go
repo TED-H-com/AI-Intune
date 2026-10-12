@@ -47,7 +47,7 @@ type DiskActionResults struct {
 }
 
 func (s *Store) DiskQuarantineList(machine string) ([]DiskQuarantineItem, error) {
-	rows, err := s.rdb.Query(`SELECT q.manifest_id,q.item_id,q.machine_id,q.state,q.allocated_bytes,q.quarantined_at,q.expires_at,m.body FROM disk_quarantine q JOIN ops_manifests m ON m.id=q.manifest_id WHERE q.machine_id=? AND q.state IN ('quarantined','restore_pending') ORDER BY q.expires_at,q.manifest_id,q.item_id LIMIT 500`, machine)
+	rows, err := s.rdb.Query(`SELECT q.manifest_id,q.item_id,q.machine_id,q.state,q.allocated_bytes,q.quarantined_at,q.expires_at,m.body FROM disk_quarantine q JOIN ops_manifests m ON m.id=q.manifest_id WHERE q.machine_id=? AND q.state IN ('quarantined','restore_pending','needs_recovery') ORDER BY q.expires_at,q.manifest_id,q.item_id LIMIT 500`, machine)
 	if err != nil {
 		return nil, err
 	}
@@ -171,13 +171,16 @@ func (s *Store) DiskActionResults(machine, job string, result DiskActionResults)
 			if m.Action == "restore" {
 				original = m.QuarantineManifestID
 			}
-			if r.State != "quarantined" && r.State != "restore_pending" && r.State != "restored" && r.State != "expired" && r.State != "deleted" {
+			if r.State != "quarantined" && r.State != "restore_pending" && r.State != "needs_recovery" && r.State != "restored" && r.State != "expired" && r.State != "deleted" {
 				return "", operatorError("BAD_REQUEST", "invalid quarantine state")
 			}
-			if action == "expire" && r.State != "quarantined" && r.State != "expired" || action == "quarantine" && r.State != "quarantined" {
+			if r.State == "needs_recovery" && (row.Status != "skipped" || row.Reason != "needs_recovery") {
+				return "", operatorError("BAD_REQUEST", "recovery state requires a denied item outcome")
+			}
+			if r.State != "needs_recovery" && (action == "expire" && r.State != "quarantined" && r.State != "expired" || action == "quarantine" && r.State != "quarantined") {
 				return "", operatorError("BAD_REQUEST", "state does not match action")
 			}
-			if action == "restore" && r.State != "restored" && r.State != "restore_pending" && r.State != "quarantined" {
+			if action == "restore" && r.State != "needs_recovery" && r.State != "restored" && r.State != "restore_pending" && r.State != "quarantined" {
 				return "", operatorError("BAD_REQUEST", "invalid restore state")
 			}
 			if _, err = tx.Exec(`INSERT INTO disk_quarantine VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(manifest_id,item_id) DO UPDATE SET state=excluded.state,identity=excluded.identity,received_at=excluded.received_at WHERE disk_quarantine.state IN ('quarantined','restore_pending')`, original, item.ID, machine, r.State, string(mustScriptJSON(r.Identity)), string(mustScriptJSON(r.OriginalParent)), fmtTime(at), fmtTime(expires), fmtTime(now), item.AllocatedBytes); err != nil {

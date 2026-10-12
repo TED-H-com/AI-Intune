@@ -187,3 +187,48 @@ func TestManifestApprovalCannotUseGenericApply(t *testing.T) {
 		t.Fatal(a, err)
 	}
 }
+
+func TestRestoreNeedsRecoveryLedgerAndAdmission(t *testing.T) {
+	s, p, job, receipt, now := quarantineFixture(t)
+	if _, err := s.DiskActionResults(p.Approval.MachineID, job, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE jobs SET state='succeeded',terminal_at=? WHERE job_id=?`, fmtTime(now), job); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := s.DiskRestorePreview(DiskRestoreRequest{QuarantineID: p.ManifestID, ItemIDs: []string{"candidate-1"}, Reason: "Restore reviewed item"}, diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := s.DiskActionDecide(OpsApprovalDecisionRequest{ID: preview.Approval.ID, Decision: "approved", Reason: "Restore reviewed item"}, false, "", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := s.DiskRestoreApply(plan.Request, true, "needs-recovery", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := receipt
+	observation.JobID = applied.Approval.JobID
+	observation.Items = append([]DiskActionItemResult(nil), receipt.Items...)
+	observation.Items[0].ManifestID = preview.ManifestID
+	observation.Items[0].Status = "skipped"
+	observation.Items[0].Reason = "needs_recovery"
+	record := *receipt.Items[0].Record
+	record.State = "needs_recovery"
+	observation.Items[0].Record = &record
+	if _, err = s.DiskActionResults(p.Approval.MachineID, observation.JobID, observation); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.DiskQuarantineList(p.Approval.MachineID)
+	if err != nil || len(list) != 1 || list[0].State != "needs_recovery" {
+		t.Fatal(list, err)
+	}
+	if _, err = s.DiskRestorePreview(DiskRestoreRequest{QuarantineID: p.ManifestID, ItemIDs: []string{"candidate-1"}, Reason: "Attempt automatic recovery"}, diskAdmin()); err == nil {
+		t.Fatal("recovery conflict admitted ordinary restore")
+	}
+	metrics, err := s.DiskActionMetrics(p.Approval.MachineID, now)
+	if err != nil || metrics.FreedBytes != 0 || metrics.RestoreSuccess != 0 || metrics.RestoreConflicts != 1 || metrics.QuarantinedBytes != 4096 {
+		t.Fatal(metrics, err)
+	}
+}
