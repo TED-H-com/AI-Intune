@@ -589,6 +589,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if err := migrateDiskTimerEvidence(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate disk timer evidence: %w", err)
+	}
 	if _, err := db.Exec(schemaSQL); err != nil {
 		if conflictErr := rejectDuplicateDesiredStateResourceRevisions(db); conflictErr != nil &&
 			errors.Is(conflictErr, ErrDesiredResourceRevisionConflict) {
@@ -606,6 +610,10 @@ func Open(path string) (*Store, error) {
 	if err := addMissingColumns(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS disk_mount_missing_expiry ON disk_alerts(COALESCE(NULLIF(last_seen_at,''),opened_at),id) WHERE cleared_at IS NULL AND condition_key LIKE 'mount:%'`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: mount expiry index: %w", err)
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS hub_accounts_email ON hub_accounts(email) WHERE email IS NOT NULL`); err != nil {
 		db.Close()
@@ -839,8 +847,10 @@ func addMissingColumns(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 	want := map[string]map[string]string{
-		"schedules":    {"execution_mode": "TEXT NOT NULL DEFAULT '' CHECK(execution_mode IN ('','read','write'))"},
-		"hub_accounts": {"auth_generation": "INTEGER NOT NULL DEFAULT 0", "email": "TEXT", "role": "TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin'))"},
+		"disk_alerts":      {"cleared_reason": "TEXT NOT NULL DEFAULT ''", "last_seen_at": "TEXT NOT NULL DEFAULT ''"},
+		"disk_canary_days": {"received_at": "TEXT NOT NULL DEFAULT ''"},
+		"schedules":        {"execution_mode": "TEXT NOT NULL DEFAULT '' CHECK(execution_mode IN ('','read','write'))"},
+		"hub_accounts":     {"auth_generation": "INTEGER NOT NULL DEFAULT 0", "email": "TEXT", "role": "TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin'))"},
 		// ⚠ agent_started_at 是 2026-09-03 事故後補的。舊 DB 沒有這欄，
 		// 而那些機器正是最需要被抓出來的那批。
 		"machine_checkins": {
@@ -1738,6 +1748,9 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities VALUES (?,? ,?,1)`, machineID, fmtTime(c.SentAt), "disk_actions_v1:"+c.DiskActionKey); err != nil {
 			return err
 		}
+	}
+	if err := s.recordDiskTimersTx(tx, machineID, c, receivedAt); err != nil {
+		return err
 	}
 	if c.DiskOpsV2 {
 		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities(machine_id,sent_at,capability,supported) VALUES (?,?,'disk_ops_v2',1)`, machineID, fmtTime(c.SentAt)); err != nil {

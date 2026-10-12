@@ -85,3 +85,36 @@ func (s *Service) DiskReportDecisions(id string) (map[string]string, error) {
 func (s *Service) DiskRestoreApply(req store.OpsApprovalDecisionRequest, apply bool, key string, actor Actor) (store.OpsApprovalDecisionResult, error) {
 	return s.store.DiskRestoreApply(req, apply, key, auditFromActor(actor))
 }
+
+func (s *Service) DiskOwnershipGet(machine, scope string) (store.DiskOwnership, error) {
+	return s.store.DiskOwnershipGet(machine, scope)
+}
+func (s *Service) DiskOwnershipManage(req store.DiskOwnershipRequest, apply bool, key string, actor Actor) (store.DiskOwnershipResult, error) {
+	return s.store.DiskOwnershipManage(req, apply, key, auditFromActor(actor))
+}
+func (s *Service) DiskAlertsList(machine string) ([]store.DiskAlert, error) {
+	return s.store.DiskAlertsList(machine)
+}
+
+func (s *Service) DiskCanaryGet(machine, scope string) (store.DiskCanary, error) {
+	return s.store.DiskCanaryGet(machine, scope, time.Now().UTC())
+}
+
+func (s *Service) DiskAlertAcknowledge(req store.DiskAlertAckRequest, apply bool, key string, actor Actor) (store.DiskAlertAckResult, error) {
+	return s.store.DiskAlertAcknowledge(req, apply, key, auditFromActor(actor))
+}
+
+func (s *Service) DiskSupervision(machine string) (store.DiskSupervision, error) {
+	return s.store.DiskSupervision(machine)
+}
+
+func (s *Service) DiskAlertsPageAfter(after string) (store.DiskAlertsPage, error) {
+	return s.store.DiskAlertsPageAfter(after)
+}
+func (s *Service) DiskAlertMountLabels(machines []string) (map[string][]store.DiskMountUsage, error) {
+	return s.store.DiskAlertMountLabels(machines)
+}
+
+func (s *Service) DiskAlertBannerCounts() (store.DiskAlertBannerCounts, error) {
+	return s.store.DiskAlertBannerCounts()
+}

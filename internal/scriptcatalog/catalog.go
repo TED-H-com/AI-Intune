@@ -95,8 +95,8 @@ var registry = []Entry{
 	{"disk-quarantine-expire-v1", "1", "3f61ba4510da860c47d9b6a2653bb6ba9fe265bbb688e2ac85d7617ee6f504ec", expirySchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskExpire},
 	{"disk-quarantine-restore-v1", "1", "20b7d4e22096ad03c76d0d8cbb84884e7c49b1f2383863091d7c6c8babcb24f4", actionSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskRestore},
 	{"disk-deep-report-v1", "1", "7ef5121158c2c23573aee0aa828deff7c0994c8b7a88d4eabcfb3b1cfc64bfce", deepSchema(), 600, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskDeep},
-	{"disk-safe-preview-v2", "2", "95ae88877bb530293c3fb75b774b1ed5c274bb3397bfefec04117b7bd15b94fe", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
-	{"disk-safe-clean-v2", "2", "049158e13d64e0a9de03bb3697fad76c36faa19481a98bf0fdb9037abf362f96", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},
+	{"disk-safe-preview-v2", "2", "1ab2859a73e95c9f4d53ac561e6587ab82f3f115ecc1cdead2d187376d6976c5", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
+	{"disk-safe-clean-v2", "2", "b5f03510c68a8909db7cdf3d916ee6332530ab974a6f0014d6e171d85b41ef51", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},
 	{"bat-sweep-report-v1", "1", "0e00340abb9083cc2ab358857309c2f6c9237d7397581881b91a45868cd425a2", Schema{Type: "object", Required: []string{"hosts", "connector_tree_sha256"}, Properties: map[string]Property{"hosts": {Type: "array", MinItems: 1, MaxItems: 8, Items: &Property{Type: "string", Pattern: "^[a-z0-9-]{1,32}$", MinLength: 1, MaxLength: 32}}, "connector_tree_sha256": {Type: "string", Pattern: "^[a-f0-9]{64}$", MinLength: 64, MaxLength: 64}, "include_excerpts": {Type: "boolean"}}}, 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, batSweep},
 	{"fleet-probe-v1", "1", "0c242784f162df0489571fa0ac901e0e583f54afa3d121d0b033e8dff2bad924", Schema{Type: "object", Properties: map[string]Property{}}, 15, 60, 64 << 10, "read", "agent-user", []string{"linux"}, probe},
 }

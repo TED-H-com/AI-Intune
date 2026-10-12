@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/maintenance"
+	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"strings"
 	"testing"
@@ -16,7 +17,11 @@ func safeDiskFixture(t *testing.T) (*Store, ScriptRunRequest, time.Time) {
 	c := healthyCheckin(now)
 	c.ScriptV1 = true
 	c.DiskOpsV2 = true
+	c.DiskTimers = []model.DiskTimerObservation{{Scope: "user", Known: true, ObservedAt: now}}
 	if err := s.RecordCheckin(machine, c, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO disk_ownership(machine_id,scope,state,revision,changed_at) VALUES (?,'user','hub-owned',1,?) ON CONFLICT(machine_id,scope) DO UPDATE SET state='hub-owned',revision=1`, machine, fmtTime(now)); err != nil {
 		t.Fatal(err)
 	}
 	entry, _ := scriptcatalog.Lookup("disk-safe-clean-v2")

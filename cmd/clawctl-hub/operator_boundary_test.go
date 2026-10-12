@@ -126,12 +126,12 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		t.Fatalf("non-operator registered=%d policies=%d, want 28/28",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 260 || len(operatorRoutePolicies) != 260 {
-		t.Fatalf("operator registered=%d policies=%d, want 260/260",
+	if len(operatorRegistered) != 270 || len(operatorRoutePolicies) != 270 {
+		t.Fatalf("operator registered=%d policies=%d, want 270/270",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 288 {
-		t.Fatalf("all registered routes=%d, 預期 288", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 298 {
+		t.Fatalf("all registered routes=%d, 預期 298", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -141,14 +141,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 102 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 130 {
-		t.Fatalf("permission counts=%v, want view=102 operate=28 admin=130", counts)
+	if counts[operatorauth.View] != 105 || counts[operatorauth.Operate] != 28 || counts[operatorauth.Admin] != 137 {
+		t.Fatalf("permission counts=%v, want view=105 operate=28 admin=137", counts)
 	}
-	if representations[operatorJSON] != 134 || representations[operatorHTML] != 125 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=134 HTML=125 plain=1", representations)
+	if representations[operatorJSON] != 140 || representations[operatorHTML] != 129 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=140 HTML=129 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 259 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=259 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 269 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=269 terminal=1", profiles)
 	}
 }
 
@@ -261,6 +261,16 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		path    string
 		policy  operatorRoutePolicy
 	}{
+		{"GET /v1/operator/disk-ops/alerts", "/v1/operator/disk-ops/alerts", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
+		{"GET /v1/operator/disk-ops/ownership/{machine_id}/{scope}", "/v1/operator/disk-ops/ownership/machine-1/user", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/disk-ops/ownership/preview", "/v1/operator/disk-ops/ownership/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/disk-ops/ownership", "/v1/operator/disk-ops/ownership", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/disk-ops/alerts/ack/preview", "/v1/operator/disk-ops/alerts/ack/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/disk-ops/alerts/ack", "/v1/operator/disk-ops/alerts/ack", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"GET /tenant/disk-alerts", "/tenant/disk-alerts", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /tenant/disk-alerts/ack/preview", "/tenant/disk-alerts/ack/preview", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /tenant/disk-alerts/ack", "/tenant/disk-alerts/ack", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /machines/{id}/disk/ownership", "/machines/machine-1/disk/ownership", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"GET /metrics", "/metrics", operatorRoutePolicy{operatorauth.View, operatorPlain, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"GET /{$}", "/", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /preferences/navigation-language", "/preferences/navigation-language", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},

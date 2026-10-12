@@ -120,7 +120,7 @@ button.danger:hover,.button.danger:hover{background:#912018;border-color:#912018
 .page-heading p{margin:0;color:var(--dim)}
 .command-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 
- 
+
 .headline{margin:0 0 16px}
 .headline p{font-size:15px;line-height:1.5;margin:0 0 5px}
 .headline p:first-child{font-size:17px;font-weight:600;color:var(--ink)}
@@ -305,12 +305,12 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
     <span>AI-Intune 系統管理中心</span>
   </a>
   <div class="topbar-tools">
-    
+
       <span class="topbar-boundary"><span class="dot green" aria-hidden="true"></span>Tailscale 已驗證</span>
       <span class="operator-chip" title="source device browser; Tailscale user example-admin">
         <span>example-admin</span><span class="operator-detail">view,admin · browser</span>
       </span>
-    
+
     <form class="language-form" method="post" action="/preferences/navigation-language">
       <input type="hidden" name="locale" value="en">
       <input type="hidden" name="return_to" value="/">
@@ -347,14 +347,15 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
       <a href="/machines/diagnostics" class="nav-item " >
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 4a6 6 0 0 0-6 8l-5 5 4 4 5-5a6 6 0 0 0 8-6"/><path d="m15 7 2 2"/></svg></span><span>疑難排解 &#43; 支援</span>
       </a>
-    
+
     </nav>
   </aside>
   <div class="workspace-shell ">
-    
+
     <main class="main-content" id="main-content" tabindex="-1" lang="zh-Hant">
+
       <div class="content-inner">
-        
+
         <nav class="breadcrumb" aria-label="麵包屑" lang="zh-Hant">
           <a href="/">AI-Intune 管理中心</a><span class="breadcrumb-separator" aria-hidden="true">›</span><span aria-current="page">Confirm restore</span>
         </nav>
@@ -364,7 +365,7 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 <p>1 exact items · 2.0 GiB allocated · 2.0 GiB logical. Approval expires at <time>2026-10-01T12:30:00Z</time>.</p><p>Reason: Restore the reviewed archive to its original parent</p><p>Manifest <code>sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</code> · policy disk-default revision 1</p>
 <table><thead><tr><th>Exact original path</th><th>Category</th><th>Bytes</th><th>Owner / identity</th></tr></thead><tbody><tr><td><code>/home/example/archives/release.tar.gz</code><br>archive-1</td><td>duplicate-archives</td><td>2.0 GiB</td><td>UID 1000 · 2049/12345 · mtime 1788264000000000000 · ctime 1790856000000000000</td></tr></tbody></table>
 <form method="post" action="/disk-actions/apply"><input type="hidden" name="request" value="{&#34;id&#34;:&#34;restore-approval&#34;,&#34;decision&#34;:&#34;approved&#34;}"><input type="hidden" name="manifest_id" value="restore-fixture"><input type="hidden" name="idempotency_key" value="restore-fixture-key"><label>Type restore to confirm <input name="confirm_action" required autocomplete="off"></label>
-<p>Your human administrator permission is rechecked on apply. Tailscale authentication does not provide fresh MFA.</p>
+<p>Your human administrator permission is rechecked on apply. Tailscale authentication does not provide fresh MFA. Confirm the reviewed action to continue.</p>
 <p>Use a fresh authenticator code for this confirmation.</p><button >Confirm restore</button><a href="/machines/machine-fixture/disk">Cancel</a></form></div>
       </div>
     </main>

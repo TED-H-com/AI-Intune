@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -95,5 +96,38 @@ func TestSupervisionEmptyResponseArraysStayStrict(t *testing.T) {
 				t.Fatal("null array accepted")
 			}
 		})
+	}
+}
+
+func TestSupervisionClientNewDiskFieldsWithoutSockets(t *testing.T) {
+	base, _ := url.Parse("http://hub.example.test")
+	c := &Client{base: base, http: &http.Client{Transport: assignedUserTransport(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		switch r.URL.Path {
+		case "/v1/operator/hub-status":
+			_ = json.NewEncoder(w).Encode(operator.HubStatus{SchemaVersion: 1, Disk: store.DiskSupervision{OpenCritical: 3, OwnershipStates: map[string]int{"rollback-pending": 1}, CanaryAgreementDays: 7}})
+		case "/v1/operator/approvals-summary":
+			_ = json.NewEncoder(w).Encode(operator.ApprovalsSummary{SchemaVersion: 1, Windows: []store.ApprovalSummaryWindow{}, DiskOps: store.DiskApprovalCounts{Pending: 2}})
+		}
+		return w.Result(), nil
+	})}}
+	status, e := c.HubStatus(t.Context())
+	if e != nil || status.Disk.OpenCritical != 3 || status.Disk.OwnershipStates["rollback-pending"] != 1 {
+		t.Fatal(status, e)
+	}
+	approvals, e := c.ApprovalsSummary(t.Context(), "")
+	if e != nil || approvals.DiskOps.Pending != 2 {
+		t.Fatal(approvals, e)
+	}
+	raw, _ := json.Marshal(operator.HubStatus{SchemaVersion: 1})
+	var zero operator.HubStatus
+	if e = decodeStrictJSONDocument(raw, "zero supervision", &zero); e != nil {
+		t.Fatal("zero DTO emits invalid null ownership map", e)
+	}
+	bad := strings.Replace(string(raw), `"open_warn":0`, `"open_warn":0,"unexpected":true`, 1)
+	if e = decodeStrictJSONDocument([]byte(bad), "closed supervision", &zero); e == nil {
+		t.Fatal("unknown nested disk field accepted")
 	}
 }

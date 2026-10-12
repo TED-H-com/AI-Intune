@@ -11,17 +11,19 @@ import (
 )
 
 type diskMachinePage struct {
-	Status    store.DiskOpsStatus
-	Policies  []store.OpsPolicy
-	Schedules []store.Schedule
-	History   []operator.JobSummary
-	Review    string
-	Request   string
-	Digest    string
-	Key       string
-	ReadOnly  bool
-	Reports   []store.DiskReportSummary
-	Operation string
+	OwnershipReview *store.DiskOwnershipResult
+	Canary          map[string]store.DiskCanary
+	Status          store.DiskOpsStatus
+	Policies        []store.OpsPolicy
+	Schedules       []store.Schedule
+	History         []operator.JobSummary
+	Review          string
+	Request         string
+	Digest          string
+	Key             string
+	ReadOnly        bool
+	Reports         []store.DiskReportSummary
+	Operation       string
 }
 
 func (s *Server) diskMachine(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +64,16 @@ func (s *Server) diskMachine(w http.ResponseWriter, r *http.Request) {
 		s.diskOpsError(w, r, err, "/")
 		return
 	}
-	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: status, Policies: policies, Schedules: schedules, History: history.Items, Reports: reports}})
+	canary := map[string]store.DiskCanary{}
+	for _, scope := range []string{"user", "root"} {
+		v, e := s.operator.DiskCanaryGet(status.MachineID, scope)
+		if e != nil {
+			s.diskOpsError(w, r, e, "/")
+			return
+		}
+		canary[scope] = v
+	}
+	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: status, Canary: canary, Policies: policies, Schedules: schedules, History: history.Items, Reports: reports}})
 }
 func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -223,13 +234,30 @@ func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 				req, err = store.DiskDeepScheduleTemplate(policy.ID, policy.Digest, id, hour, minute)
 				view.ReadOnly = true
 			} else {
-				req, err = store.DiskScheduleTemplate(scope, policy.ID, policy.Digest, id, hour, minute)
+				req, err = store.DiskScheduleTemplate(func() string {
+					if scope == "compare" {
+						return "user"
+					}
+					return scope
+				}(), policy.ID, policy.Digest, id, hour, minute)
 			}
 			if err != nil {
 				s.diskOpsError(w, r, err, back)
 				return
 			}
+			if scope == "compare" {
+				entry, _ := scriptcatalog.Lookup("disk-safe-preview-v2")
+				req.Name = "compare-disk-user-" + scriptcatalog.Digest([]byte(id))[:12]
+				req.ScriptID = entry.ID
+				req.ScriptSHA256 = entry.SHA256
+				req.Args, _ = json.Marshal(map[string]string{"scope": "user", "policy_id": policy.ID, "policy_digest": policy.Digest})
+				req.Enabled = true
+				view.ReadOnly = true
+			}
 			req.Reason = reason
+			if scope != "deep" && scope != "compare" {
+				req.Enabled = false
+			}
 			if scheduleID := r.PostForm.Get("schedule_id"); scheduleID != "" {
 				v, e := s.operator.DiskSchedule(scheduleID)
 				if e != nil || !diskScheduleTarget(v, id) {

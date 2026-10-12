@@ -3,13 +3,13 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 288 個 HTTP operations（28 non-operator＋260 operator；134 條 operator JSON）、
+> 逐一對照 298 個 HTTP operations（28 non-operator＋270 operator；140 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 288-operation tally above (28 non-operator + 260 operator). The inventory/contract excludes these six public account operations and totals 282. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 298-operation tally above (28 non-operator + 270 operator). The inventory/contract excludes these six public account operations and totals 292. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -936,3 +936,26 @@ MCP uses redacted projections; delegation remains deferred. Daily expiry
 under the current policy. The assigned machine alone uploads private action receipts
 and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
 for routes, human UI, recovery, readiness and metrics.
+## Timer handoff and disk alerts (P2-05)
+
+Adds ten operator operations (six JSON, four HTML): totals 287 including public
+accounts, 281 excluding them; 261 operator (135 JSON, 130 HTML/plain), exact grants
+view=103 / operate=28 / admin=137.
+
+| Method | Route | Admission |
+| --- | --- | --- |
+| GET | `/v1/operator/disk-ops/alerts` | View, exact-allowlisted view token eligible; redacted episodes |
+| GET | `/v1/operator/disk-ops/ownership/{machine_id}/{scope}` | Human view; typed timer facts and fixed commands |
+| POST | `/v1/operator/disk-ops/ownership/preview` | Human admin; handoff or rollback preconditions |
+| POST | `/v1/operator/disk-ops/ownership` | Human admin, fresh JSON reauthorization, digest, expiry, revision, idempotency |
+| POST | `/v1/operator/disk-ops/alerts/ack/preview` | Human admin; reason-bound review |
+| POST | `/v1/operator/disk-ops/alerts/ack` | Human admin, fresh JSON reauthorization, digest, expiry, idempotency |
+| GET | `/tenant/disk-alerts` | Human view; open/cleared history |
+| POST | `/tenant/disk-alerts/ack/preview` | Human admin review |
+| POST | `/tenant/disk-alerts/ack` | Human admin, password/TOTP or fresh LocalAPI authorization |
+| POST | `/machines/{id}/disk/ownership` | Human admin review/apply, fresh apply reauthentication |
+
+MCP reads `disk_alerts_list` and `disk_ownership_get` use the same operator reads.
+Mutations are token-ineligible. Local-account JSON applies are refused; use the UI.
+Acknowledgement records a reason and never clears an alert. All browser mutations
+retain the shared Host/CrossOriginProtection/locked CSP boundary.

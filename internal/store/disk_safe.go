@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
+	"time"
 )
 
 // diskSafePolicyTx resolves only the current immutable policy revision.
@@ -59,6 +61,9 @@ func diskSafePolicyTx(tx dbTx, req ScriptRunRequest, entry scriptcatalog.Entry) 
 	return canonical, nil
 }
 func (s *Store) diskSafeGateTx(tx dbTx, req ScriptRunRequest, entry scriptcatalog.Entry, admission ...bool) error {
+	return s.diskSafeGateTxAt(tx, req, entry, s.now().UTC(), admission...)
+}
+func (s *Store) diskSafeGateTxAt(tx dbTx, req ScriptRunRequest, entry scriptcatalog.Entry, now time.Time, admission ...bool) error {
 	if !scriptcatalog.IsDisk(entry.ID) {
 		return nil
 	}
@@ -85,6 +90,45 @@ func (s *Store) diskSafeGateTx(tx dbTx, req ScriptRunRequest, entry scriptcatalo
 		}
 	}
 	for _, id := range req.Targets {
+		if entry.ID == "disk-safe-clean-v2" && (len(admission) == 0 || admission[0]) {
+			var args struct {
+				Scope string `json:"scope"`
+			}
+			_ = json.Unmarshal(req.Args, &args)
+			var state string
+			e := tx.QueryRow(`SELECT state FROM disk_ownership WHERE machine_id=? AND scope=?`, id, args.Scope).Scan(&state)
+			if e == sql.ErrNoRows || (e == nil && state != "hub-owned") {
+				return operatorError("PRECONDITION_FAILED", "disk scope is not hub-owned")
+			}
+			if e != nil {
+				return e
+			}
+			var raw, received string
+			e = tx.QueryRow(`SELECT body,received_at FROM disk_timer_observations WHERE machine_id=? AND scope=? ORDER BY receipt_seq DESC LIMIT 1`, id, args.Scope).Scan(&raw, &received)
+			if e == sql.ErrNoRows {
+				return operatorError("PRECONDITION_FAILED", "fresh known disabled local timer evidence required")
+			}
+			if e != nil {
+				return e
+			}
+			var o struct {
+				Scope         string `json:"scope"`
+				Known         *bool  `json:"known"`
+				Enabled       *bool  `json:"enabled"`
+				Active        *bool  `json:"active"`
+				ServiceActive *bool  `json:"service_active"`
+			}
+			var observation model.DiskTimerObservation
+			malformed := len(raw) > 64<<10 || json.Unmarshal([]byte(raw), &observation) != nil || observation.ObservedAt.IsZero()
+			at, e := time.Parse(time.RFC3339Nano, received)
+			if malformed || e != nil || at.After(now) || now.Sub(at) > 15*time.Minute || len(raw) > 64<<10 || json.Unmarshal([]byte(raw), &o) != nil || o.Scope != args.Scope || o.Known == nil || !*o.Known || o.Enabled == nil || o.Active == nil || o.ServiceActive == nil {
+				return operatorError("PRECONDITION_FAILED", "fresh known disabled local timer evidence required")
+			}
+			if *o.Enabled || *o.Active || *o.ServiceActive {
+				return operatorError("PRECONDITION_FAILED", "dual ownership: local timer or service is active")
+			}
+
+		}
 		if entry.ID == "disk-deep-report-v1" && (len(admission) > 0 && admission[0]) {
 			available, err := deepAvailableTx(tx, id, s.now().UTC())
 			if err != nil {
