@@ -249,3 +249,19 @@ The Linux installer detects `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` (upper a
 Detected settings are saved in `/etc/systemd/system/clawctl-agent.service.d/10-proxy.conf` before the agent starts. The file is mode 0644, or 0600 when values contain possible URL credentials. Unsafe values (control characters, double quotes, backslashes, or `%`) are skipped with a warning that names only the variable. The file is parsed as data, without shell expansion.
 
 Use `--no-proxy-dropin` to skip detection and writing. With no detected settings, an existing drop-in is preserved. To change settings, edit the drop-in with `sudoedit`, then run `sudo systemctl daemon-reload` and `sudo systemctl restart clawctl-agent.service`. Reenrollment rollback keeps the drop-in, including when it removes a newly installed unit; agent upgrades also preserve it. Review `NO_PROXY` when moving to a different Hub.
+
+Agent upgrades with `ops/upgrade-agent.sh` (local or SSH) use non-interactive
+`sudo -n`. A narrow sudoers drop-in can authorize the default
+`/usr/local/bin` binary publication and specific service commands. The rendered
+unit is compared with `/etc/systemd/system/clawctl-agent.service` without sudo;
+identical units skip unit installation and daemon reload. Already enabled
+services skip enable.
+
+Changed units require full sudo password authorization for installing the unit
+and moving it into place; these commands are intentionally outside the narrow
+rule. If authorization fails, rerun interactively after authenticating full sudo
+access on the target (for example, `sudo -v` in the operator's terminal). The
+upgrade itself never prompts. SELinux relabeling runs only when SELinux is active
+and also requires authorization outside the narrow rule. Non-default
+`CLAWCTL_SYSTEM_BIN_DIR` or `CLAWCTL_SYSTEM_UNIT_DIR` values still work with
+suitable sudo access, but the default-path narrow sudoers rule will not match.
