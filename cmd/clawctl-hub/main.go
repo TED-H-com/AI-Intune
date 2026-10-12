@@ -45,12 +45,13 @@ import (
 var version = "dev"
 
 type hub struct {
-	diskUploadLimiter diskReportUploadLimiter
-	scriptRunLimiter  scriptRunRateLimiter
-	clientIP          clientip.Resolver
-	store             *store.Store
-	tailnet           *tailnet.Cache
-	agentLinks        *agentlink.Registry
+	diskUploadLimiter   diskReportUploadLimiter
+	diskManifestLimiter diskManifestGrantLimiter
+	scriptRunLimiter    scriptRunRateLimiter
+	clientIP            clientip.Resolver
+	store               *store.Store
+	tailnet             *tailnet.Cache
+	agentLinks          *agentlink.Registry
 
 	// operatorService is the one artifact-aware control-plane service owned by
 	// this Hub process. The startup recovery worker and runtime queue worker must

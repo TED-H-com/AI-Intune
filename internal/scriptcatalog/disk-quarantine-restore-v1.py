@@ -266,11 +266,17 @@ def ident(st):
     return dict(dev=st.st_dev, inode=st.st_ino, type=stat.S_IFMT(st.st_mode),
                 size=st.st_size, mtime_ns=st.st_mtime_ns, ctime_ns=st.st_ctime_ns)
 
-def exact(st, item, moved=False):
-    fields = IDENTITY[:-1] if moved else IDENTITY
+def exact(st, item):
+    fields = IDENTITY
     return (all(ident(st)[k] == item['identity'][k] for k in fields)
             and st.st_uid == item['owner_uid'] == os.geteuid()
             and stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and not st.st_mode & 0o022)
+
+def renamed_identity(st, item):
+    # A known rename necessarily advances ctime. This transition check is not
+    # an exact identity comparison; callers pin the fresh identity afterwards.
+    before=item['identity']
+    return exact(st,dict(item,identity=dict(before,ctime_ns=st.st_ctime_ns))) and st.st_ctime_ns >= before['ctime_ns']
 
 def epoch(value):
     return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
@@ -449,7 +455,7 @@ def parent_same(path, fds):
             raise Denied('parent_changed')
     finally: close(fresh)
 
-def checked(path, fd, name, item, policy, ignored, moved=False):
+def checked(path, fd, name, item, policy, ignored):
     if protected(path, policy): raise Denied('protected')
     opened, complete = holders(ignore_fds=ignored)
     st = os.stat(name, dir_fd=fd, follow_symlinks=False)
@@ -459,7 +465,7 @@ def checked(path, fd, name, item, policy, ignored, moved=False):
     if not revalidate_protections(policy): raise Denied('protection_changed')
     st = os.stat(name, dir_fd=fd, follow_symlinks=False)
     if stat.S_ISREG(st.st_mode) and st.st_mode & 0o022: raise Denied('shared_write_permissions')
-    if not exact(st, item, moved): raise Denied('identity_changed')
+    if not exact(st, item): raise Denied('identity_changed')
     return st
 
 def renew(grant):
@@ -499,7 +505,7 @@ def rollback_stage(qfd, name, stage, record, item):
         noreplace(qfd,stage,qfd,name+'.data')
         os.fsync(qfd)
         st=os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False)
-        if exact(st,item,True): record['identity']=ident(st)
+        if renamed_identity(st,item): record['identity']=ident(st)
         record.pop('operation_stage',None)
         save(qfd,name,record)
     except (OSError,Denied):
@@ -514,7 +520,7 @@ def stage_entry(qfd, name, record, item, authority):
     noreplace(qfd,name+'.data',qfd,stage)
     os.fsync(qfd)
     st=os.stat(stage,dir_fd=qfd,follow_symlinks=False)
-    if not exact(st,item,True):
+    if not renamed_identity(st,item):
         rollback_stage(qfd,name,stage,record,item)
         raise Denied('staged_identity_changed')
     return stage,dict(item,identity=ident(st))
@@ -530,20 +536,30 @@ def recover_stage(qfd, name, record, item, policy, grant):
     try: os.stat(stage,dir_fd=qfd,follow_symlinks=False)
     except FileNotFoundError:
         # Rollback may have completed before its journal update. Never infer a
-        # deletion from absence; restore's existing destination check handles a
-        # completed final rename without moving any destination pathname.
-        try: st=checked(item['private_path'],qfd,name+'.data',pinned,policy,[qfd],True)
-        except FileNotFoundError: return False
+        # completion from absence or a destination pathname. Missing both
+        # private names is ambiguous, even if an inode at the destination matches.
+        try: st=checked(item['private_path'],qfd,name+'.data',pinned,policy,[qfd])
+        except FileNotFoundError:
+            record['state']='needs_recovery'
+            record['recovery']=dict(expected_identity=pinned['identity'],reason='staging_and_data_missing')
+            save(qfd,name,record);raise Denied('needs_recovery')
+        except Denied as error:
+            if str(error)!='identity_changed': raise
+            record['state']='needs_recovery'
+            record['recovery']=dict(expected_identity=pinned['identity'],reason='rollback_identity_uncertain')
+            save(qfd,name,record);raise Denied('needs_recovery')
         record.update(state='quarantined',identity=ident(st))
         record.pop('operation_stage',None);save(qfd,name,record)
         return True
-    checked(item['private_path'],qfd,stage,pinned,policy,[qfd],True)
+    stage_stat=os.stat(stage,dir_fd=qfd,follow_symlinks=False)
+    if not renamed_identity(stage_stat,pinned): raise Denied('stage_identity_changed')
+    checked(item['private_path'],qfd,stage,dict(pinned,identity=ident(stage_stat)),policy,[qfd])
     mutation_ready(fresh)
     # Capture only this validated, operation-local name. Occupied .data is
     # retained unchanged and the journal continues to identify the stage.
     noreplace(qfd,stage,qfd,name+'.data');os.fsync(qfd)
     st=os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False)
-    if not exact(st,pinned,True):
+    if not renamed_identity(st,pinned):
         record['state']='needs_recovery';record['recovery']=dict(expected_identity=pinned['identity'],conflicting_identity=ident(st),reason='stage_recovery_identity_changed')
         save(qfd,name,record);raise Denied('needs_recovery')
     record.update(state='quarantined',identity=ident(st))
@@ -565,7 +581,7 @@ def move_item(m, item, policy, grant, qfd, budget):
         try: moved = os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False)
         except FileNotFoundError: moved = None
         if moved is not None:
-            if not exact(moved,item,True): raise Denied('interrupted_identity_changed')
+            if not renamed_identity(moved,item): raise Denied('interrupted_identity_changed')
             existing.update(state='quarantined', identity=ident(moved), quarantined_at=time.time(), expires_at=time.time()+TTL)
             save(qfd,name,existing)
             return 'recovered_quarantine',0
@@ -588,7 +604,7 @@ def move_item(m, item, policy, grant, qfd, budget):
         os.fsync(fds[-1]); os.fsync(qfd)
         moved = os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False)
         try:
-            if not exact(moved,item,True): raise Denied('rename_identity_changed')
+            if not renamed_identity(moved,item): raise Denied('rename_identity_changed')
             parent_same(path,fds)
             if protected(path,policy) or not revalidate_protections(policy): raise Denied('protection_changed')
             opened,complete=holders(ignore_fds=fds+[qfd])
@@ -655,9 +671,9 @@ def restore_or_expire(m,item,policy,grant,qfd,budget):
         try: os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False)
         except FileNotFoundError:
             if record['state'] == 'restore_pending' and ACTION == 'restore':
-                checked(item['private_path'],fds[-1],leaf,pinned,policy,fds+[qfd],True)
-                record['state']='restored';record.pop('operation_stage',None);save(qfd,name,record)
-                return 'recovered_restore',0
+                record['state']='needs_recovery'
+                record['recovery']=dict(expected_identity=pinned['identity'],reason='quarantine_data_missing')
+                save(qfd,name,record);raise Denied('needs_recovery')
             raise Denied('quarantine_data_missing')
         checked(item['private_path'],qfd,name+'.data',pinned,policy,fds+[qfd])
         parent_same(item['private_path'],fds)
@@ -684,7 +700,7 @@ def restore_or_expire(m,item,policy,grant,qfd,budget):
                 expected=os.fstat(inode_fd)
                 try: restored=os.stat(leaf,dir_fd=fds[-1],follow_symlinks=False)
                 except FileNotFoundError: restored=None
-                if restored is None or (restored.st_dev,restored.st_ino)!=(expected.st_dev,expected.st_ino) or not exact(restored,staged,True):
+                if restored is None or (restored.st_dev,restored.st_ino)!=(expected.st_dev,expected.st_ino) or not exact(restored,dict(staged,identity=ident(expected))) or not renamed_identity(expected,staged):
                     record['state']='needs_recovery'
                     record['recovery']=dict(expected_identity=ident(expected),conflicting_identity=ident(restored) if restored is not None else None,destination_parent=record['original_parent'],reason='restore_destination_conflict')
                     save(qfd,name,record)

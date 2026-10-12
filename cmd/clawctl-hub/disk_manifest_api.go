@@ -6,6 +6,8 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -33,6 +35,14 @@ func configureDiskManifestSigningKey(st *store.Store, path string) error {
 
 func (h *hub) handleDiskManifestFetch(w http.ResponseWriter, r *http.Request, machine string) {
 	w.Header().Set("Cache-Control", "no-store")
+	release, retry := h.diskManifestLimiter.acquire(machine, time.Now())
+	if release == nil {
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
+		writeErr(w, 429, "RATE_LIMITED", "disk manifest grant limit reached")
+		return
+	}
+	defer release()
+
 	q := r.URL.Query()
 	for key, values := range q {
 		if (key != "job_id" && key != "digest") || len(values) != 1 {

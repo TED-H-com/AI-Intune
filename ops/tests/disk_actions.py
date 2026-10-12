@@ -286,7 +286,7 @@ class Actions(unittest.TestCase):
         self.assertFalse(self.file.exists());result=self.run_action('quarantine')
         self.assertEqual(result['items'][0]['status'],'recovered_quarantine');self.assertEqual(result['freed_bytes'],0)
         q,name,r=self.record();self.assertGreaterEqual(r['expires_at'],time.time()+604799)
-    def test_interrupted_restore_reconciles_existing_exact_destination(self):
+    def test_interrupted_restore_never_infers_completion_from_destination(self):
         self.run_action('quarantine');m=self.restore_manifest();mod=self.mods['restore'];save=mod.save
         calls=0
         def interrupted(*args):
@@ -295,9 +295,41 @@ class Actions(unittest.TestCase):
             if calls==4:raise OSError('interrupted')
             save(*args)
         with patch.object(mod,'save',side_effect=interrupted):self.run_action('restore',m)
-        self.assertTrue(self.file.exists());result=self.run_action('restore',m)
-        self.assertEqual(result['items'][0]['status'],'recovered_restore')
-        q,name,record=self.record();self.assertNotIn('operation_stage',record)
+        self.assertTrue(self.file.exists())
+        before=self.file.stat()
+        time.sleep(0.02)
+        self.file.write_bytes(b'changed content!!')
+        self.assertEqual(self.file.stat().st_size,before.st_size)
+        os.utime(self.file,ns=(before.st_atime_ns,before.st_mtime_ns))
+        after=self.file.stat()
+        self.assertEqual((after.st_ino,after.st_size,after.st_mtime_ns),(before.st_ino,before.st_size,before.st_mtime_ns))
+        self.assertNotEqual(after.st_ctime_ns,before.st_ctime_ns)
+        result=self.run_action('restore',m)
+        self.assertEqual(result['items'][0]['status'],'skipped')
+        self.assertEqual(result['items'][0]['reason'],'needs_recovery')
+        q,name,record=self.record();self.assertEqual(record['state'],'needs_recovery');self.assertIn('operation_stage',record)
+        self.assertEqual(self.file.read_bytes(),b'changed content!!')
+    def test_interrupted_rollback_with_changed_ctime_needs_recovery(self):
+        class Crash(BaseException):pass
+        self.run_action('quarantine');m=self.restore_manifest();mod=self.mods['restore'];rename=mod.noreplace
+        def crash_rollback(srcfd,src,dstfd,dst):
+            if dst=='old.txt':raise OSError('injected restore refusal')
+            rename(srcfd,src,dstfd,dst)
+            if '.op-' in src and dst.endswith('.data'):raise Crash()
+        with patch.object(mod,'noreplace',side_effect=crash_rollback):
+            with self.assertRaises(Crash):self.run_action('restore',m)
+        result=self.run_action('restore',m)
+        self.assertEqual(result['items'][0]['reason'],'needs_recovery')
+        q,name,record=self.record();self.assertEqual(record['state'],'needs_recovery')
+        self.assertEqual((q/(name+'.data')).read_bytes(),b'preserved content')
+
+    def test_exact_identity_includes_ctime(self):
+        before=self.file.stat()
+        time.sleep(0.02)
+        self.file.write_bytes(b'changed content!!')
+        os.utime(self.file,ns=(before.st_atime_ns,before.st_mtime_ns))
+        self.assertFalse(self.mod.exact(self.file.stat(),self.item))
+
     def test_ttl_holds_and_protection_override_original_approval(self):
         self.run_action('quarantine');result=self.run_action('expire');self.assertEqual(result['items'][0]['reason'],'ttl_not_elapsed')
         q,name,r=self.record()
