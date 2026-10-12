@@ -120,6 +120,10 @@ func Lookup(id string) (Entry, bool) {
 }
 func Digest(b []byte) string { return fmt.Sprintf("%x", sha256.Sum256(b)) }
 func (e Entry) AllowsOS(os string) bool {
+	os = OSFamily(os)
+	if os == "" {
+		return false
+	}
 	for _, v := range e.AllowedOS {
 		if v == os {
 			return true

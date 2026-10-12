@@ -8,6 +8,7 @@ package catalog
 import (
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"net/url"
 	"sort"
 	"strings"
@@ -70,19 +71,6 @@ type Platform struct {
 	Arch string `json:"arch"`
 }
 
-// darwinDisplayPrefix 是這棵樹自己的 darwin probe 會產生的 OS 顯示字串
-// 開頭（internal/probe/osname_darwin.go 的 parseDarwinSystemVersion）。
-// enroll 只把顯示字串帶過來，沒有帶 GOOS，所以今天這是唯一能把 Mac
-// 跟 Linux 發行版分開的證據。
-const darwinDisplayPrefix = "macOS"
-
-const (
-	windowsGOOS            = "windows"
-	windowsDisplayExact    = "windows"
-	windowsDisplayPrefix   = "windows "
-	microsoftWindowsPrefix = "microsoft windows "
-)
-
 // PlatformFromProbeIdentity 把 probe 的顯示身分轉成 manifest 與 executable
 // job spec 使用的 GOOS/GOARCH 詞彙。Linux 側記錄 /etc/os-release 的
 // PRETTY_NAME，darwin 側記錄 SystemVersion.plist；enrollment 只帶顯示字串與
@@ -102,23 +90,11 @@ func PlatformFromProbeIdentity(osDisplay, unameArch string) (Platform, error) {
 	default:
 		return Platform{}, &ResolutionError{Code: CodeUnsupportedPlatform, Detail: "machine architecture is unsupported"}
 	}
-	if strings.HasPrefix(osDisplay, darwinDisplayPrefix) {
-		return Platform{OS: "darwin", Arch: arch}, nil
+	family := scriptcatalog.OSFamily(osDisplay)
+	if family == "" {
+		return Platform{}, &ResolutionError{Code: CodeUnsupportedPlatform, Detail: fmt.Sprintf("OS %q (family %q) is unsupported", osDisplay, family)}
 	}
-	if windowsProbeIdentity(osDisplay) {
-		return Platform{OS: windowsGOOS, Arch: arch}, nil
-	}
-	return Platform{OS: "linux", Arch: arch}, nil
-}
-
-// windowsProbeIdentity 認 canonical Windows 顯示字串：Tailscale 的 "windows"、
-// "Windows 11" / "Windows Server …" 這類 prefix，以及 "Microsoft Windows …"。
-// 大小寫不敏感；不含空格的 WindowsSomething 不算。
-func windowsProbeIdentity(osDisplay string) bool {
-	lower := strings.ToLower(osDisplay)
-	return lower == windowsDisplayExact ||
-		strings.HasPrefix(lower, windowsDisplayPrefix) ||
-		lower == "microsoft windows" || strings.HasPrefix(lower, microsoftWindowsPrefix)
+	return Platform{OS: family, Arch: arch}, nil
 }
 
 // PackageRef always selects one exact package version. Version ranges are
