@@ -441,6 +441,13 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"POST /v1/operator/disk-ops/alerts/ack":                               {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /tenant/disk-alerts/ack/preview":                                {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"POST /tenant/disk-alerts/ack":                                        {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /tenant/schedules":                                               {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /tenant/schedules/new":                                           {operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /tenant/schedules/{id}":                                          {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /tenant/schedules/{id}/edit":                                     {operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/schedules/preview":                                      {operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/schedules/apply":                                        {operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/schedules/{id}/run-now":                                 {operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /tenant/disk-alerts":                                             {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"POST /machines/{id}/disk/ownership":                                  {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 }
@@ -509,6 +516,7 @@ func newHubHTTPHandler(h *hub, ui *web.Server, authorizer operatorRequestAuthori
 	if canonical, ok := canonicalLiteralAuthority(authority); len(cloud) == 0 && (!ok || canonical != authority) {
 		return nil, fmt.Errorf("operator authority %q must be canonical literal-ip:port", authority)
 	}
+	ui.SetScheduleAdmission(h.admitScheduleMutation)
 	root := http.NewServeMux()
 	nonOperatorRegistered := h.machineAndPublicRoutes(root)
 	nonOperatorRegistered = append(nonOperatorRegistered, registerAccountRoutes(root, h.store, ui, authority, h.clientIP, cloud...)...)
@@ -718,6 +726,9 @@ func (b *operatorBoundary) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if pattern == "POST /v1/operator/schedules/{operation}/{phase}" || pattern == "POST /v1/operator/schedules/{id}/run-now" {
 		policy.Permission = scheduleRequestPermission(r, b.store)
+	}
+	if pattern == "POST /tenant/schedules/preview" || pattern == "POST /tenant/schedules/apply" || pattern == "POST /tenant/schedules/{id}/run-now" {
+		policy.Permission = scheduleWebPermission(r, b.store)
 	}
 	before := routingOf(r)
 	authed, decision := b.authorizer.Authorize(r, policy.Permission)

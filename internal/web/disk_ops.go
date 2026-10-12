@@ -81,6 +81,10 @@ func (s *Server) diskFormError(w http.ResponseWriter, r *http.Request, back stri
 // The common operator boundary owns CrossOriginProtection. These forms also
 // reject duplicate/unknown body fields and queries before reading credentials.
 func diskOpsForm(w http.ResponseWriter, r *http.Request, fields ...string) bool {
+	return operatorWebForm(w, r, map[string]bool{"acknowledge_removed_paths": true, "item_ids": true}, fields...)
+}
+
+func operatorWebForm(w http.ResponseWriter, r *http.Request, multiple map[string]bool, fields ...string) bool {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.URL.RawQuery != "" || r.URL.ForceQuery {
 		return false
@@ -98,7 +102,7 @@ func diskOpsForm(w http.ResponseWriter, r *http.Request, fields ...string) bool 
 		allowed[f] = true
 	}
 	for k, v := range r.PostForm {
-		if !allowed[k] || (len(v) != 1 && k != "acknowledge_removed_paths" && k != "item_ids") {
+		if !allowed[k] || (len(v) != 1 && !multiple[k]) {
 			return false
 		}
 	}

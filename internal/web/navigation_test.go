@@ -199,7 +199,7 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	// 同一台機器的兩頁要給同一份子選單。少一項的選單看起來像那一節在這裡不存在。
 	assertSubNavigation(t, s, detailBase+"/timeline", "裝置詳細資料子選單", "事件時間軸", detailNav)
 	assertSubNavigation(t, s, detailBase+"/data", "裝置詳細資料子選單", "資料", detailNav)
-	tenantNav := map[string]string{"/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
+	tenantNav := map[string]string{"/tenant/schedules": "Schedules", "/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
 	assertSubNavigation(t, s, "/tenant/maintenance", "租用戶子選單", "維護", tenantNav)
 	assertSubNavigation(t, s, "/tenant/data", "租用戶子選單", "資料揭露", tenantNav)
 	assertSubNavigation(t, s, "/tenant/disk-policies", "租用戶子選單", "Disk policies", tenantNav)

@@ -49,7 +49,8 @@ type TerminalLinks interface {
 }
 
 type Server struct {
-	diskAlertBanner diskAlertBannerCache
+	scheduleAdmission func(http.ResponseWriter, *http.Request) bool
+	diskAlertBanner   diskAlertBannerCache
 	// drill 讀還原演練的章；nil = 不看。用 SetDrillStampReader 塞。
 	drill DrillStampReader
 	// terminalLinks 是機器有沒有連上 agent。nil = 沒有任何一台連著。
@@ -258,7 +259,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(patterns, s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...)
+	return append(append(append(patterns, s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
 }
 
 type maintenancePageView struct {
@@ -376,6 +377,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	Schedules             *schedulePage
 	DiskAction            *diskActionView
 	DiskQuarantine        *diskQuarantineView
 	DiskReport            *diskReportView
@@ -1831,6 +1833,8 @@ func subNavigationFor(data page) subNavigation {
 		return reportsSubNavigation("發佈與指派")
 	case "audit":
 		return reportsSubNavigation("稽核記錄")
+	case "tenant-schedules":
+		return tenantSubNavigation("Schedules")
 	case "tenant-disk-policies":
 		return tenantSubNavigation("Disk policies")
 	case "tenant-disk-alerts":
@@ -1869,6 +1873,7 @@ func tenantSubNavigation(current string) subNavigation {
 		subNavigationItem{Label: "Disk policies", Href: "/tenant/disk-policies"},
 		subNavigationItem{Label: "Approvals", Href: "/tenant/approvals"},
 		subNavigationItem{Label: "Disk alerts", Href: "/tenant/disk-alerts"},
+		subNavigationItem{Label: "Schedules", Href: "/tenant/schedules"},
 		subNavigationItem{Label: "資料揭露", Href: "/tenant/data"},
 	)
 }

@@ -1,4 +1,4 @@
-// Package schedulecron implements numeric five-field cron in UTC.
+// Package schedulecron implements numeric five-field cron with optional IANA timezones.
 package schedulecron
 
 import (
@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 )
 
 type Cron struct {
@@ -112,16 +113,39 @@ func (c *Cron) day(t time.Time) bool {
 	}
 	return dom || dow
 }
-func (c *Cron) Next(after time.Time) time.Time {
-	after = after.UTC()
-	d := time.Date(after.Year(), after.Month(), after.Day(), 0, 0, 0, 0, time.UTC)
+
+// Next preserves the historical UTC contract.
+func (c *Cron) Next(after time.Time) time.Time { return c.NextIn(after, time.UTC) }
+
+// NextIn skips nonexistent wall times and chooses the first occurrence of a
+// repeated wall minute. Constructing candidates by offsets avoids time.Date's
+// unspecified choice during DST transitions. Results are always UTC.
+func (c *Cron) NextIn(after time.Time, loc *time.Location) time.Time {
+	local := after.In(loc)
+	d := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
 	for limit := d.AddDate(8, 0, 0); d.Before(limit); d = d.AddDate(0, 0, 1) {
-		if c.day(d) {
-			for _, m := range c.minutes {
-				t := d.Add(time.Duration(m) * time.Minute)
-				if t.After(after) {
-					return t
+		if !c.day(d) {
+			continue
+		}
+		offsets := map[int]bool{}
+		for h := -48; h <= 48; h += 6 {
+			_, off := d.Add(time.Duration(h) * time.Hour).In(loc).Zone()
+			offsets[off] = true
+		}
+		for _, m := range c.minutes {
+			wall := d.Add(time.Duration(m) * time.Minute)
+			var first time.Time
+			for off := range offsets {
+				candidate := wall.Add(-time.Duration(off) * time.Second)
+				t := candidate.In(loc)
+				if t.Year() == d.Year() && t.Month() == d.Month() && t.Day() == d.Day() && t.Hour() == m/60 && t.Minute() == m%60 {
+					if first.IsZero() || candidate.Before(first) {
+						first = candidate
+					}
 				}
+			}
+			if !first.IsZero() && first.After(after) {
+				return first.UTC()
 			}
 		}
 	}
