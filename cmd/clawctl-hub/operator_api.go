@@ -309,6 +309,9 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 	mux.HandleFunc("POST /v1/operator/schedules/{id}/run-now", h.handleScheduleRunNow)
 	mux.HandleFunc("POST /v1/operator/script-runs/preview", h.handleScriptPreview)
 	mux.HandleFunc("POST /v1/operator/script-runs", h.handleScriptApply)
+	patterns = append(patterns, "GET /v1/operator/disk-ops/reports", "GET /v1/operator/disk-ops/reports/{id}")
+	mux.HandleFunc("GET /v1/operator/disk-ops/reports", h.handleDiskReports)
+	mux.HandleFunc("GET /v1/operator/disk-ops/reports/{id}", h.handleDiskReports)
 	patterns = append(patterns, "GET /v1/operator/disk-ops/policies")
 	patterns = append(patterns, "GET /v1/operator/disk-ops/status/{machine_id}")
 	mux.HandleFunc("GET /v1/operator/disk-ops/status/{machine_id}", h.handleDiskOpsStatus)
@@ -421,7 +424,7 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 func serviceTokenScriptEvidenceAllowed(spec scriptcatalog.Spec, entry scriptcatalog.Entry, resourceID string) bool {
 	// Disk v2 evidence carries private mount paths and pinned protect paths.
 	// Keep it human-only; MCP disk_ops_status provides the safe projection.
-	return !scriptcatalog.IsDiskSafe(spec.ScriptID) && spec.ExecutionMode == "read" && entry.Mode == "read" &&
+	return !scriptcatalog.IsDisk(spec.ScriptID) && spec.ExecutionMode == "read" && entry.Mode == "read" &&
 		spec.ScriptID == entry.ID && spec.ScriptID == resourceID && spec.ScriptSHA256 == entry.SHA256
 }
 

@@ -9,7 +9,7 @@ import (
 
 // diskSafePolicyTx resolves only the current immutable policy revision.
 func diskSafePolicyTx(tx dbTx, req ScriptRunRequest, entry scriptcatalog.Entry) (json.RawMessage, error) {
-	if !scriptcatalog.IsDiskSafe(entry.ID) {
+	if !scriptcatalog.IsDisk(entry.ID) {
 		return nil, nil
 	}
 	var args struct {
@@ -38,7 +38,7 @@ func diskSafePolicyTx(tx dbTx, req ScriptRunRequest, entry scriptcatalog.Entry) 
 	return canonical, nil
 }
 func (s *Store) diskSafeGateTx(tx dbTx, req ScriptRunRequest, entry scriptcatalog.Entry, admission ...bool) error {
-	if !scriptcatalog.IsDiskSafe(entry.ID) {
+	if !scriptcatalog.IsDisk(entry.ID) {
 		return nil
 	}
 	if entry.Mode == "write" && (len(admission) == 0 || admission[0]) && !s.DiskOpsWritesEnabled() {
@@ -48,6 +48,16 @@ func (s *Store) diskSafeGateTx(tx dbTx, req ScriptRunRequest, entry scriptcatalo
 		return err
 	}
 	for _, id := range req.Targets {
+		if entry.ID == "disk-deep-report-v1" && (len(admission) > 0 && admission[0]) {
+			available, err := deepAvailableTx(tx, id, s.now().UTC())
+			if err != nil {
+				return err
+			}
+			if !available {
+				return operatorError("PRECONDITION_FAILED", "deep report coalesced within six hours")
+			}
+		}
+
 		var supported sql.NullBool
 		err := tx.QueryRow(`SELECT cap.supported FROM machine_checkins c LEFT JOIN machine_job_capabilities cap ON cap.machine_id=c.machine_id AND cap.sent_at=c.sent_at AND cap.capability='disk_ops_v2' WHERE c.machine_id=? ORDER BY c.received_at DESC,c.rowid DESC LIMIT 1`, id).Scan(&supported)
 		if err == sql.ErrNoRows || (err == nil && (!supported.Valid || !supported.Bool)) {
@@ -76,7 +86,7 @@ func (s *Store) DiskScheduleRunNow(id, digest, key string, apply bool, a AuditEn
 	if err != nil {
 		return out, err
 	}
-	if !scriptcatalog.IsDiskSafe(v.ScriptID) {
+	if !scriptcatalog.IsDisk(v.ScriptID) {
 		return out, operatorError("BAD_REQUEST", "not a disk schedule")
 	}
 	if err = humanDiskAdmin(a); err != nil {

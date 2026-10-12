@@ -3,6 +3,7 @@ package operatoragent
 import (
 	"context"
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/diskreport"
 	"github.com/teddashh/AI-Intune/internal/maintenance"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/store"
@@ -167,5 +168,27 @@ func TestDiskStatusMCPProjectionExcludesPrivateEvidence(t *testing.T) {
 	raw, err := json.Marshal(redactedDiskStatus(s))
 	if err != nil || strings.Contains(string(raw), "/srv/private") || !strings.Contains(string(raw), "sha256:"+scriptcatalog.Digest([]byte("/srv/private"))) {
 		t.Fatalf("unsafe projection: %s %v", raw, err)
+	}
+}
+
+type fakeDeepReportHub struct{ fakeHub }
+
+func (f *fakeDeepReportHub) DiskReport(context.Context, string, string, int) (store.DiskReportPage, error) {
+	return store.DiskReportPage{Items: []diskreport.Item{{ID: "candidate", Category: "app-update-backups", PrivatePath: "/home/private-account/project/backup.bak", Confidence: "low", SuggestedAction: "investigate", OwnerApp: "private-account"}}, DiskReportSummary: store.DiskReportSummary{Report: diskreport.Report{Notices: []string{"/home/private-account"}}}}, nil
+}
+func TestDiskReportMCPDefensiveProjection(t *testing.T) {
+	s := &Service{Hub: &fakeDeepReportHub{}}
+	v, e := s.Call(context.Background(), "disk_report_get", json.RawMessage(`{"id":"report-fixture","limit":100}`))
+	if e != nil {
+		t.Fatal(e)
+	}
+	raw, _ := json.Marshal(v)
+	if strings.Contains(string(raw), "private-account") || strings.Contains(string(raw), "private_path") {
+		t.Fatal("MCP leaked private fields")
+	}
+	for _, args := range []string{`{"id":"report-fixture","limit":101}`, `{"id":"report-fixture","paths":true}`} {
+		if _, e = s.Call(context.Background(), "disk_report_get", json.RawMessage(args)); e == nil {
+			t.Fatal("invalid MCP args accepted")
+		}
 	}
 }

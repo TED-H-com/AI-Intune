@@ -14,6 +14,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/agentadapter"
 	appcatalog "github.com/teddashh/AI-Intune/internal/catalog"
 	"github.com/teddashh/AI-Intune/internal/deploy"
+	"github.com/teddashh/AI-Intune/internal/diskreport"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 )
@@ -902,7 +903,7 @@ func (s *Store) ClaimJob(jobID, machineID string, now time.Time, lease time.Dura
 		if e != nil {
 			return "", e
 		}
-		if entry, ok := scriptcatalog.Lookup(spec.ScriptID); ok && scriptcatalog.IsDiskSafe(entry.ID) {
+		if entry, ok := scriptcatalog.Lookup(spec.ScriptID); ok && scriptcatalog.IsDisk(entry.ID) {
 			if e = s.diskSafeGateTx(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{machineID}}, entry); e != nil {
 				return "", e
 			}
@@ -1098,7 +1099,22 @@ func (s *Store) RecordVerification(jobID, machineID, leaseToken, ruleID, command
 		return err
 	}
 	if resourceKind == scriptcatalog.Kind {
-		if scriptcatalog.IsDiskSafe(resourceID) && ruleID == scriptcatalog.Kind {
+		if resourceID == "disk-deep-report-v1" && ruleID == scriptcatalog.Kind {
+			stderrExcerpt = ""
+			if stdoutExcerpt != "" {
+				receipt, safe, e := diskreport.SafeSummary([]byte(stdoutExcerpt))
+				if e != nil || receipt.ID != "report-"+jobID {
+					return ErrInvalidJobEvidence
+				}
+				var digest string
+				if e = s.rdb.QueryRow(`SELECT digest FROM disk_reports WHERE id=? AND job_id=? AND machine_id=? AND completed_at IS NOT NULL`, receipt.ID, jobID, machineID).Scan(&digest); e != nil || digest != receipt.Digest {
+					return ErrInvalidJobEvidence
+				}
+				stdoutExcerpt = safe
+			} else if passed {
+				return ErrInvalidJobEvidence
+			}
+		} else if scriptcatalog.IsDiskSafe(resourceID) && ruleID == scriptcatalog.Kind {
 			stdoutExcerpt = scriptcatalog.RedactDiskJSON([]byte(stdoutExcerpt))
 		} else {
 			stdoutExcerpt = scriptcatalog.Redact(stdoutExcerpt)

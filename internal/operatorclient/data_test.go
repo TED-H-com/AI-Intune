@@ -1,6 +1,7 @@
 package operatorclient
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -213,6 +214,29 @@ func TestTheMachineDataClientRefusesAResultThatContradictsItself(t *testing.T) {
 		client, _ := recordingReportServer(t, result)
 		if _, err := client.MachineData(t.Context(), "m1"); err == nil {
 			t.Errorf("%s：自相矛盾的單機揭露面被接受了", name)
+		}
+	}
+}
+
+func TestHubDisclosureCategoryTextFitsStrictClientContract(t *testing.T) {
+	now := time.Now().UTC()
+	disclosure := dataClientDisclosure(t, now)
+	if err := validateDataDisclosure(disclosure); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateMachineData(dataClientMachine(t, now), "m1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, category := range disclosure.Categories {
+		if err := validateDataCategory(category); err != nil {
+			t.Fatalf("Hub category %s: %v", category.Key, err)
+		}
+		for _, bad := range []string{strings.Repeat("x", 513), " text", "text ", "text\u202e", "text\xff"} {
+			invalid := category
+			invalid.Holds = bad
+			if err := validateDataCategory(invalid); err == nil {
+				t.Fatalf("category %s accepted unsafe holds", category.Key)
+			}
 		}
 	}
 }

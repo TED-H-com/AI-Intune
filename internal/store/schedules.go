@@ -249,7 +249,7 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 	if operation == "set-enabled" && req.Enabled && (v.PausedReason != "" || v.ExecutionMode == "" || v.ExecutionMode != entry.Mode) {
 		return out, scriptBad("re-approve script through upsert")
 	}
-	if v.Enabled && scriptcatalog.IsDiskSafe(v.ScriptID) {
+	if v.Enabled && scriptcatalog.IsDisk(v.ScriptID) {
 		var args struct {
 			Scope string `json:"scope"`
 		}
@@ -538,6 +538,20 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	}
 	outcome := "enqueued"
 	req := ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: v.Targets, TimeoutSeconds: entry.DefaultTimeout, Reason: "scheduled catalog run"}
+	if entry.ID == "disk-deep-report-v1" {
+		for _, target := range v.Targets {
+			available, e := deepAvailableTx(tx, target, now)
+			if e != nil {
+				return nil, e
+			}
+			if !available {
+				if manual {
+					return nil, operatorError("PRECONDITION_FAILED", "deep report coalesced within six hours")
+				}
+				active++
+			}
+		}
+	}
 	if active > 0 {
 		outcome = "skipped_overlap"
 	} else if err = s.diskSafeGateTx(tx, req, entry); err != nil {
@@ -611,7 +625,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 }
 
 func scheduleScope(e scriptcatalog.Entry, a AuditEntry) error {
-	if e.Mode == "read" && (a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "-admin")) {
+	if e.ID != "disk-deep-report-v1" && e.Mode == "read" && (a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "-admin")) {
 		a.AuthCapability = "operate"
 	}
 	return scriptScope(e, a)

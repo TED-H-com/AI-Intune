@@ -67,7 +67,7 @@ func (h *hub) handleScriptRun(w http.ResponseWriter, r *http.Request, apply bool
 			return
 		}
 	}
-	if e, ok := scriptcatalog.Lookup(body.ScriptID); ok && e.Mode == "write" {
+	if e, ok := scriptcatalog.Lookup(body.ScriptID); ok && (e.Mode == "write" || e.ID == "disk-deep-report-v1") {
 		p, ok := operatorauth.PrincipalFromContext(r.Context())
 		if !ok || !p.Has(operatorauth.Admin) {
 			h.rejectOperatorPolicyTransport(w, r, actor, action, 403, "SCRIPT_SCOPE_REQUIRED", "write scripts require admin")
@@ -112,7 +112,7 @@ func scriptRequestPermission(r *http.Request) operatorauth.Permission {
 	if json.Unmarshal(prefix, &id) != nil {
 		return operatorauth.Operate
 	}
-	if e, ok := scriptcatalog.Lookup(id.ScriptID); ok && e.Mode == "write" {
+	if e, ok := scriptcatalog.Lookup(id.ScriptID); ok && (e.Mode == "write" || e.ID == "disk-deep-report-v1") {
 		return operatorauth.Admin
 	}
 	return operatorauth.Operate

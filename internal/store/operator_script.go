@@ -64,6 +64,9 @@ func normalizeScript(req ScriptRunRequest) (ScriptRunRequest, scriptcatalog.Entr
 	return req, e, nil
 }
 func scriptScope(e scriptcatalog.Entry, a AuditEntry) error {
+	if e.ID == "disk-deep-report-v1" {
+		return humanDiskAdmin(a)
+	}
 	if a.AuthMethod == operatorauth.AuthMethodServiceToken {
 		if e.Mode != "read" {
 			return operatorError("SERVICE_TOKEN_READ_SCRIPTS_ONLY", "service tokens require a read-only catalog script")

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -343,24 +344,26 @@ func TestServiceTokenCannotSelfApproveExistingRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var allowlist []string
 	mux := http.NewServeMux()
 	calls := 0
 	for route, policy := range operatorRoutePolicies {
 		if policy.Representation == operatorJSON {
-			allowlist = append(allowlist, route)
 			mux.HandleFunc(route, func(http.ResponseWriter, *http.Request) { calls++ })
 		}
 	}
-	_, secret, err := st.CreateServiceToken(store.ServiceToken{Name: "legacy", Scope: "operate", ExpiresAt: time.Now().Add(time.Hour), Allowlist: allowlist}, actor.AccountID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	b := newOperatorBoundary(mux, nil, st, operatorRoutePolicies, testOperatorAuthority)
+	caseIndex := 0
 	for route, policy := range operatorRoutePolicies {
 		if policy.Representation != operatorJSON || policy.ServiceTokenEligible.eligible() {
 			continue
 		}
+		// Each request has its own exact allowlist. A growing route manifest
+		// must not make this denial fixture exceed the token's 128-route cap.
+		_, secret, err := st.CreateServiceToken(store.ServiceToken{Name: "legacy-" + strconv.Itoa(caseIndex), Scope: "operate", ExpiresAt: time.Now().Add(time.Hour), Allowlist: []string{route}}, actor.AccountID)
+		if err != nil {
+			t.Fatalf("token for %s: %v", route, err)
+		}
+		caseIndex++
 		method, path, _ := strings.Cut(route, " ")
 		path = regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "test")
 		req := newBoundaryRequest(method, path, nil)
