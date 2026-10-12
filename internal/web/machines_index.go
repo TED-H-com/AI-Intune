@@ -28,11 +28,12 @@ type machineIndexPageView struct {
 	Channel     string
 	Limit       int
 
-	HasFilters    bool
-	NextHref      string
-	FirstPageHref string
-	CurrentLabel  string
-	AssignedUsers map[string]string
+	HasFilters       bool
+	NextHref         string
+	FirstPageHref    string
+	CurrentLabel     string
+	AssignedUsers    map[string]string
+	AttentionReasons map[string]string
 }
 
 type machineStateFilter struct {
@@ -198,8 +199,10 @@ func buildMachineIndexPage(request operator.MachineListRequest, result operator.
 		CurrentLabel: "所有機器",
 	}
 	view.AssignedUsers = map[string]string{}
+	view.AttentionReasons = map[string]string{}
 	if overview, ok := result.StoreOverview(); ok {
 		for _, row := range overview.Machines {
+			view.AttentionReasons[row.Machine.MachineID] = attentionReasons(row.State, row.Facts.Credentials, row.Findings, row.Reason)
 			view.AssignedUsers[row.Machine.MachineID] = assignedUserWebLabel(row.Machine.AssignedUserID, row.Machine.AssignedUserLogin)
 		}
 		for _, m := range overview.Retired {
@@ -217,7 +220,7 @@ func buildMachineIndexPage(request operator.MachineListRequest, result operator.
 	}
 	for _, candidate := range state.AllStates {
 		view.States = append(view.States, machineStateFilter{
-			Value: string(candidate), Label: string(candidate), Selected: selected[candidate],
+			Value: string(candidate), Label: statusDisplayLabel(candidate), Selected: selected[candidate],
 		})
 	}
 	view.HasFilters = request.MachineID != "" || request.DisplayName != "" || len(request.States) > 0 ||

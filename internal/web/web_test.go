@@ -2808,7 +2808,8 @@ func TestAllCredentialStatesGetTheirOwnWord(t *testing.T) {
 	if err := st.RecordObservation(id, b, now); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	body := stripTags(get(t, s, "/machines/"+id))
+	rendered := get(t, s, "/machines/"+id)
+	body := stripTags(rendered)
 
 	seen := map[string]model.CredStatus{}
 	for _, cs := range all {
@@ -2823,8 +2824,12 @@ func TestAllCredentialStatesGetTheirOwnWord(t *testing.T) {
 		seen[w] = cs
 	}
 	// ⚠ 六個狀態六個詞，但每一個都必須是**人話**，不能是原始的 enum 字串洩出來。
+	// Inline reasons intentionally use human phrases such as "grok login expired".
+	// Exclude only their spans; raw enum fallbacks elsewhere must still fail.
+	reasonSpan := regexp.MustCompile(`<span class="[^"]*\battention-reasons\b[^"]*">[^<]*</span>`)
+	statusBody := stripTags(reasonSpan.ReplaceAllString(rendered, ""))
 	for _, cs := range all {
-		if strings.Contains(body, string(cs)) {
+		if strings.Contains(statusBody, string(cs)) {
 			t.Errorf("畫面上出現了原始代號 %q —— 那代表 credLabel 沒認得它，"+
 				"人看到的會是 expires_soon 而不是「即將過期」", cs)
 		}
