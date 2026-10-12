@@ -22,3 +22,14 @@ func (s *Service) RejectScheduleRunNow(id, key string, actor Actor) error {
 	a.Detail = "schedule not found"
 	return s.store.RecordAudit(a)
 }
+
+func (s *Service) Schedules() ([]store.Schedule, error)       { return s.store.ScheduleList() }
+func (s *Service) Schedule(id string) (store.Schedule, error) { return s.store.ScheduleGet(id) }
+func (s *Service) ScheduleJobIDs(id string) ([]string, error) { return s.store.ScheduleJobIDs(id) }
+func (s *Service) RejectScheduleTransport(actor Actor, action store.AuditAction) error {
+	a := auditFromActor(actor)
+	a.Action = action
+	a.OK = false
+	a.Detail = "invalid schedule form"
+	return s.store.RecordAudit(a)
+}

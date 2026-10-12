@@ -1562,7 +1562,7 @@ CREATE INDEX IF NOT EXISTS idx_hub_login_failures_age ON hub_login_failures(last
 CREATE TABLE IF NOT EXISTS schedules (
  id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
  script_id TEXT NOT NULL, script_sha256 TEXT NOT NULL, args TEXT NOT NULL,
- targets TEXT NOT NULL, cron TEXT NOT NULL, enabled INTEGER NOT NULL,
+ targets TEXT NOT NULL, cron TEXT NOT NULL, tz TEXT NOT NULL DEFAULT 'UTC', enabled INTEGER NOT NULL,
  catch_up INTEGER NOT NULL DEFAULT 0 CHECK(catch_up=0),
  created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  revision INTEGER NOT NULL, last_run_at TEXT, last_job_ids TEXT NOT NULL DEFAULT '[]',

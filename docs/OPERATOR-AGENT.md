@@ -231,7 +231,8 @@ Schedule tools: `schedule_list`, `schedule_get` (view),
 `schedule_set_enabled_preview` / `schedule_set_enabled_apply`, and
 `schedule_run_now` (operate for read scripts; admin for write scripts).
 Apply requires the matching preview digest, idempotency key, and current
-`expected_revision`; use zero for a new schedule. Cron is five-field UTC with a
+`expected_revision`; use zero for a new schedule. Cron is five-field numeric,
+evaluated in optional `tz` (IANA location; omitted means `UTC`), with a
 five-minute minimum. Missed runs are discarded, overlaps are audited and skipped.
 A changed catalog hash pauses the schedule until an upsert approves the new hash.
 Run-now requires an `idempotency_key` and replays the original job IDs across
@@ -325,3 +326,30 @@ within its original overlap while the successor is unused; re-issue revokes the
 unused successor. Once the successor authenticates, predecessor rotation returns
 409. Chain-wide budgets include re-issues, and successors wait for the prior
 overlap to end before rotating again.
+
+
+### Human schedules UI and timezone behavior
+
+The Hub’s **Schedules** entry beside Disk pages opens `/tenant/schedules`.
+View permits list/detail access; Operate permits preview/apply/run-now. Catalog
+write scripts require Admin, including changes to an existing write schedule.
+Admin apply and run-now use the same fresh human reauthentication as Disk.
+The pages use session authentication, cross-origin protection, audit, script
+mutation rate limits, catalog approvals and the shared operator/store functions.
+Changes and enable/disable require preview digest, idempotency key and expected
+revision. Run-now requires confirmation and an idempotency key; retrying a
+confirmed form replays the original receipt rather than enqueueing another run.
+
+Schedule JSON now includes `tz`. Upsert accepts optional `tz`; existing rows
+migrate to `UTC`. The timezone is validated with `time.LoadLocation` and bound
+into the normalized preview digest. The UI defaults new schedules to
+`America/New_York`; API omission continues to mean UTC. Set-enabled preserves
+the stored timezone and does not accept a timezone change.
+
+Cron slots are wall-clock times in that location, persisted as UTC instants.
+For example `0 12 * * *` with `America/New_York` stays noon across DST.
+Nonexistent wall minutes during the spring gap are skipped. Repeated wall
+minutes during the autumn overlap run **once, at the first occurrence**.
+No catch-up is performed after restart or late scheduler ticks. Next-run
+previews show three local times alongside UTC. Disabled schedules show their
+computed next slot for reference; they are not dispatched.

@@ -37,3 +37,26 @@ func TestCron(t *testing.T) {
 		t.Fatal("leap next")
 	}
 }
+
+func TestCronTimezoneDST(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ cron, after, want string }{
+		{"30 1 * * *", "2026-11-01T04:00:00Z", "2026-11-01T05:30:00Z"},
+		{"30 1 * * *", "2026-11-01T05:30:00Z", "2026-11-02T06:30:00Z"},
+		{"30 2 * * *", "2027-03-14T05:00:00Z", "2027-03-15T06:30:00Z"},
+		{"0 12 * * *", "2026-11-01T04:00:00Z", "2026-11-01T17:00:00Z"},
+		{"0 12 * * *", "2027-03-14T05:00:00Z", "2027-03-14T16:00:00Z"},
+	} {
+		c, err := Parse(test.cron)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, _ := time.Parse(time.RFC3339, test.after)
+		if got := c.NextIn(after, loc).Format(time.RFC3339); got != test.want {
+			t.Errorf("%s after %s: %s want %s", test.cron, test.after, got, test.want)
+		}
+	}
+}
