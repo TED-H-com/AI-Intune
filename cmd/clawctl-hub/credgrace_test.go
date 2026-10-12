@@ -64,3 +64,39 @@ func TestMorningReportSkipsExpiredCredentialStillInGrace(t *testing.T) {
 		t.Errorf("過了寬限還沒續回來的票一定要上早報：\n%s", rep)
 	}
 }
+
+// The probe reuses agy's configured-without-expiry wire representation.
+// Verify the notification report consumes those facts without an expiry alarm.
+func TestMorningReportSkipsRefreshableCredentials(t *testing.T) {
+	for _, provider := range []string{"grok"} {
+		t.Run(provider, func(t *testing.T) {
+			mux, st := emptyMetricsFixture(t)
+			t.Cleanup(func() { st.Close() })
+			h := &hub{store: st}
+			m := enrollViaHTTP(t, mux, st, "refreshable-host")
+			postCheckin(t, mux, m.token, http.StatusOK)
+			now := time.Now().UTC().Add(time.Minute)
+			for _, refreshable := range []bool{true, false} {
+				c := model.Credential{Provider: provider, Status: model.CredConfigured, Note: "refreshable; access token refreshed on use"}
+				if !refreshable {
+					exp := now.Add(-30 * 24 * time.Hour)
+					c.Status, c.ExpiresAt, c.Note = model.CredExpired, &exp, ""
+				}
+				b := model.ObservationBatch{MeasuredAt: now.Add(-time.Minute), Credentials: []model.Credential{c}}
+				if err := st.RecordObservation(m.id, b, now.Add(-time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.ReconcileFleet(now.Add(-time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				rep, err := h.buildReport(now, now.Add(-24*time.Hour))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(rep, provider) == refreshable {
+					t.Fatalf("refreshable=%v report:\n%s", refreshable, rep)
+				}
+			}
+		})
+	}
+}

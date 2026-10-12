@@ -864,7 +864,8 @@ func Derive(f Facts) Judgement {
 				add("credential", 2, true, "%s 的登入狀態未知：%s", c.Provider, note)
 			}
 		case "absent", "configured":
-			// ⚠ configured 是有憑證且過期時間還沒到，absent 是沒裝這家；兩者都是事實，不長 finding。
+			// configured includes refreshable OAuth credentials whose access token
+			// refreshes on use; neither configured nor absent produces a finding.
 		case "":
 			// ⚠ Advisory 分的是有沒有影響主狀態，不是是不是已知限制。
 			// 這兩格不 promote，所以必須是 advisory；它們跟 unknown 靠句子與下一步

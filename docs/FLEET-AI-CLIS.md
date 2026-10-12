@@ -161,3 +161,14 @@ these files. Existing Hubs understand `configured` without expiry. New Hubs
 ignore source-less legacy Gemini credentials when the machine reports agy
 present, while still judging invalid agy credentials. Other providers retain
 their existing judgement.
+
+Grok auth entries under `https://auth.x.ai::*` with an expired access token
+and a non-empty `refresh_token` are reported as `configured`/refreshable when
+`expires_at` is at most 30 days in the past. Access-token expiry is omitted
+from these observations, so Hub judgement and notifications do not treat
+expiry before the next CLI use as a login failure. Grok refreshes on every
+use; expiry more than 30 days in the past indicates that the refresh chain
+has stopped and remains `expired`, even with a refresh token. Without a
+refresh token, expiry is judged normally; missing auth files remain `absent`.
+Claude and Codex expiry judgement is unchanged, including when refresh tokens
+are present. These probes read files only and never perform a model or network call.
