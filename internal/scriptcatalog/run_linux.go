@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"os"
@@ -57,6 +58,11 @@ func (w *output) text() string {
 // Run never accepts a command or path from a job. The interpreter and script
 // path are fixed, and JSON args travel exclusively on stdin.
 func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error) {
+	return RunPolicy(ctx, e, args, timeout, nil)
+}
+
+// RunPolicy accepts only a digest-pinned closed policy for disk entries.
+func RunPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy json.RawMessage) (Result, error) {
 	var result Result
 	if os.Geteuid() == 0 || e.RunsAs != "agent-user" || !e.AllowsOS("linux") || timeout < 1 || timeout > e.MaxTimeout || e.OutputCap < 1 || e.OutputCap > 64<<10 || Digest(e.Bytes) != e.SHA256 {
 		return result, fmt.Errorf("invalid catalog execution constraints")
@@ -64,6 +70,21 @@ func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error)
 	canonical, err := e.Validate(args)
 	if err != nil {
 		return result, err
+	}
+	if IsDiskSafe(e.ID) {
+		var a struct {
+			PolicyDigest string `json:"policy_digest"`
+		}
+		_ = json.Unmarshal(canonical, &a)
+		if len(policy) == 0 || len(policy) > 32768 || "sha256:"+Digest(policy) != a.PolicyDigest {
+			return result, fmt.Errorf("disk policy digest mismatch")
+		}
+		canonical, _ = json.Marshal(struct {
+			Args   json.RawMessage `json:"args"`
+			Policy json.RawMessage `json:"policy"`
+		}{canonical, policy})
+	} else if len(policy) > 0 {
+		return result, fmt.Errorf("policy only allowed for disk scripts")
 	}
 	dir, err := os.MkdirTemp("", "clawctl-script-*")
 	if err != nil {
@@ -78,7 +99,7 @@ func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error)
 	defer cancel()
 	interpreter := "/bin/sh"
 	home := dir
-	if e.ID == "bat-sweep-report-v1" {
+	if e.ID == "bat-sweep-report-v1" || IsDiskSafe(e.ID) {
 		interpreter = "/usr/bin/python3"
 		account, err := user.Current()
 		if err != nil || account.HomeDir == "" {
@@ -87,7 +108,7 @@ func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error)
 		home = account.HomeDir
 	}
 	argv := []string{path}
-	if e.ID == "bat-sweep-report-v1" {
+	if e.ID == "bat-sweep-report-v1" || IsDiskSafe(e.ID) {
 		argv = []string{"-I", "-S", "-B", path}
 	}
 	cmd := exec.CommandContext(ctx, interpreter, argv...)
@@ -117,6 +138,9 @@ func Run(ctx context.Context, e Entry, args []byte, timeout int) (Result, error)
 	}
 	result.TimedOut = ctx.Err() == context.DeadlineExceeded
 	result.Stdout, result.Stderr = stdout.text(), stderr.text()
+	if IsDiskSafe(e.ID) && stdout.count <= int64(e.OutputCap) {
+		result.Stdout = RedactDiskJSON(stdout.buf.Bytes())
+	}
 	result.StdoutTruncated, result.StderrTruncated = stdout.count > int64(e.OutputCap), stderr.count > int64(e.OutputCap)
 	result.StdoutSHA256, result.StderrSHA256 = fmt.Sprintf("%x", stdout.digest.Sum(nil)), fmt.Sprintf("%x", stderr.digest.Sum(nil))
 	return result, nil

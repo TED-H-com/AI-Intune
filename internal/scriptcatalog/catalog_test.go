@@ -7,15 +7,15 @@ import (
 )
 
 func TestRegistryHashIntegrity(t *testing.T) {
-	if len(List()) != 2 {
-		t.Fatal("expected probe and BAT report scripts")
+	if len(List()) != 4 {
+		t.Fatal("expected probe, BAT report and disk-safe scripts")
 	}
 	for _, meta := range List() {
 		e, ok := Lookup(meta.ID)
 		if !ok || Digest(e.Bytes) != e.SHA256 {
 			t.Fatal("embedded hash mismatch")
 		}
-		if (e.ID == "bat-sweep-report-v1" && e.Mode != "write") || (e.ID != "bat-sweep-report-v1" && e.Mode != "read") || e.RunsAs != "agent-user" || e.ArgsSchema.AdditionalProperties {
+		if ((e.ID == "bat-sweep-report-v1" || e.ID == "disk-safe-clean-v2") && e.Mode != "write") || (e.ID != "bat-sweep-report-v1" && e.ID != "disk-safe-clean-v2" && e.Mode != "read") || e.RunsAs != "agent-user" || e.ArgsSchema.AdditionalProperties {
 			t.Fatal("unsafe catalog metadata")
 		}
 	}

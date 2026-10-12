@@ -6,7 +6,7 @@ output_dir="${1:-$repo_dir/docs/screenshots/phase2/p2-01}"
 mkdir -p "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
 cd "$repo_dir"
-GOCACHE="${GOCACHE:-/tmp/gocache}" CLAWCTL_SCREENSHOT_DIR="$output_dir" go test ./internal/web -run '^TestDiskOpsScreenshotFixtures$' -count=1
+GOCACHE="${GOCACHE:-/tmp/gocache}" CLAWCTL_SCREENSHOT_DIR="$output_dir" go test ./internal/web -run "^${CLAWCTL_SCREENSHOT_TEST:-TestDiskOpsScreenshotFixtures}$" -count=1
 browser_path=''
 for candidate in google-chrome chromium chromium-browser google-chrome-stable; do
   if command -v "$candidate" >/dev/null 2>&1; then

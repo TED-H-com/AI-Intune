@@ -22,6 +22,12 @@ var probe []byte
 //go:embed bat-sweep-report-v1.py
 var batSweep []byte
 
+//go:embed disk-safe-preview-v2.py
+var diskPreview []byte
+
+//go:embed disk-safe-clean-v2.py
+var diskClean []byte
+
 type Property struct {
 	Items     *Property `json:"items,omitempty"`
 	MinItems  int       `json:"minItems,omitempty"`
@@ -62,7 +68,17 @@ type Entry struct {
 
 // Each additional embedded script is one registry entry. Hashes are constants,
 // never computed from potentially changed bytes when accepting a job.
+func diskSchema() Schema {
+	return Schema{Type: "object", Required: []string{"scope", "policy_id", "policy_digest"}, Properties: map[string]Property{
+		"scope":         {Type: "string", Enum: []string{"user", "root"}, MinLength: 4, MaxLength: 4},
+		"policy_id":     {Type: "string", Pattern: "^[a-zA-Z0-9_-]{1,128}$", MinLength: 1, MaxLength: 128},
+		"policy_digest": {Type: "string", Pattern: "^sha256:[a-f0-9]{64}$", MinLength: 71, MaxLength: 71}}}
+}
+func IsDiskSafe(id string) bool { return id == "disk-safe-preview-v2" || id == "disk-safe-clean-v2" }
+
 var registry = []Entry{
+	{"disk-safe-preview-v2", "2", "95ae88877bb530293c3fb75b774b1ed5c274bb3397bfefec04117b7bd15b94fe", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
+	{"disk-safe-clean-v2", "2", "049158e13d64e0a9de03bb3697fad76c36faa19481a98bf0fdb9037abf362f96", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},
 	{"bat-sweep-report-v1", "1", "0e00340abb9083cc2ab358857309c2f6c9237d7397581881b91a45868cd425a2", Schema{Type: "object", Required: []string{"hosts", "connector_tree_sha256"}, Properties: map[string]Property{"hosts": {Type: "array", MinItems: 1, MaxItems: 8, Items: &Property{Type: "string", Pattern: "^[a-z0-9-]{1,32}$", MinLength: 1, MaxLength: 32}}, "connector_tree_sha256": {Type: "string", Pattern: "^[a-f0-9]{64}$", MinLength: 64, MaxLength: 64}, "include_excerpts": {Type: "boolean"}}}, 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, batSweep},
 	{"fleet-probe-v1", "1", "0c242784f162df0489571fa0ac901e0e583f54afa3d121d0b033e8dff2bad924", Schema{Type: "object", Properties: map[string]Property{}}, 15, 60, 64 << 10, "read", "agent-user", []string{"linux"}, probe},
 }
@@ -196,6 +212,7 @@ func (e Entry) Validate(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 type Spec struct {
+	Policy json.RawMessage `json:"policy,omitempty"`
 	// ExecutionMode records the catalog mode approved when the job was created.
 	// Optional for legacy agent execution; disclosure must not infer it later.
 	ExecutionMode string          `json:"execution_mode,omitempty"`
@@ -222,4 +239,52 @@ var secrets = regexp.MustCompile(`(?i)(bearer\s+[^\s"']+|(?:"?(?:token|password|
 
 func Redact(s string) string {
 	return secrets.ReplaceAllString(strings.ToValidUTF8(s, "�"), "[REDACTED]")
+}
+
+// Preserve validated evidence digests while redacting all other output strings.
+func RedactDiskJSON(raw []byte) string {
+	var document map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if len(raw) > 64<<10 || decoder.Decode(&document) != nil {
+		return ""
+	}
+	var clean func(any, string) any
+	clean = func(v any, key string) any {
+		switch value := v.(type) {
+		case string:
+			if key == "schema" && (value == "fleet-disk-clean/v1" || value == "disk-safe/v2") {
+				return value
+			}
+			if key == "policy_id" && regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`).MatchString(value) && !regexp.MustCompile(`^(sk-|gh[pousr]_|github_pat_)`).MatchString(value) {
+				return value
+			}
+			if (key == "policy_digest" || key == "config_digest") && len(value) == 71 && strings.HasPrefix(value, "sha256:") {
+				valid := true
+				for _, c := range value[7:] {
+					if !strings.ContainsRune("0123456789abcdef", c) {
+						valid = false
+					}
+				}
+				if valid {
+					return value
+				}
+			}
+			return Redact(value)
+		case map[string]any:
+			for k, x := range value {
+				value[k] = clean(x, k)
+			}
+			return value
+		case []any:
+			for i, x := range value {
+				value[i] = clean(x, "")
+			}
+			return value
+		default:
+			return value
+		}
+	}
+	b, _ := json.Marshal(clean(document, ""))
+	return string(b)
 }

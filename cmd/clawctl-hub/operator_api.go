@@ -310,6 +310,8 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 	mux.HandleFunc("POST /v1/operator/script-runs/preview", h.handleScriptPreview)
 	mux.HandleFunc("POST /v1/operator/script-runs", h.handleScriptApply)
 	patterns = append(patterns, "GET /v1/operator/disk-ops/policies")
+	patterns = append(patterns, "GET /v1/operator/disk-ops/status/{machine_id}")
+	mux.HandleFunc("GET /v1/operator/disk-ops/status/{machine_id}", h.handleDiskOpsStatus)
 	mux.HandleFunc("GET /v1/operator/disk-ops/policies", h.handleDiskPolicies)
 	patterns = append(patterns, "GET /v1/operator/disk-ops/policies/{id}")
 	mux.HandleFunc("GET /v1/operator/disk-ops/policies/{id}", h.handleDiskPolicies)
@@ -417,7 +419,9 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 // A current read classification cannot grant access to legacy or historical
 // write evidence. Identity and mode must agree with the immutable job spec.
 func serviceTokenScriptEvidenceAllowed(spec scriptcatalog.Spec, entry scriptcatalog.Entry, resourceID string) bool {
-	return spec.ExecutionMode == "read" && entry.Mode == "read" &&
+	// Disk v2 evidence carries private mount paths and pinned protect paths.
+	// Keep it human-only; MCP disk_ops_status provides the safe projection.
+	return !scriptcatalog.IsDiskSafe(spec.ScriptID) && spec.ExecutionMode == "read" && entry.Mode == "read" &&
 		spec.ScriptID == entry.ID && spec.ScriptID == resourceID && spec.ScriptSHA256 == entry.SHA256
 }
 
