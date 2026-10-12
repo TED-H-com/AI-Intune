@@ -1910,6 +1910,7 @@ var funcs = template.FuncMap{
 		return []string{"app-update-backups", "installer-leftovers", "release-build-directories", "unused-docker-images", "caches-models", "orphaned-processes", "agent-session-stores", "duplicate-archives"}
 	},
 	"diskTime":               fmtDiskTime,
+	"diskExpiry":             fmtDiskExpiry,
 	"label":                  label,
 	"deploymentBlockerLabel": operator.DeploymentBlockerLabel,
 	"ruleLabel":              func(kind compliance.RuleKind) string { return compliance.RuleLabel(kind) },

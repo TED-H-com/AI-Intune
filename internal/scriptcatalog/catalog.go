@@ -90,10 +90,10 @@ func deepSchema() Schema {
 }
 
 var registry = []Entry{
-	{"disk-approved-quarantine-v1", "1", "6ae29dec44eae445d41e0918dfa605061d266c6f52ac3e762e009582874f93ac", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskQuarantine},
-	{"disk-approved-delete-v1", "1", "43f2e5b4c179b79d287d39b884818cbf94fc3b41a28c10d753fb79cd08237b40", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskDelete},
-	{"disk-quarantine-expire-v1", "1", "62ef86b20295891abd12ef06f82fae2e828d4f3c1c28c6823f4c67eb7a339489", expirySchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskExpire},
-	{"disk-quarantine-restore-v1", "1", "3c23d92fc62823b1bd018dbf1cd30c90f31c077005d26065bcc23aed4f88a39e", actionSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskRestore},
+	{"disk-approved-quarantine-v1", "1", "07b5f1f24a714cc9b2649cf18cafcbe993dd94d526bb53a964d9fd5a74791180", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskQuarantine},
+	{"disk-approved-delete-v1", "1", "5a7eb5c2cac9d5da70d072161041a6bcedd8415dcfec8750891ac7d040f651d4", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskDelete},
+	{"disk-quarantine-expire-v1", "1", "6ade73ba3e57a085c0f843639a09ed78a35714a006063ea7b21e7c02ac741550", expirySchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskExpire},
+	{"disk-quarantine-restore-v1", "1", "a507640a1cd9a993a505200eff360001445f6796167aec43b83f0f15574b740c", actionSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskRestore},
 	{"disk-deep-report-v1", "1", "7ef5121158c2c23573aee0aa828deff7c0994c8b7a88d4eabcfb3b1cfc64bfce", deepSchema(), 600, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskDeep},
 	{"disk-safe-preview-v2", "2", "95ae88877bb530293c3fb75b774b1ed5c274bb3397bfefec04117b7bd15b94fe", diskSchema(), 120, 600, 64 << 10, "read", "agent-user", []string{"linux"}, diskPreview},
 	{"disk-safe-clean-v2", "2", "049158e13d64e0a9de03bb3697fad76c36faa19481a98bf0fdb9037abf362f96", diskSchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskClean},

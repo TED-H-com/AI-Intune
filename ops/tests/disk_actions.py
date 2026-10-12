@@ -70,6 +70,70 @@ class Actions(unittest.TestCase):
         first=self.run_action('delete');self.assertEqual(first['items'][0]['status'],'deleted')
         self.assertEqual(first['quarantined_bytes'],0);self.assertEqual(first['freed_bytes'],self.item['allocated_bytes'])
         self.assertFalse(self.file.exists());second=self.run_action('delete');self.assertEqual(second['freed_bytes'],0)
+    def test_stable_quarantine_entry_swapped_before_operation_capture(self):
+        for action in ['delete','expire','restore']:
+            with self.subTest(action=action):
+                # Separate fixture item/manifest for each destructive adapter.
+                self.file.write_bytes(b'preserved content')
+                self.item['identity']=self.mod.ident(self.file.stat())
+                self.item['id']='swap-'+action
+                self.manifest['id']='manifest-'+action
+                mod=self.mods[action]
+                if action!='delete': self.run_action('quarantine')
+                manifest=self.restore_manifest() if action=='restore' else self.manifest
+                rename=mod.noreplace
+                substituted=[]
+                def swap(srcfd,src,dstfd,dst):
+                    if src.endswith('.data') and '.op-' in dst and not substituted:
+                        os.rename(src,src+'.saved',src_dir_fd=srcfd,dst_dir_fd=srcfd)
+                        fd=os.open(src,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600,dir_fd=srcfd)
+                        os.write(fd,b'attacker replacement');os.close(fd)
+                        substituted.append((srcfd,src))
+                    return rename(srcfd,src,dstfd,dst)
+                with patch.object(mod,'noreplace',side_effect=swap):
+                    if action=='expire':
+                        with patch('time.time',return_value=time.time()+604802): result=self.run_action(action,manifest)
+                    else: result=self.run_action(action,manifest)
+                self.assertEqual(result['items'][0]['reason'],'staged_identity_changed')
+                self.assertEqual(result['freed_bytes'],0)
+                q,name,record=self.record()
+                self.assertEqual((q/(name+'.data')).read_bytes(),b'attacker replacement')
+                self.assertEqual((q/(name+'.data.saved')).read_bytes(),b'preserved content')
+                self.assertFalse(self.file.exists())
+
+    def test_restore_final_rename_substitution_is_verified_and_rolled_back(self):
+        self.run_action('quarantine');manifest=self.restore_manifest();mod=self.mods['restore'];rename=mod.noreplace
+        def replace_after(srcfd,src,dstfd,dst):
+            rename(srcfd,src,dstfd,dst)
+            if '.op-' in src and dst=='old.txt':
+                os.rename(dst,dst+'.saved',src_dir_fd=dstfd,dst_dir_fd=dstfd)
+                fd=os.open(dst,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600,dir_fd=dstfd)
+                os.write(fd,b'attacker destination');os.close(fd)
+        with patch.object(mod,'noreplace',side_effect=replace_after):result=self.run_action('restore',manifest)
+        self.assertEqual(result['items'][0]['reason'],'restore_identity_changed')
+        self.assertFalse(self.file.exists())
+        self.assertEqual(self.file.with_name('old.txt.saved').read_bytes(),b'preserved content')
+        q,name,_=self.record();self.assertEqual((q/(name+'.data')).read_bytes(),b'attacker destination')
+
+    def test_stage_mismatch_with_occupied_rollback_retains_both_entries(self):
+        self.run_action('quarantine');mod=self.mods['expire'];rename=mod.noreplace
+        def replace(srcfd,src,dstfd,dst):
+            if src.endswith('.data') and '.op-' in dst:
+                os.rename(src,src+'.saved',src_dir_fd=srcfd,dst_dir_fd=srcfd)
+                fd=os.open(src,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600,dir_fd=srcfd)
+                os.write(fd,b'captured replacement');os.close(fd)
+                rename(srcfd,src,dstfd,dst)
+                fd=os.open(src,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600,dir_fd=srcfd)
+                os.write(fd,b'occupied rollback');os.close(fd)
+                return
+            return rename(srcfd,src,dstfd,dst)
+        with patch.object(mod,'noreplace',side_effect=replace),patch('time.time',return_value=time.time()+604802):result=self.run_action('expire')
+        self.assertEqual(result['items'][0]['reason'],'stage_retained_for_recovery')
+        q,name,record=self.record()
+        self.assertEqual((q/record['operation_stage']).read_bytes(),b'captured replacement')
+        self.assertEqual((q/(name+'.data')).read_bytes(),b'occupied rollback')
+        self.assertEqual(result['freed_bytes'],0)
+
     def test_occupied_restore_never_overwrites(self):
         self.run_action('quarantine');m=self.restore_manifest();self.file.write_bytes(b'new data')
         result=self.run_action('restore',m)
@@ -162,11 +226,12 @@ class Actions(unittest.TestCase):
         def interrupted(*args):
             nonlocal calls
             calls+=1
-            if calls==3:raise OSError('interrupted')
+            if calls==4:raise OSError('interrupted')
             save(*args)
         with patch.object(mod,'save',side_effect=interrupted):self.run_action('restore',m)
         self.assertTrue(self.file.exists());result=self.run_action('restore',m)
         self.assertEqual(result['items'][0]['status'],'recovered_restore')
+        q,name,record=self.record();self.assertNotIn('operation_stage',record)
     def test_ttl_holds_and_protection_override_original_approval(self):
         self.run_action('quarantine');result=self.run_action('expire');self.assertEqual(result['items'][0]['reason'],'ttl_not_elapsed')
         q,name,r=self.record()

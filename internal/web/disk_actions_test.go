@@ -43,10 +43,13 @@ func TestDiskActionScreenshotFixtures(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.render(w, r, f.template, f.p)
 		body := w.Body.Bytes()
+		if bytes.Contains(body, []byte("type the exact ID to confirm your intent")) {
+			t.Fatalf("%s has misleading confirmation text", f.name)
+		}
 		if w.Code != 200 || !bytes.Contains(body, []byte("</html>")) || bytes.Contains(body, []byte("ZgotmplZ")) {
 			t.Fatalf("%s: %s", f.name, body)
 		}
-		wants := map[string][]string{"disk-report-viewer": {"Approve", "Reject", "delete", "item_ids"}, "disk-action-confirm": {"2.0 GiB", "seven days", "Confirm quarantine"}, "disk-quarantine-list": {"Preview restore", "seconds remaining", "2.0 GiB"}, "disk-restore-preview": {"never overwrites", "Confirm restore"}}
+		wants := map[string][]string{"disk-report-viewer": {"Approve", "Reject", "delete", "item_ids"}, "disk-action-confirm": {"2.0 GiB", "seven days", "Confirm quarantine"}, "disk-quarantine-list": {"Preview restore", "6 days left", "2.0 GiB"}, "disk-restore-preview": {"never overwrites", "Confirm restore"}}
 		for _, want := range wants[f.name] {
 			if !bytes.Contains(body, []byte(want)) {
 				t.Fatalf("%s missing %s", f.name, want)
@@ -146,5 +149,18 @@ func TestReportHumanRejectConfirmationAndReplay(t *testing.T) {
 	w = diskWebRequest(t, s, "GET", "/disk-reports/report-actions", nil, principal, false)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "reject: rejected") {
 		t.Fatal("decision absent from report", w.Code, w.Body.String())
+	}
+}
+
+func TestDiskExpiryHumanDurations(t *testing.T) {
+	for _, tc := range []struct {
+		seconds int64
+		want    string
+	}{
+		{518400, "6 days left"}, {86400, "1 day left"}, {10800, "in 3 h"}, {9000, "in 3 h"}, {120, "in 2 min"}, {1, "Less than a minute left"}, {0, "Expiry due"}, {-1, "Expiry due"},
+	} {
+		if got := fmtDiskExpiry(tc.seconds); got != tc.want {
+			t.Errorf("%d: %q, want %q", tc.seconds, got, tc.want)
+		}
 	}
 }

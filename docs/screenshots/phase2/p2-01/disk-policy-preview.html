@@ -214,6 +214,32 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 .empty{color:var(--dim);font-style:normal;padding:6px 0}
 .field-label{display:block;font-weight:600;font-size:13px;margin:0 0 4px}
 .form-grid{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:10px;align-items:end}
+.disk-form{display:grid;gap:16px;margin-top:16px}
+.disk-form fieldset{border:1px solid var(--line);border-radius:4px;padding:16px;margin:0;min-width:0}
+.disk-form legend{font-weight:600;padding:0 6px}
+.disk-form label{display:block}
+.disk-form input,.disk-form select{width:100%;box-sizing:border-box}
+.disk-button-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0}
+.disk-schedule{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}
+.disk-badge{display:inline-block;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.disk-ok{background:#e6f4ea;color:#176536}
+.disk-skipped{background:#fff2d5;color:#785200}
+.disk-error{background:#fde7e9;color:#a4262c}
+.disk-usage{width:100%;height:18px}
+.disk-mount + .disk-mount{border-top:1px solid var(--line);margin-top:16px;padding-top:8px}
+.disk-report-filters{display:flex;flex-wrap:wrap;gap:20px;align-items:end;margin-bottom:20px}
+.disk-report-filters label{display:flex;flex-direction:column;gap:6px}
+.disk-report-actions{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.disk-report-actions button:disabled,.disk-report-table button:disabled{background:#e5e7eb;color:#6b7280;border:1px solid #cbd5e1;box-shadow:none;cursor:not-allowed;opacity:.75}
+.disk-report-table input:disabled{opacity:.45;cursor:not-allowed;accent-color:#9ca3af}
+.disk-report-scroll{max-width:100%;overflow-x:auto}
+.disk-report-table{width:100%;table-layout:fixed;font-size:.875rem}
+.disk-report-table th,.disk-report-table td{white-space:normal;overflow-wrap:anywhere;padding:10px 6px;vertical-align:top}
+.disk-report-table th:nth-child(1){width:5%}.disk-report-table th:nth-child(2){width:25%}.disk-report-table th:nth-child(3){width:11%}.disk-report-table th:nth-child(4){width:16%}.disk-report-table th:nth-child(5){width:8%}.disk-report-table th:nth-child(6){width:8%}.disk-report-table th:nth-child(7){width:9%}.disk-report-table th:nth-child(8){width:7%}.disk-report-table th:nth-child(9){width:11%}
+.disk-report-table code{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.disk-report-table button{max-width:100%;margin-bottom:6px;padding:5px 7px;font-size:.8rem}
+@media(max-width:800px){.disk-report-table{min-width:900px}}
+.disk-review-request{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f7f7;border:1px solid var(--line);padding:16px}
 .disk-form-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
 .form-grid label,.form-grid input,.form-grid select{width:100%}
 .enrollment-form{
@@ -341,11 +367,11 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 
 <div class="page-heading"><div><h1>Review disk policy · disk-default</h1><p>Revision 1 → 2. Applying replaces the current revision and revokes its pending approvals and queued jobs.</p></div></div>
 <div class="panel"><h2>Changes</h2><table><thead><tr><th>Setting</th><th>Before</th><th>After</th></tr></thead><tbody><tr><th>User temporary files: minimum days</th><td>10</td><td>15</td></tr></tbody></table>
-<p><strong>Reason:</strong> retain older temporary files</p><p><strong>Preview expires:</strong> 2026-10-11 19:41 UTC</p>
+<p><strong>Reason:</strong> retain older temporary files</p><p><strong>Preview expires:</strong> 2026-10-12 02:37 UTC</p>
 <p>Execution requires reviewed disk adapters and deployment-configured canary evidence.</p>
 <h3>Canonical policy and digest</h3><p class="mono small" style="overflow-wrap:anywhere">sha256:c56bdd4dce3701ac261aaafcc8ad52fe6b84c46a21290ed4fd5a3dd63e4f43a5</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{&#34;schema_version&#34;:1,&#34;safe_tier&#34;:{&#34;user_tmp_min_days&#34;:15,&#34;var_tmp_min_days&#34;:14,&#34;docker_min_hours&#34;:168,&#34;docker_mode&#34;:&#34;dangling-and-build-cache&#34;,&#34;journald_max_mib&#34;:500,&#34;cargo_min_days&#34;:30,&#34;uv_mode&#34;:&#34;lock-aware-prune&#34;,&#34;npm_mode&#34;:&#34;verify-only&#34;,&#34;tool_cache_mode&#34;:&#34;native-gc-holder-aware&#34;},&#34;protect_paths&#34;:[&#34;/srv/data&#34;],&#34;thresholds&#34;:{&#34;warn_percent&#34;:85,&#34;critical_percent&#34;:93,&#34;deep_report_above_percent&#34;:80},&#34;quarantine_ttl_days&#34;:7,&#34;scan_budgets&#34;:{&#34;max_items&#34;:500,&#34;max_entries&#34;:200000,&#34;max_seconds&#34;:600}}</pre>
 <form method="post" action="/tenant/disk-policies/apply">
-<input type="hidden" name="id" value="disk-default"><input type="hidden" name="body" value="{&#34;schema_version&#34;:1,&#34;safe_tier&#34;:{&#34;user_tmp_min_days&#34;:15,&#34;var_tmp_min_days&#34;:14,&#34;docker_min_hours&#34;:168,&#34;docker_mode&#34;:&#34;dangling-and-build-cache&#34;,&#34;journald_max_mib&#34;:500,&#34;cargo_min_days&#34;:30,&#34;uv_mode&#34;:&#34;lock-aware-prune&#34;,&#34;npm_mode&#34;:&#34;verify-only&#34;,&#34;tool_cache_mode&#34;:&#34;native-gc-holder-aware&#34;},&#34;protect_paths&#34;:[&#34;/srv/data&#34;],&#34;thresholds&#34;:{&#34;warn_percent&#34;:85,&#34;critical_percent&#34;:93,&#34;deep_report_above_percent&#34;:80},&#34;quarantine_ttl_days&#34;:7,&#34;scan_budgets&#34;:{&#34;max_items&#34;:500,&#34;max_entries&#34;:200000,&#34;max_seconds&#34;:600}}"><input type="hidden" name="expected_revision" value="1"><input type="hidden" name="expires_at" value="2026-10-11T19:41:58Z"><input type="hidden" name="preview_digest" value="sha256:77bb0ab2441532fde3b55fe057f1d607d3f3cde528d426b92d615dcca3eddab6"><input type="hidden" name="reason" value="retain older temporary files"><input type="hidden" name="idempotency_key" value="fixture-policy-key">
+<input type="hidden" name="id" value="disk-default"><input type="hidden" name="body" value="{&#34;schema_version&#34;:1,&#34;safe_tier&#34;:{&#34;user_tmp_min_days&#34;:15,&#34;var_tmp_min_days&#34;:14,&#34;docker_min_hours&#34;:168,&#34;docker_mode&#34;:&#34;dangling-and-build-cache&#34;,&#34;journald_max_mib&#34;:500,&#34;cargo_min_days&#34;:30,&#34;uv_mode&#34;:&#34;lock-aware-prune&#34;,&#34;npm_mode&#34;:&#34;verify-only&#34;,&#34;tool_cache_mode&#34;:&#34;native-gc-holder-aware&#34;},&#34;protect_paths&#34;:[&#34;/srv/data&#34;],&#34;thresholds&#34;:{&#34;warn_percent&#34;:85,&#34;critical_percent&#34;:93,&#34;deep_report_above_percent&#34;:80},&#34;quarantine_ttl_days&#34;:7,&#34;scan_budgets&#34;:{&#34;max_items&#34;:500,&#34;max_entries&#34;:200000,&#34;max_seconds&#34;:600}}"><input type="hidden" name="expected_revision" value="1"><input type="hidden" name="expires_at" value="2026-10-12T02:37:54Z"><input type="hidden" name="preview_digest" value="sha256:f4bf5004e9331aab99396b0d6bac185a606dcd6e9527a36763738db2bcae120b"><input type="hidden" name="reason" value="retain older temporary files"><input type="hidden" name="idempotency_key" value="fixture-policy-key">
 <label><span class="field-label">Type disk-default to confirm</span><input name="confirm_id" required autocomplete="off"></label>
 
 

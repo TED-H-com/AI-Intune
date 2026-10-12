@@ -241,6 +241,33 @@ def boundary(grant, budget):
         budget['used']+=1
         save(budget['fd'],budget['name'],dict(used=budget['used'],deadline=budget['wall_deadline']))
 
+def rollback_stage(qfd, name, stage, record, item):
+    # Never overwrite a replacement at the stable quarantine name. Persist the
+    # unpredictable stage in the journal if rollback is occupied or interrupted.
+    try:
+        noreplace(qfd,stage,qfd,name+'.data')
+        os.fsync(qfd)
+        st=os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False)
+        if exact(st,item,True): record['identity']=ident(st)
+        record.pop('operation_stage',None)
+        save(qfd,name,record)
+    except (OSError,Denied):
+        raise Denied('stage_retained_for_recovery')
+
+def stage_entry(qfd, name, record, item, authority):
+    if record.get('operation_stage'): raise Denied('stage_retained_for_recovery')
+    stage=name+'.op-'+os.urandom(16).hex()
+    record['operation_stage']=stage
+    save(qfd,name,record)
+    mutation_ready(authority)
+    noreplace(qfd,name+'.data',qfd,stage)
+    os.fsync(qfd)
+    st=os.stat(stage,dir_fd=qfd,follow_symlinks=False)
+    if not exact(st,item,True):
+        rollback_stage(qfd,name,stage,record,item)
+        raise Denied('staged_identity_changed')
+    return stage,dict(item,identity=ident(st))
+
 def move_item(m, item, policy, grant, qfd, budget):
     path = item['private_path']; name = record_name(m,item)
     existing = load(qfd,name)
@@ -303,7 +330,15 @@ def move_item(m, item, policy, grant, qfd, budget):
             checked(path,qfd,name+'.data',pinned,policy,fds+[qfd])
             mutation_ready(fresh)
             if not exact(os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False),pinned): raise Denied('identity_changed')
-            os.unlink(name+'.data',dir_fd=qfd); os.fsync(qfd)
+            stage,staged=stage_entry(qfd,name,record,pinned,fresh)
+            try:
+                checked(path,qfd,stage,staged,policy,fds+[qfd])
+                mutation_ready(fresh)
+                os.unlink(stage,dir_fd=qfd); os.fsync(qfd)
+            except (Denied,OSError):
+                rollback_stage(qfd,name,stage,record,pinned)
+                raise
+            record.pop('operation_stage',None)
             record['state']='deleted'; save(qfd,name,record)
             return 'deleted', item['allocated_bytes']
         return 'quarantined', item['allocated_bytes']
@@ -335,7 +370,7 @@ def restore_or_expire(m,item,policy,grant,qfd,budget):
         except FileNotFoundError:
             if record['state'] == 'restore_pending' and ACTION == 'restore':
                 checked(item['private_path'],fds[-1],leaf,pinned,policy,fds+[qfd],True)
-                record['state']='restored';save(qfd,name,record)
+                record['state']='restored';record.pop('operation_stage',None);save(qfd,name,record)
                 return 'recovered_restore',0
             raise Denied('quarantine_data_missing')
         checked(item['private_path'],qfd,name+'.data',pinned,policy,fds+[qfd])
@@ -347,11 +382,29 @@ def restore_or_expire(m,item,policy,grant,qfd,budget):
         checked(item['private_path'],qfd,name+'.data',pinned,policy,fds+[qfd]);parent_same(item['private_path'],fds)
         mutation_ready(grant)
         if not exact(os.stat(name+'.data',dir_fd=qfd,follow_symlinks=False),pinned): raise Denied('identity_changed')
-        if ACTION == 'restore':
-            noreplace(qfd,name+'.data',fds[-1],leaf)
-            os.fsync(fds[-1]);record['state']='restored';value=0
-        else:
-            os.unlink(name+'.data',dir_fd=qfd);record['state']='expired';value=item['allocated_bytes']
+        stage,staged=stage_entry(qfd,name,record,pinned,grant)
+        try:
+            checked(item['private_path'],qfd,stage,staged,policy,fds+[qfd]);parent_same(item['private_path'],fds)
+            mutation_ready(grant)
+            if ACTION == 'restore':
+                noreplace(qfd,stage,fds[-1],leaf)
+                os.fsync(fds[-1]);os.fsync(qfd)
+                restored=os.stat(leaf,dir_fd=fds[-1],follow_symlinks=False)
+                if not exact(restored,staged,True):
+                    # Capture the final entry back to a unique private name;
+                    # never overwrite the original quarantine entry.
+                    try:
+                        noreplace(fds[-1],leaf,qfd,stage)
+                        os.fsync(fds[-1]);os.fsync(qfd)
+                    except (Denied,OSError): raise Denied('restore_retained_for_recovery')
+                    raise Denied('restore_identity_changed')
+                record['state']='restored';value=0
+            else:
+                os.unlink(stage,dir_fd=qfd);record['state']='expired';value=item['allocated_bytes']
+        except (Denied,OSError):
+            rollback_stage(qfd,name,stage,record,pinned)
+            raise
+        record.pop('operation_stage',None)
         os.fsync(qfd);save(qfd,name,record)
         return record['state'],value
     finally: close(fds)
