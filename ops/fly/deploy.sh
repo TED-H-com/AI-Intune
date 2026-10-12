@@ -1,5 +1,9 @@
 #!/bin/bash
 # Deploy the public HTTPS pack without changing the checked-in config.
+# Auto: Depot -> classic remote builder (clean up new builders) -> local Docker.
+# On restricted-egress hosts (only TCP 443 via an egress gateway), Depot gRPC
+# handshake fails with EOF; the classic stream drops and h2c upgrade returns 500.
+# Local build only needs registry.fly.io over 443 for the Fly image push.
 set -euo pipefail
 org=${FLY_ORG:-}
 app=${FLY_APP:-}
@@ -8,14 +12,16 @@ url=${FLY_PUBLIC_URL:-}
 public_url_given=0
 [[ -z "$url" ]] || public_url_given=1
 secrets_file=${FLY_SECRETS_FILE:-}
+builder=${FLY_BUILDER:-auto}
 dry_run=0
 destroy=0
 fail() { echo "deploy: $*" >&2; exit 1; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --org|--app|--region|--secrets-file|--public-url)
+    --org|--app|--region|--secrets-file|--public-url|--builder)
       [[ $# -ge 2 ]] || fail "missing flag value"
       case "$1" in
+        --builder) builder=$2 ;;
         --org) org=$2 ;; --app) app=$2 ;; --region) region=$2 ;; --secrets-file) secrets_file=$2 ;;
         --public-url) url=$2; public_url_given=1 ;;
       esac
@@ -25,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     *) fail "unknown flag" ;;
   esac
 done
+case "$builder" in auto|depot|remote|local) ;; *) fail "builder must be auto, depot, remote, or local" ;; esac
 [[ "$app" =~ ^[a-z0-9-]{1,63}$ ]] || fail "invalid or empty app name"
 [[ "$region" =~ ^[a-z0-9]+$ ]] || fail "invalid or empty region"
 if [[ "$destroy" == 0 ]]; then
@@ -81,8 +88,20 @@ if [[ "$dry_run" == 1 ]]; then
     plan apps create "$app" --org "$org"
     plan volumes create clawctl_data --region "$region" --size 3 -a "$app" --yes
     if [[ -n "$secrets_file" ]]; then plan secrets import --stage -a "$app"; echo "Read secrets from the supplied file via stdin."; fi
-    plan deploy . --config '<temporary-config>' --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg 'CLAWCTL_VERSION=<git-short-HEAD>' --ha=false --yes
-    echo "On Depot/handshake/list workers failure: retry once with --depot=false; remove only newly created fly-builder-* apps."
+    builder_args=()
+    case "$builder" in
+      auto|depot) builder_args=(--depot=true) ;;
+      remote) builder_args=(--depot=false) ;;
+      local) builder_args=(--local-only) ;;
+    esac
+    plan deploy . --config '<temporary-config>' --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg 'CLAWCTL_VERSION=<git-short-HEAD>' --ha=false --yes "${builder_args[@]}"
+    if [[ "$builder" == auto ]]; then
+      echo "Fallback chain: Depot -> --depot=false on Depot/handshake/list-workers error -> --depot=false --local-only on classic builder transport error if docker info succeeds."
+      echo "Remove only newly created fly-builder-* apps before local fallback, regardless of classic build success."
+      echo "If Docker is unavailable, fail with manual --local-only guidance; build errors without transport patterns are not retried."
+    else
+      echo "Builder: $builder; no fallback. Remote mode removes only newly created fly-builder-* apps."
+    fi
     plan scale count 1 -a "$app" --yes
     echo "Wait for $url/healthz; check /setup before reading a first-run code."
   fi
@@ -156,11 +175,9 @@ if [[ -n "$secrets_file" ]]; then
   "$fly" secrets import --stage -a "$app" < "$secrets_file" > "$work/import" 2>&1 || fail "secrets import failed"
 fi
 args=(deploy . --config "$work/fly.toml" --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg "CLAWCTL_VERSION=$(git rev-parse --short HEAD)" --ha=false --yes)
-if ! "$fly" "${args[@]}" > "$work/deploy" 2>&1; then
-  show_log "$work/deploy" >&2
-  grep -Eiq 'depot|handshake|list workers' "$work/deploy" || fail "deploy failed"
-  echo "Depot failed; retrying with the classic builder."
-  "$fly" apps list --json > "$work/before"
+# Always inventory and clean up classic builders, even when the build fails.
+remote_deploy() {
+  "$fly" apps list --json > "$work/before" || fail "cannot inventory classic builders before deployment"
   json_items "$work/before" apps > "$work/before-names"
   retry_failed=0
   if ! "$fly" "${args[@]}" --depot=false > "$work/retry" 2>&1; then
@@ -179,8 +196,38 @@ if ! "$fly" "${args[@]}" > "$work/deploy" 2>&1; then
     fi
   done < "$work/after-names"
   [[ "$cleanup_failed" == 0 ]] || fail "builder teardown incomplete"
-  [[ "$retry_failed" == 0 ]] || fail "classic builder deploy failed (output withheld to protect secrets)"
-fi
+}
+local_deploy() {
+  if ! "$fly" "${args[@]}" "$@" --local-only > "$work/local" 2>&1; then
+    show_log "$work/local" >&2
+    fail "local build deploy failed"
+  fi
+}
+case "$builder" in
+  local) local_deploy ;;
+  remote)
+    remote_deploy
+    [[ "$retry_failed" == 0 ]] || fail "classic builder deploy failed"
+    ;;
+  auto|depot)
+    if ! "$fly" "${args[@]}" --depot=true > "$work/deploy" 2>&1; then
+      show_log "$work/deploy" >&2
+      [[ "$builder" == auto ]] || fail "Depot deploy failed"
+      grep -Eiq 'depot|handshake|list[ -]workers' "$work/deploy" || fail "deploy failed"
+      echo "Depot failed; retrying with the classic builder."
+      remote_deploy
+      if [[ "$retry_failed" != 0 ]]; then
+        grep -Eiq 'h2c|failed to dial gRPC|failed to get status|remote builder|Unavailable|handshake' "$work/retry" || fail "classic builder deploy failed"
+        if ! command -v docker >/dev/null || ! docker info > "$work/docker" 2>&1; then
+          [[ ! -f "$work/docker" ]] || show_log "$work/docker" >&2
+          fail "builder transport failed and local Docker is unavailable; start a usable Docker daemon and retry with --builder local (--local-only)"
+        fi
+        echo "Classic builder transport failed; retrying once with --local-only."
+        local_deploy --depot=false
+      fi
+    fi
+    ;;
+esac
 "$fly" scale count 1 -a "$app" --yes >/dev/null 2>&1 || fail "scale failed"
 deadline=$((SECONDS + 180))
 while :; do
