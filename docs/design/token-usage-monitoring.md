@@ -161,7 +161,7 @@ offers a Hub-side purge (admin, preview/apply, audited).
     `CODEX_HOME`/`CLAUDE_CONFIG_DIR` honored only if set in the agent's trusted
     config, never from request args.
 - D1 runs as the interactive user through the existing Windows agent, with load
-  guard on and battery guard where available (proposed default Q8).
+  guard on and battery guard where available (decided Q8).
 - Never follow symlinks out of the root, never cross mounts, open with `O_NOATIME`
   where permitted, `O_RDONLY`, no locks taken on session files.
 - Writes only its own state file (§5.2) under the agent's state dir
@@ -205,7 +205,7 @@ keeping the last (largest) usage. Source type: `subagent` when the file is under
 runs (including `claude-automation`) are `exec` when the session entrypoint
 indicates it. Effort: derived from the session's thinking/effort setting when
 recorded per call; else session-level inference marked `inferred`, otherwise
-`unknown` (proposed default Q3). A *turn* begins at a genuine user message (not a tool
+`unknown` (decided Q3). A *turn* begins at a genuine user message (not a tool
 result); calls per turn = assistant API calls until the next genuine user message.
 Tool-use counts by tool **name** (enum: Bash, Read, Edit, Task, …, other) — never
 arguments. Limit events: lines that indicate a usage-limit error are counted as
@@ -223,7 +223,7 @@ totals per session (`total_token_usage`) and sometimes `last_token_usage`.
   survive incremental reads and file rotation.
 - Model from session/turn context events; effort per call (`reasoning_effort`)
   when present; else session-level inference marked `inferred`, otherwise
-  `unknown` (proposed default Q3).
+  `unknown` (decided Q3).
 - Source type: `exec` for `codex exec`/non-interactive sessions, `subagent` for
   spawned sub-sessions where marked, else `main`.
 - `cache_write` is reported as **null** when absent or always zero in a file
@@ -267,7 +267,7 @@ source_type (main|subagent|exec), day (UTC), project_hmac?`
 **`usage_window`** — hourly rollup per `machine, tool, account_id` for rolling
 5h / 7d window math (calls, normalized tokens and estimated cost units per hour).
 Hub sums member machines into one account window, retaining machine contributions.
-Proposed default Q2: estimated cost units calibrated by observed limit hits; show
+Decided Q2: estimated cost units calibrated by observed limit hits; show
 calibration confidence and distinguish estimates from provider-reported usage.
 
 **`usage_sessions`** — top N (default 50 per machine per day by tokens, plus any
@@ -281,7 +281,7 @@ is a hash of the redacted, number-stripped first 200 chars (computed locally,
 never sent). Fields: `runs/day`, `median interval`, tokens/run, model, effort,
 first/last seen. Two jobs with the same fingerprint on different machines are
 flagged as possible duplicates (E9) by comparing fingerprints built with a
-fleet-shared salt in the private overlay (proposed default Q6: enabled on the
+fleet-shared salt in the private overlay (decided Q6: enabled on the
 reference fleet; public default per-machine only).
 
 Upload channel mirrors disk reports: `POST /v1/usage-reports/{job_id}/chunks` and
@@ -419,8 +419,8 @@ rule version as the item digest:
 - **Dismiss** → ledger `rejected` with reason; the same rule on the same scope
   is suppressed until the evidence changes materially (digest of bucketed values).
 - **Snooze** → ledger `rejected` with `decision_reason` prefix `snooze:` and the
-  recommendation's `reopen_at`; it reopens automatically if still valid.
-  Proposed default Q5: no new ledger state; `snoozed` is a recommendation state only.
+  recommendation's `reopen_at` in the reason; it reopens automatically if still valid.
+  Decided Q5: no new ledger state; `snoozed` is a recommendation state only.
 
 Human decisions require admin (consistent with Phase 2 mutations). Agents may
 *propose* (create `open` cards) but not decide.
@@ -600,20 +600,20 @@ admin's request.
   non-secret metadata only, with available provider/GitHub dashboards/APIs as
   cross-checks. Stable account hashes join machines into pooled quota windows;
   overlay pins may override discovery (§5.7, §6).
+- Q2. Estimated cost units calibrated by observed limit hits (§5.4) (locked 2026-10-13).
+- Q3. Session-level effort inference shown as "inferred"; else "unknown" (§5.3) (locked 2026-10-13).
 - Q4. Task labels on by default, redacted, max 40 chars, all machines (§4.3).
+- Q5. Ledger `rejected` + `snooze:` reason with recommendation `reopen_at`;
+  no new ledger state (§7.1) (locked 2026-10-13).
+- Q6. Salted cross-machine job fingerprints enabled on the reference fleet;
+  salt in private overlay (§5.4, §10) (locked 2026-10-13).
 - Q7. Backfill last 90 days only under scan budgets; ignore older data (§5.5).
+- Q8. D1 runs as interactive user through existing Windows agent, load guard on,
+  battery guard where available (§5.1, §5.5) (locked 2026-10-13).
 - Q9. Advice-only first; later preview → admin approval → auto-apply with one-click
   rollback, enabled only after proven recommendation accuracy (§7.3, U-10).
 
 **Default (proposed, not confirmed by owner)**
 
-- Q2. Estimated cost units calibrated by observed limit hits (§5.4).
-- Q3. Session-level effort inference shown as "inferred"; else "unknown" (§5.3).
-- Q5. Ledger `rejected` + `snooze:` reason with recommendation `reopen_at`;
-  no new ledger state (§7.1).
-- Q6. Salted cross-machine job fingerprints enabled on the reference fleet;
-  salt in private overlay (§5.4, §10).
-- Q8. D1 runs as interactive user through existing Windows agent, load guard on,
-  battery guard where available (§5.1, §5.5).
 - Q9 accuracy gate parameter: ≥20 approved recommendations with verified intended
   results and no rollback over 30 days (§7.3); later-phase direction is answered.
