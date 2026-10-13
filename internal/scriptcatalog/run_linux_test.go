@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,76 @@ import (
 
 func testEntry(body string) Entry {
 	return Entry{ID: "test-only", Version: "1", Bytes: []byte(body), SHA256: Digest([]byte(body)), RunsAs: "agent-user", Mode: "read", AllowedOS: []string{"linux"}, MaxTimeout: 5, OutputCap: 64, ArgsSchema: Schema{Type: "object", Properties: map[string]Property{}}}
+}
+
+func useUnwritableTempDir(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// procfs rejects directory creation even when the helper test runs as root.
+	t.Setenv("TMPDIR", "/proc/self")
+	if dir, err := os.MkdirTemp(os.TempDir(), "clawctl-script-test-*"); err == nil {
+		os.RemoveAll(dir)
+		t.Fatal("test requires an unwritable temporary directory")
+	}
+	return home
+}
+
+func TestCreatePrivateScriptDirUsesCacheWithUnwritableTempDir(t *testing.T) {
+	home := useUnwritableTempDir(t)
+	dir, err := createPrivateScriptDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	parent := filepath.Join(home, ".cache", "clawctl", "scripts")
+	if filepath.Dir(dir) != parent {
+		t.Fatalf("run directory %q is not under %q", dir, parent)
+	}
+	for _, path := range []string{parent, dir} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() || info.Mode().Perm() != 0700 {
+			t.Fatalf("directory %q mode = %v, want 0700", path, info.Mode())
+		}
+	}
+}
+
+func TestCreatePrivateScriptDirFallsBackToTempDir(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "home-file")
+	if err := os.WriteFile(home, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", base)
+	dir, err := createPrivateScriptDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	if filepath.Dir(dir) != base {
+		t.Fatalf("fallback directory %q is not under %q", dir, base)
+	}
+}
+
+func TestProbeRunsWithUnwritableTempDir(t *testing.T) {
+	requireAgentUser(t)
+	home := useUnwritableTempDir(t)
+	e, _ := Lookup("fleet-probe-v1")
+	r, err := Run(context.Background(), e, []byte(`{}`), e.DefaultTimeout)
+	if err != nil || r.ExitCode != 0 {
+		t.Fatalf("probe failed %+v %v", r, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(home, ".cache", "clawctl", "scripts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatal("private run directory retained after probe")
+	}
 }
 func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 	requireAgentUser(t)

@@ -83,6 +83,21 @@ func RunDiskAction(ctx context.Context, e Entry, args []byte, timeout int, actio
 	}
 	return runPolicy(ctx, e, args, timeout, nil, action.Sink, &action)
 }
+
+// createPrivateScriptDir prefers the cache allowed by the agent system unit's
+// ReadWritePaths, since its default temporary directory can be read-only.
+func createPrivateScriptDir() (string, error) {
+	if home, err := os.UserHomeDir(); err == nil {
+		parent := filepath.Join(home, ".cache", "clawctl", "scripts")
+		if err := os.MkdirAll(parent, 0700); err == nil {
+			if dir, err := os.MkdirTemp(parent, "clawctl-script-*"); err == nil {
+				return dir, nil
+			}
+		}
+	}
+	return os.MkdirTemp(os.TempDir(), "clawctl-script-*")
+}
+
 func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy json.RawMessage, sink io.Writer, action *DiskActionRun) (Result, error) {
 	var result Result
 	if os.Geteuid() == 0 || e.RunsAs != "agent-user" || !e.AllowsOS("linux") || timeout < 1 || timeout > e.MaxTimeout || e.OutputCap < 1 || e.OutputCap > 64<<10 || Digest(e.Bytes) != e.SHA256 {
@@ -121,7 +136,7 @@ func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	} else if len(policy) > 0 {
 		return result, fmt.Errorf("policy only allowed for disk scripts")
 	}
-	dir, err := os.MkdirTemp("", "clawctl-script-*")
+	dir, err := createPrivateScriptDir()
 	if err != nil {
 		return result, fmt.Errorf("create private script directory")
 	}
