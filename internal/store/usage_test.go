@@ -250,13 +250,13 @@ func TestUsagePolicyAndAdviceLedger(t *testing.T) {
 		t.Fatal("advice dispatched job", n)
 	}
 	original := a
-	if e = s.ReopenUsageRecommendation(r.ID); !errors.Is(e, ErrUsageConflict) {
+	if e = s.ReopenUsageRecommendation(r.ID, diskAdmin()); !errors.Is(e, ErrUsageConflict) {
 		t.Fatal("early reopen", e)
 	}
 	for generation := int64(1); generation <= 2; generation++ {
 		cycleNow := reopen
 		s.nowFn = func() time.Time { return cycleNow }
-		if e = s.ReopenUsageRecommendation(r.ID); e != nil {
+		if e = s.ReopenUsageRecommendation(r.ID, diskAdmin()); e != nil {
 			t.Fatal(e)
 		}
 		records, err := s.UsageRecommendations(m)

@@ -536,8 +536,10 @@ Session/job summaries are replacement upserts, never additive re-uploads. Accoun
 membership is stored per machine; unknown attribution remains machine-scoped.
 Usage policies share immutable `ops_policies` revisions; advice operations cannot
 be consumed by disk execution adapters. Recommendation decision storage supports
-Q5; rule evaluation and automatic reopening remain U-06. Task-label columns and
-exposure are deliberately deferred to U-08. No collector, upload route, schedule,
+Q5, including fresh approval identities for repeated decisions after an explicit
+human-admin reopen with an atomic audit event. Rule evaluation and automatic
+reopening remain U-06. Task-label columns and exposure are deliberately deferred
+to U-08. No collector, upload route, schedule,
 UI, alert, MCP tool, or application adapter is enabled by U-01.
 
 Each PR: UI + screenshots where applicable, docs, route manifest, MCP schema,

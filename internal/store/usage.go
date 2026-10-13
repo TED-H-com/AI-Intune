@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -147,6 +148,39 @@ func (a UsageAggregate) validate(window bool) error {
 	return a.Metrics.validate()
 }
 
+// canonicalUsageMetrics preserves absent measurements while normalizing signed zero.
+// encoding/json already orders map keys and formats finite floats consistently.
+func canonicalUsageMetrics(m UsageMetrics) UsageMetrics {
+	if m.EstCostUSD == 0 {
+		m.EstCostUSD = 0
+	}
+	if m.EstCostUnits == 0 {
+		m.EstCostUnits = 0
+	}
+	if m.ProviderUsageUnits != nil && *m.ProviderUsageUnits == 0 {
+		zero := float64(0)
+		m.ProviderUsageUnits = &zero
+	}
+	if len(m.ToolCalls) == 0 {
+		m.ToolCalls = nil
+	}
+	return m
+}
+
+func canonicalUsageAggregates(rows []UsageAggregate) []UsageAggregate {
+	out := append([]UsageAggregate{}, rows...)
+	for i := range out {
+		out[i].Metrics = canonicalUsageMetrics(out[i].Metrics)
+	}
+	// The key consists of every dimension, excluding metrics.
+	key := func(a UsageAggregate) string {
+		a.Metrics = UsageMetrics{}
+		return string(mustScriptJSON(a))
+	}
+	sort.Slice(out, func(i, j int) bool { return key(out[i]) < key(out[j]) })
+	return out
+}
+
 // MergeUsageFile atomically replaces a complete file contribution. Replays are
 // harmless; stale/conflicting ranges fail closed. No audit contains usage bodies.
 func (s *Store) MergeUsageFile(machine string, in UsageFileSnapshot) (bool, error) {
@@ -163,6 +197,8 @@ func (s *Store) MergeUsageFile(machine string, in UsageFileSnapshot) (bool, erro
 			return false, e
 		}
 	}
+	in.Daily = canonicalUsageAggregates(in.Daily)
+	in.Window = canonicalUsageAggregates(in.Window)
 	raw, e := json.Marshal(in)
 	if e != nil || len(raw) > 2<<20 {
 		return false, ErrUsageInvalid

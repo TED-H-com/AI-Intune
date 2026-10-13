@@ -123,7 +123,24 @@ func (a UsageSession) validate() error {
 	}
 	return a.Metrics.validate()
 }
+func canonicalUsageSession(a UsageSession) UsageSession {
+	a.Start, a.End = a.Start.UTC(), a.End.UTC()
+	a.Models = append([]string{}, a.Models...)
+	a.Efforts = append([]string{}, a.Efforts...)
+	sort.Strings(a.Models)
+	sort.Strings(a.Efforts)
+	a.Metrics = canonicalUsageMetrics(a.Metrics)
+	return a
+}
+
+func canonicalUsageJob(a UsageJob) UsageJob {
+	a.FirstSeen, a.LastSeen = a.FirstSeen.UTC(), a.LastSeen.UTC()
+	a.TokensPerRun = canonicalUsageMetrics(a.TokensPerRun)
+	return a
+}
+
 func (s *Store) UpsertUsageSession(machine string, a UsageSession) error {
+	a = canonicalUsageSession(a)
 	if e := a.validate(); e != nil {
 		return e
 	}
@@ -139,6 +156,7 @@ func (s *Store) UpsertUsageSession(machine string, a UsageSession) error {
 		if e = json.Unmarshal([]byte(raw), &old); e != nil {
 			return e
 		}
+		old = canonicalUsageSession(old)
 		if old.End.Equal(a.End) {
 			if digestOf(string(mustScriptJSON(old))) != digestOf(string(mustScriptJSON(a))) {
 				return ErrUsageConflict
@@ -187,6 +205,7 @@ type UsageJob struct {
 }
 
 func (s *Store) UpsertUsageJob(machine string, a UsageJob) error {
+	a = canonicalUsageJob(a)
 	day, e := time.Parse("2006-01-02", a.Day)
 	if e != nil ||
 		day.Format("2006-01-02") != a.Day ||
@@ -212,6 +231,7 @@ func (s *Store) UpsertUsageJob(machine string, a UsageJob) error {
 		if e = json.Unmarshal([]byte(raw), &old); e != nil {
 			return e
 		}
+		old = canonicalUsageJob(old)
 		if old.LastSeen.Equal(a.LastSeen) {
 			if digestOf(string(mustScriptJSON(old))) != digestOf(string(mustScriptJSON(a))) {
 				return ErrUsageConflict
@@ -421,9 +441,12 @@ LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machin
 	return out, nil
 }
 
-// ReopenUsageRecommendation starts a fresh decision cycle once its snooze is due.
+// ReopenUsageRecommendation is an explicit human-admin operation, never a scheduler.
 // Immutable evidence and previous approval receipts remain untouched.
-func (s *Store) ReopenUsageRecommendation(id string) error {
+func (s *Store) reopenUsageRecommendation(id string, audit AuditEntry) error {
+	if err := humanDiskAdmin(audit); err != nil {
+		return err
+	}
 	tx, err := s.beginWrite(context.Background(), "usage_reopen")
 	if err != nil {
 		return err
@@ -458,5 +481,28 @@ func (s *Store) ReopenUsageRecommendation(id string) error {
 	if n != 1 {
 		return ErrUsageConflict
 	}
+	audit.Action = AuditOpsApproval
+	audit.Subject = id
+	audit.OK = true
+	audit.Detail = "usage recommendation reopened"
+	if err = s.recordAuditTx(tx, audit); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// ReopenUsageRecommendation retains denial evidence just like recommendation decisions.
+func (s *Store) ReopenUsageRecommendation(id string, audit AuditEntry) error {
+	audit.Reason = ""
+	err := s.reopenUsageRecommendation(id, audit)
+	if err != nil {
+		audit.Action = AuditOpsApproval
+		audit.Subject = "usage-recommendation"
+		audit.OK = false
+		audit.Detail = "usage reopening rejected"
+		if e := s.RecordAudit(audit); e != nil {
+			return e
+		}
+	}
+	return err
 }
