@@ -27,7 +27,7 @@ func (s *Store) decideUsageRecommendation(binding OpsApproval, decision, reason 
 		if reopen == nil || !reopen.After(now) {
 			return out, ErrUsageInvalid
 		}
-		reason = "snooze:" + fmtTime(*reopen) + ":" + reason
+		reason = "snooze:" + reopen.UTC().Format(time.RFC3339Nano) + ":" + reason
 	} else if reopen != nil || strings.HasPrefix(reason, "snooze:") {
 		return out, ErrUsageInvalid
 	}
@@ -115,7 +115,7 @@ func optionalUsageTime(t *time.Time) any {
 	if t == nil {
 		return nil
 	}
-	return fmtTime(*t)
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 func (s *Store) DecideUsageRecommendation(binding OpsApproval, decision, reason string, reopen *time.Time, audit AuditEntry) (OpsApproval, error) {

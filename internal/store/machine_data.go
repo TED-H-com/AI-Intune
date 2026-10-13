@@ -60,6 +60,7 @@ var machineDataTables = []MachineDataTable{
 	{Table: "usage_sessions", TimeCol: "updated_at"},
 	{Table: "usage_jobs", TimeCol: ""},
 	{Table: "usage_recommendations", TimeCol: "created_at"},
+	{Table: "usage_recommendation_cycles", TimeCol: ""},
 	{Table: "ops_approvals", TimeCol: "created_at"},
 	{Table: "ops_manifests", TimeCol: "created_at"},
 	{Table: "disk_quarantine", TimeCol: "received_at"},
@@ -128,6 +129,43 @@ func (s *Store) MachineDataHoldings(machineID string) ([]MachineDataHolding, err
 
 func (s *Store) machineDataHolding(table MachineDataTable, machineID string) (MachineDataHolding, error) {
 	holding := MachineDataHolding{Table: table.Table}
+	if table.Table == "usage_recommendation_cycles" {
+		err := s.rdb.QueryRow(`SELECT count(*) FROM usage_recommendation_cycles c JOIN usage_recommendations r ON r.id=c.recommendation_id WHERE r.machine_id=?`, machineID).Scan(&holding.Rows)
+		return holding, err
+	}
+	// Usage timestamps may have variable fractional precision; aggregate instants
+	// after parsing rather than taking lexical TEXT minima and maxima.
+	if table.Table == "usage_recommendations" || table.Table == "usage_sessions" {
+		rows, err := s.rdb.Query(fmt.Sprintf(`SELECT %s FROM %s WHERE machine_id=?`, table.TimeCol, table.Table), machineID)
+		if err != nil {
+			return holding, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw sql.NullString
+			if err := rows.Scan(&raw); err != nil {
+				return holding, err
+			}
+			holding.Rows++
+			if !raw.Valid || raw.String == "" {
+				continue
+			}
+			stamp, err := time.Parse(time.RFC3339Nano, raw.String)
+			if err != nil {
+				return holding, err
+			}
+			holding.Dated++
+			if holding.Oldest == nil || stamp.Before(*holding.Oldest) {
+				t := stamp
+				holding.Oldest = &t
+			}
+			if holding.Newest == nil || stamp.After(*holding.Newest) {
+				t := stamp
+				holding.Newest = &t
+			}
+		}
+		return holding, rows.Err()
+	}
 	if table.TimeCol == "" {
 		err := s.rdb.QueryRow(
 			fmt.Sprintf(`SELECT count(*) FROM %s WHERE machine_id = ?`, table.Table),

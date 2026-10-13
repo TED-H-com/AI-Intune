@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -65,7 +66,7 @@ func (s *Store) OpsApprovalsFiltered(state, machine, operation string, now time.
 	if operation != "" && !opsOperationValid(operation) {
 		return nil, operatorError("BAD_REQUEST", "invalid operation")
 	}
-	rows, err := s.rdb.Query(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE (?='' OR CASE WHEN state IN ('pending','approved') AND deadline<=? THEN 'expired' ELSE state END=?) AND (?='' OR machine_id=?) AND (?='' OR operation=?) ORDER BY created_at DESC,id LIMIT 500`, state, fmtTime(now), state, machine, machine, operation, operation)
+	rows, err := s.rdb.Query(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE (?='' OR machine_id=?) AND (?='' OR operation=?)`, machine, machine, operation, operation)
 	if err != nil {
 		return nil, err
 	}
@@ -79,9 +80,24 @@ func (s *Store) OpsApprovalsFiltered(state, machine, operation string, now time.
 		if (a.State == "pending" || a.State == "approved") && !a.Deadline.After(now) {
 			a.State = "expired"
 		}
-		out = append(out, a)
+		if state == "" || a.State == state {
+			out = append(out, a)
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Apply filtering and the limit after comparing parsed instants.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > 500 {
+		out = out[:500]
+	}
+	return out, nil
 }
 
 // The closed registry records policy domain and execution eligibility. Adding

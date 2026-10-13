@@ -521,3 +521,18 @@ func TestDataDisclosureCategoryTextFitsClientLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageLifecycleDisclosure(t *testing.T) {
+	category := categoryOf(t, disclosureAt(t, store.DefaultRetention()), DataCategoryUsageRecommendations)
+	for _, want := range []string{"usage_recommendations", "usage_recommendation_cycles"} {
+		found := false
+		for _, table := range category.Tables {
+			if table == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("recommendation category omits %s", want)
+		}
+	}
+}

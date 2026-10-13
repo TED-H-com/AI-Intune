@@ -192,9 +192,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryUsageRecommendations: {
 		title:  "AI usage recommendations",
-		holds:  "Recommendation evidence digests, rule versions, estimated savings, confidence, and review or snooze status. These records never apply a configuration change.",
+		holds:  "Recommendation evidence digests, rule versions, estimated savings, confidence, and review or snooze status, and lifecycle approval identifiers and generations. These records never apply a configuration change.",
 		source: DataSourceHub,
-		tables: []string{"usage_recommendations"},
+		tables: []string{"usage_recommendations", "usage_recommendation_cycles"},
 		path:   "/machines",
 	},
 	DataCategoryRegistry: {

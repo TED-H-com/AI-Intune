@@ -237,7 +237,7 @@ func TestUsagePolicyAndAdviceLedger(t *testing.T) {
 	var state, at string
 	if e = s.rdb.QueryRow(`SELECT state,reopen_at FROM usage_recommendations WHERE id=?`,
 		r.ID).Scan(&state,
-		&at); e != nil || state != "snoozed" || at != fmtTime(reopen) {
+		&at); e != nil || state != "snoozed" || at != reopen.UTC().Format(time.RFC3339Nano) {
 		t.Fatal(state, at, e)
 	}
 	if _, e = s.OpsApprovalsFiltered("rejected", "", "usage-recommendation-v1", now); e != nil {

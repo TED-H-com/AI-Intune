@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -315,8 +316,8 @@ WHERE id=?`,
 			old.Scope == a.Scope &&
 			old.ScopeHMAC == a.ScopeHMAC &&
 			old.EvidenceDigest == a.EvidenceDigest &&
-			start == fmtTime(a.EvidenceStart) &&
-			end == fmtTime(a.EvidenceEnd) &&
+			parseTime(start).Equal(a.EvidenceStart) &&
+			parseTime(end).Equal(a.EvidenceEnd) &&
 			old.EstSavingsTokens == a.EstSavingsTokens &&
 			old.EstSavingsUSD == a.EstSavingsUSD &&
 			old.Confidence == a.Confidence &&
@@ -336,8 +337,8 @@ WHERE id=?`,
 		a.Scope,
 		a.ScopeHMAC,
 		a.EvidenceDigest,
-		fmtTime(a.EvidenceStart),
-		fmtTime(a.EvidenceEnd),
+		a.EvidenceStart.UTC().Format(time.RFC3339Nano),
+		a.EvidenceEnd.UTC().Format(time.RFC3339Nano),
 		a.EstSavingsTokens,
 		a.EstSavingsUSD,
 		a.Confidence,
@@ -363,7 +364,7 @@ func (s *Store) UsageRecommendations(machine string) ([]UsageRecommendationRecor
 	rows, e := s.rdb.Query(`SELECT r.id, rule_id, rule_version, machine_id, scope, scope_hmac, evidence_digest, evidence_start,
 evidence_end, est_savings_tokens, est_savings_usd, confidence, proposer, state, reopen_at,
 created_at, COALESCE(c.approval_id,r.id), COALESCE(c.generation,0) FROM usage_recommendations r
-LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machine_id=? ORDER BY created_at, r.id LIMIT 500`, machine)
+LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machine_id=?`, machine)
 	if e != nil {
 		return nil, e
 	}
@@ -400,7 +401,20 @@ LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machin
 		}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	// RFC3339 TEXT is not ordered by instant when fractions or offsets vary.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	if len(out) > 500 {
+		out = out[:500]
+	}
+	return out, nil
 }
 
 // ReopenUsageRecommendation starts a fresh decision cycle once its snooze is due.
@@ -411,7 +425,25 @@ func (s *Store) ReopenUsageRecommendation(id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`UPDATE usage_recommendations SET state='open',reopen_at=NULL WHERE id=? AND state='snoozed' AND reopen_at<=?`, id, fmtTime(s.now().UTC()))
+	var raw sql.NullString
+	err = tx.QueryRow(`SELECT reopen_at FROM usage_recommendations WHERE id=? AND state='snoozed'`, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrUsageConflict
+	}
+	if err != nil {
+		return err
+	}
+	if !raw.Valid {
+		return ErrUsageConflict
+	}
+	reopen, err := time.Parse(time.RFC3339Nano, raw.String)
+	if err != nil {
+		return err
+	}
+	if s.now().Before(reopen) {
+		return ErrUsageConflict
+	}
+	result, err := tx.Exec(`UPDATE usage_recommendations SET state='open',reopen_at=NULL WHERE id=? AND state='snoozed'`, id)
 	if err != nil {
 		return err
 	}
