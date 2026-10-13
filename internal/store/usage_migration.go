@@ -35,6 +35,30 @@ func migrateUsagePolicyKind(db *sql.DB) error {
 		return e
 	}
 	defer tx.Rollback()
+	// DROP TABLE removes its indexes and triggers. Save their definitions while
+	// holding the migration transaction so restoration is atomic with the rebuild.
+	rows, e := tx.Query(`SELECT sql FROM sqlite_master
+		WHERE tbl_name='ops_policies' AND type IN ('index','trigger') AND sql IS NOT NULL
+		ORDER BY type, name`)
+	if e != nil {
+		return e
+	}
+	var safeguards []string
+	for rows.Next() {
+		var statement string
+		if e = rows.Scan(&statement); e != nil {
+			rows.Close()
+			return e
+		}
+		safeguards = append(safeguards, statement)
+	}
+	if e = rows.Err(); e != nil {
+		rows.Close()
+		return e
+	}
+	if e = rows.Close(); e != nil {
+		return e
+	}
 	statements := []string{
 		`CREATE TABLE ops_policies_usage_migration (
             id TEXT NOT NULL,
@@ -57,7 +81,21 @@ func migrateUsagePolicyKind(db *sql.DB) error {
 			return e
 		}
 	}
-	rows, e := tx.Query(`PRAGMA foreign_key_check`)
+	// Also install the standard protections if the legacy schema lacked them.
+	// Keep these definitions aligned with schema.sql.
+	safeguards = append(safeguards,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ops_policy_current ON ops_policies(id) WHERE superseded_at IS NULL`,
+		`CREATE TRIGGER IF NOT EXISTS ops_policy_immutable BEFORE UPDATE OF id,kind,revision,body,digest,created_by,created_at ON ops_policies
+		 BEGIN SELECT RAISE(ABORT,'immutable ops policy'); END`,
+		`CREATE TRIGGER IF NOT EXISTS ops_policy_no_delete BEFORE DELETE ON ops_policies
+		 BEGIN SELECT RAISE(ABORT,'immutable ops policy'); END`,
+	)
+	for _, statement := range safeguards {
+		if _, e = tx.Exec(statement); e != nil {
+			return e
+		}
+	}
+	rows, e = tx.Query(`PRAGMA foreign_key_check`)
 	if e != nil {
 		return e
 	}
