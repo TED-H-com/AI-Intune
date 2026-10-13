@@ -684,13 +684,31 @@ func TestHealthFailureRollsBackDataAndRemovesUnmanagedDropIn(t *testing.T) {
 	f.prepareProc()
 	f.healthOK = false
 	f.mutateDB = true
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	deps := f.deps()
+	healthSleeps := 0
+	deps.sleep = func(pollCtx context.Context, _ time.Duration) error {
+		// Cancel only after staging and switching reach the failed health poll.
+		// Rollback must receive a fresh context, independent of that cancellation.
+		if err := pollCtx.Err(); err != nil {
+			t.Fatalf("health poll started with canceled context: %v", err)
+		}
+		healthSleeps++
+		if healthSleeps == 1 {
+			cancel()
+			return pollCtx.Err()
+		}
+		return context.DeadlineExceeded // Simulate rollback's exhausted health budget.
+	}
 	job := f.job()
-	job.ExecutionTimeout = 1 // 退回自己再拿一次這個預算；沒有它退回的 health 會等到天荒地老
-	vs, err := (openclawExecutor{deps: f.deps()}).Run(ctx, job)
+	job.ExecutionTimeout = 1
+	vs, err := (openclawExecutor{deps: deps}).Run(ctx, job)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if healthSleeps != 2 {
+		t.Errorf("health polls=%d; want failed activation and rollback polls", healthSleeps)
 	}
 	wantActions := []string{"daemon-reload", "stop openclaw-gateway.service", "start openclaw-gateway.service", "daemon-reload", "stop openclaw-gateway.service", "start openclaw-gateway.service"}
 	if !reflect.DeepEqual(f.actions, wantActions) {
