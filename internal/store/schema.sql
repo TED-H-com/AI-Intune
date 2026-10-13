@@ -1780,7 +1780,7 @@ CREATE TABLE IF NOT EXISTS usage_recommendations (
 );
 CREATE TABLE IF NOT EXISTS usage_upload_receipts (
  machine_id TEXT NOT NULL, file_hmac TEXT NOT NULL, generation INTEGER NOT NULL,
- offset_from INTEGER NOT NULL, offset_to INTEGER NOT NULL, digest TEXT NOT NULL,
+ offset_from INTEGER NOT NULL, offset_to INTEGER NOT NULL, digest TEXT NOT NULL, received_at TEXT NOT NULL,
  PRIMARY KEY(machine_id,file_hmac,generation,offset_from,offset_to),
  FOREIGN KEY(machine_id,file_hmac) REFERENCES usage_files(machine_id,file_hmac) ON DELETE CASCADE
 );

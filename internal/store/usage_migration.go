@@ -122,6 +122,17 @@ func migrateUsageSnapshotTimes(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
+	columns, err := columnSet(tx, "usage_upload_receipts")
+	if err != nil {
+		return err
+	}
+	if !columns["received_at"] {
+		// Legacy receipts have no arrival time. Give them one retention horizon
+		// from migration rather than guessing a collector timestamp.
+		if _, err = tx.Exec(`ALTER TABLE usage_upload_receipts ADD COLUMN received_at TEXT NOT NULL DEFAULT ''; UPDATE usage_upload_receipts SET received_at=?`, fmtTime(time.Now())); err != nil {
+			return err
+		}
+	}
 	for _, spec := range []struct{ table, column, timestamp string }{
 		{"usage_accounts", "last_seen_ns", "last_seen"},
 		{"usage_sessions", "end_ns", "json_extract(body, '$.End')"},
@@ -154,7 +165,7 @@ func migrateUsageSnapshotTimes(db *sql.DB) error {
 				rows.Close()
 				return fmt.Errorf("%s timestamp: %w", spec.table, err)
 			}
-			if err := validateUsageTimestamp(stamp, time.Now()); err != nil {
+			if err := validateUsageTimestamp(stamp, time.Time{}); err != nil {
 				rows.Close()
 				return fmt.Errorf("%s timestamp: %w", spec.table, err)
 			}

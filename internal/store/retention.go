@@ -112,6 +112,8 @@ func (p RetentionPolicy) Validate() error {
 // 在 SQLite 上是執行期才會炸的 —— 而它炸的時候，人正在等它刪東西。
 type pruneJob struct {
 	table string
+	// Usage rows expire completely under UsagePolicy, including the newest row.
+	usageHorizon time.Duration
 	// cutCol 是圈時間用的欄位。**一律是 Hub 自己的鐘。**
 	//
 	// ⚠ 不可以用 measured_at。一台時鐘慢兩年的機器，它剛剛送上來的觀測
@@ -275,6 +277,12 @@ func (j pruneJob) where() (del, kept string) {
 
 	// ⚠ 兩條從同一個字串生出來，一個是另一個的 NOT。
 	// 各自手寫的兩句 SQL 會慢慢漂開，然後「留了幾筆」就開始說謊。
+	if j.usageHorizon != 0 {
+		if j.table == "ops_approvals" {
+			return fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND (%s)`, j.table, j.cutCol, keep), fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND 0`, j.table, j.cutCol)
+		}
+		return fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND (%s)`, j.table, j.cutCol, keep), fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND NOT (%s)`, j.table, j.cutCol, keep)
+	}
 	return fmt.Sprintf(`%s.%s < ? AND (%s)`, j.table, j.cutCol, keep),
 		fmt.Sprintf(`%s.%s < ? AND NOT (%s)`, j.table, j.cutCol, keep)
 }
@@ -349,13 +357,17 @@ func (s *Store) pruneBatched(now time.Time, p RetentionPolicy) (PruneReport, err
 		return counted, err
 	}
 	rep := PruneReport{At: now, DryRun: false}
-	for i, j := range pruneJobs {
+	jobs, err := allPruneJobs(s.rdb)
+	if err != nil {
+		return rep, err
+	}
+	for i, j := range jobs {
 		kept := int64(0)
 		if i < len(counted.Counts) {
 			kept = counted.Counts[i].Kept
 		}
 		rep.KeptNewest += kept
-		older := now.Add(-j.class.horizon(p))
+		older := now.Add(-j.horizon(p))
 		cut := fmtTime(older)
 		del, _ := j.where()
 		var deleted int64
@@ -410,8 +422,12 @@ func (s *Store) pruneBatched(now time.Time, p RetentionPolicy) (PruneReport, err
 // WHERE clauses.
 func pruneReportTx(tx dbTx, now time.Time, p RetentionPolicy, dryRun bool) (PruneReport, error) {
 	rep := PruneReport{At: now.UTC(), DryRun: dryRun}
-	for _, j := range pruneJobs {
-		cut := fmtTime(rep.At.Add(-j.class.horizon(p)))
+	jobs, err := allPruneJobs(tx)
+	if err != nil {
+		return rep, err
+	}
+	for _, j := range jobs {
+		cut := fmtTime(rep.At.Add(-j.horizon(p)))
 		del, kpt := j.where()
 
 		// 先數「過界、但因為是那一組最新的一筆而留下來」的有幾列 —— 規則 1 的證據。
@@ -439,7 +455,7 @@ func pruneReportTx(tx dbTx, now time.Time, p RetentionPolicy, dryRun bool) (Prun
 			n, _ = res.RowsAffected()
 		}
 		rep.Counts = append(rep.Counts, PruneCount{
-			Table: j.table, Deleted: n, Kept: kept, Older: rep.At.Add(-j.class.horizon(p)),
+			Table: j.table, Deleted: n, Kept: kept, Older: rep.At.Add(-j.horizon(p)),
 		})
 	}
 	return rep, nil

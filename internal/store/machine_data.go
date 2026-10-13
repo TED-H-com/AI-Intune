@@ -54,7 +54,7 @@ var machineDataTables = []MachineDataTable{
 	{Table: "disk_canary_days", TimeCol: "day"},
 	{Table: "usage_accounts", TimeCol: ""},
 	{Table: "usage_files", TimeCol: ""},
-	{Table: "usage_upload_receipts", TimeCol: ""},
+	{Table: "usage_upload_receipts", TimeCol: "received_at"},
 	{Table: "usage_daily", TimeCol: ""},
 	{Table: "usage_window", TimeCol: ""},
 	{Table: "usage_sessions", TimeCol: "updated_at"},
@@ -188,4 +188,18 @@ SELECT count(*),
 	holding.Oldest = parseTimePtr(oldest)
 	holding.Newest = parseTimePtr(newest)
 	return holding, nil
+}
+
+// Shared approval storage is disclosed by operation, without double counting.
+func (s *Store) MachineApprovalDataHolding(machine string, usage bool) (MachineDataHolding, error) {
+	h := MachineDataHolding{Table: "ops_approvals"}
+	op := "<>"
+	if usage {
+		op = "="
+	}
+	var oldest, newest sql.NullString
+	err := s.rdb.QueryRow(`SELECT count(*),count(NULLIF(created_at,'')),min(NULLIF(created_at,'')),max(NULLIF(created_at,'')) FROM ops_approvals WHERE machine_id=? AND operation `+op+` 'usage-recommendation-v1'`, machine).Scan(&h.Rows, &h.Dated, &oldest, &newest)
+	h.Oldest = parseTimePtr(oldest)
+	h.Newest = parseTimePtr(newest)
+	return h, err
 }

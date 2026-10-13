@@ -633,3 +633,15 @@ admin's request.
 
 - Q9 accuracy gate parameter: ≥20 approved recommendations with verified intended
   results and no rollback over 30 days (§7.3); later-phase direction is answered.
+
+U-01 retention uses the shared scheduled and operator preview/apply pruning path.
+Without a published usage policy, default usage retention applies; until policy
+assignment exists, multiple current usage policies use the longest configured
+horizon in each class. Daily contributions, account membership and upload receipts
+use daily retention; hourly windows use window retention; sessions, jobs,
+recommendations, lifecycle rows and usage approval decisions use session retention.
+File checkpoints remain to reject stale uploads after contribution/receipt expiry.
+Legacy receipts without arrival timestamps receive the migration time. Task labels
+have no storage in U-01; their retention belongs to U-08. Shared ops_approvals rows
+are disclosed and counted by operation, with usage decisions and snooze rationales
+under usage recommendations and disk approvals under Disk clean.

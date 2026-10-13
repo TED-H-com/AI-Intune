@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 )
 
 // UsagePolicy is storage-only configuration. Enrollment is explicitly off;
@@ -46,6 +47,11 @@ func DefaultUsagePolicy() UsagePolicy {
 	}
 }
 func (p UsagePolicy) validate() error {
+	for _, days := range []int{p.DailyRetentionDays, p.WindowRetentionDays, p.SessionRetentionDays, p.LabelRetentionDays} {
+		if days < 1 || int64(days) > math.MaxInt64/int64(24*time.Hour) {
+			return ErrUsageInvalid
+		}
+	}
 	if p.LinuxNice < 0 || p.LinuxNice > 19 || p.LinuxIOClass < 1 || p.LinuxIOClass > 3 ||
 		!usageEnum(p.WindowsPriority, "below-normal", "idle") {
 		return ErrUsageInvalid

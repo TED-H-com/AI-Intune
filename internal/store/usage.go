@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -264,6 +265,11 @@ func (s *Store) MergeUsageFile(machine string, in UsageFileSnapshot) (bool, erro
 	} else if in.OffsetFrom != 0 {
 		return false, ErrUsageConflict
 	}
+	if e == nil && gen == in.Generation {
+		if e = checkUsageAppendTx(tx, machine, in); e != nil {
+			return false, e
+		}
+	}
 	if _, e = tx.Exec(`INSERT INTO usage_files VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id, file_hmac) DO UPDATE SET
 generation=excluded.generation, offset_to=excluded.offset_to, digest=excluded.digest`,
 		machine,
@@ -300,13 +306,13 @@ generation=excluded.generation, offset_to=excluded.offset_to, digest=excluded.di
 			}
 		}
 	}
-	if _, e = tx.Exec(`INSERT INTO usage_upload_receipts VALUES (?,?,?,?,?,?)`,
+	if _, e = tx.Exec(`INSERT INTO usage_upload_receipts(machine_id,file_hmac,generation,offset_from,offset_to,digest,received_at) VALUES (?,?,?,?,?,?,?)`,
 		machine,
 		in.FileHMAC,
 		in.Generation,
 		in.OffsetFrom,
 		in.OffsetTo,
-		digest); e != nil {
+		digest, fmtTime(now)); e != nil {
 		return false, e
 	}
 	return true, tx.Commit()
@@ -338,4 +344,98 @@ func (s *Store) UsageContributions(machine string, window bool) ([]UsageAggregat
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// Percentiles are distribution evidence, not cumulative counters.
+func usageMetricsMonotonic(old, next UsageMetrics) bool {
+	old.CallsPerTurnP50, old.CallsPerTurnP90 = 0, 0
+	next.CallsPerTurnP50, next.CallsPerTurnP90 = 0, 0
+	var compare func(reflect.Value, reflect.Value) bool
+	compare = func(a, b reflect.Value) bool {
+		switch a.Kind() {
+		case reflect.Int64:
+			return b.Int() >= a.Int()
+		case reflect.Float64:
+			return b.Float() >= a.Float()
+		case reflect.Pointer:
+			return a.IsNil() || !b.IsNil() && compare(a.Elem(), b.Elem())
+		case reflect.Array, reflect.Struct:
+			n := 0
+			if a.Kind() == reflect.Struct {
+				n = a.NumField()
+			} else {
+				n = a.Len()
+			}
+			for i := 0; i < n; i++ {
+				var x, y reflect.Value
+				if a.Kind() == reflect.Struct {
+					x, y = a.Field(i), b.Field(i)
+				} else {
+					x, y = a.Index(i), b.Index(i)
+				}
+				if !compare(x, y) {
+					return false
+				}
+			}
+			return true
+		case reflect.Map:
+			for _, k := range a.MapKeys() {
+				v := b.MapIndex(k)
+				if !v.IsValid() || !compare(a.MapIndex(k), v) {
+					return false
+				}
+			}
+			return true
+		default:
+			return true
+		}
+	}
+	return compare(reflect.ValueOf(old), reflect.ValueOf(next))
+}
+func usageAggregateKey(a UsageAggregate) string {
+	a.Metrics = UsageMetrics{}
+	return string(mustScriptJSON(a))
+}
+func checkUsageAppendTx(tx dbTx, machine string, in UsageFileSnapshot) error {
+	for i, incoming := range [][]UsageAggregate{in.Daily, in.Window} {
+		table, col := "usage_daily", "day"
+		if i == 1 {
+			table, col = "usage_window", "hour"
+		}
+		next := map[string]UsageMetrics{}
+		for _, a := range incoming {
+			key := usageAggregateKey(a)
+			if _, ok := next[key]; ok {
+				return ErrUsageConflict
+			}
+			next[key] = a.Metrics
+		}
+		rows, err := tx.Query(`SELECT tool,account_id,model,effort,effort_source,source_type,`+col+`,project_hmac,metrics FROM `+table+` WHERE machine_id=? AND file_hmac=?`, machine, in.FileHMAC)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var a UsageAggregate
+			var raw string
+			if err = rows.Scan(&a.Tool, &a.AccountID, &a.Model, &a.Effort, &a.EffortSource, &a.SourceType, &a.Period, &a.ProjectHMAC, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			if err = json.Unmarshal([]byte(raw), &a.Metrics); err != nil {
+				rows.Close()
+				return err
+			}
+			b, ok := next[usageAggregateKey(a)]
+			if !ok || !usageMetricsMonotonic(a.Metrics, b) {
+				rows.Close()
+				return ErrUsageConflict
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
