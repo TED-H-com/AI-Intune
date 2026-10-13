@@ -234,6 +234,60 @@ sudo -n systemctl reset-failed clawctl-agent.service 2>/dev/null || true
 started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 sudo -n systemctl restart clawctl-agent.service
 systemctl is-active --quiet clawctl-agent.service
+# SSH does not inherit the service's proxy environment. Parse data only;
+# never source these files or evaluate systemctl's assignments.
+load_agent_proxy_env() {
+  local environment_file=${1:-/etc/environment}
+  local line key value service_env char quote='' token='' escaped=0 i
+  local -a assignments=()
+  if [[ -r "$environment_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=(.*)$ ]] || continue
+      key=${BASH_REMATCH[1]}
+      value=${BASH_REMATCH[2]}
+      value="${value#"${value%%[![:space:]]*}"}"
+      value="${value%"${value##*[![:space:]]}"}"
+      # Optional surrounding quotes and a trailing comment are data syntax.
+      if [[ "$value" =~ ^\"(.*)\"[[:space:]]*(#.*)?$ || "$value" =~ ^\'(.*)\'[[:space:]]*(#.*)?$ ]]; then
+        value=${BASH_REMATCH[1]}
+      else
+        value=${value%%[[:space:]]#*}
+        value="${value%"${value##*[![:space:]]}"}"
+      fi
+      assignments+=("$key=$value")
+    done < "$environment_file"
+  fi
+  service_env=$(systemctl show -p Environment --value clawctl-agent.service) || service_env=''
+  # Split systemd's space-separated, optionally quoted assignments without
+  # shell expansion. Backslash protects the next character outside single quotes.
+  for ((i=0; i<${#service_env}; i++)); do
+    char=${service_env:i:1}
+    if ((escaped)); then
+      token+=$char
+      escaped=0
+    elif [[ "$char" == "\\" && "$quote" != "'" ]]; then
+      escaped=1
+    elif [[ -n "$quote" ]]; then
+      if [[ "$char" == "$quote" ]]; then quote=''; else token+=$char; fi
+    elif [[ "$char" == '"' || "$char" == "'" ]]; then
+      quote=$char
+    elif [[ "$char" == [[:space:]] ]]; then
+      if [[ -n "$token" ]]; then assignments+=("$token"); token=''; fi
+    else
+      token+=$char
+    fi
+  done
+  if [[ -n "$token" && -z "$quote" ]] && ((escaped == 0)); then assignments+=("$token"); fi
+  for line in "${assignments[@]}"; do
+    [[ "$line" == *=* ]] || continue
+    key=${line%%=*}
+    case "$key" in
+      http_proxy|https_proxy|no_proxy|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|ALL_PROXY|all_proxy)
+        export "$key=${line#*=}" ;;
+    esac
+  done
+}
+load_agent_proxy_env
 "$system_bin" verify --since "$started_at" --timeout 2m
 
 process_count="$(ps -eo comm= | awk '$1=="clawctl-agent" { n++ } END { print n+0 }')"

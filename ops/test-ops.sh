@@ -1736,6 +1736,62 @@ for upgrade_mode in identical changed disabled denied; do
   expect "agent upgrade narrow sudo contract: $upgrade_mode" 0 is_silent
 done
 
+# Proxy variables are assigned dynamically by the extracted loader.
+# shellcheck disable=SC2153,SC2154
+upgrade_agent_proxy_fixture() (
+  set -Eeuo pipefail
+  local fixture="$TMP/upgrade-proxy" parser original_path
+  mkdir -p "$fixture/bin"
+  parser="$fixture/parser.sh"
+  sed -n '/^load_agent_proxy_env() {$/,/^}$/p' "$UPGRADE_AGENT" >"$parser"
+  [[ -s "$parser" ]] || return 1
+  # This sources only the function extracted from repository code, never data.
+  # shellcheck disable=SC1090
+  source "$parser"
+  cat >"$fixture/environment" <<EOF
+# ignored comment
+  http_proxy = 'http://file.example:8080' # ignored trailing comment
+HTTPS_PROXY="http://file.example:8443"
+NO_PROXY=localhost,127.0.0.1 # ignored trailing comment
+PATH=/untrusted
+FOO=untrusted
+HTTP_PROXY=\$(touch $fixture/injected-file)
+EOF
+  cat >"$fixture/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == 'show -p Environment --value clawctl-agent.service' ]] || exit 90
+if [[ -f "$PROXY_FIXTURE/service" ]]; then cat "$PROXY_FIXTURE/service"; else exit 1; fi
+EOF
+  chmod +x "$fixture/bin/systemctl"
+  export PROXY_FIXTURE="$fixture" PATH="$fixture/bin:$PATH"
+  original_path=$PATH
+  unset FOO http_proxy https_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY
+  export no_proxy=existing all_proxy=existing-all
+  load_agent_proxy_env "$fixture/environment"
+  [[ "$http_proxy" == http://file.example:8080 && "$HTTPS_PROXY" == http://file.example:8443 ]] || return 1
+  [[ "$NO_PROXY" == localhost,127.0.0.1 && "$no_proxy" == existing && "$all_proxy" == existing-all ]] || return 1
+  [[ "$HTTP_PROXY" == "\$(touch $fixture/injected-file)" && ! -e "$fixture/injected-file" ]] || return 1
+  [[ "$PATH" == "$original_path" && ! ${FOO+x} ]] || return 1
+  cat >"$fixture/service" <<EOF
+"http_proxy=http://service.example:8080" HTTPS_PROXY="http://service.example:8443" 'NO_PROXY=localhost, service.example' https_proxy=http://service.example:443 ALL_PROXY=http://all.example:1080 PATH=/untrusted FOO=untrusted "HTTP_PROXY=\$(touch $fixture/injected-service)" "no_proxy=escaped\ space"
+EOF
+  load_agent_proxy_env "$fixture/environment"
+  [[ "$http_proxy" == http://service.example:8080 && "$HTTPS_PROXY" == http://service.example:8443 ]] || return 1
+  [[ "$NO_PROXY" == 'localhost, service.example' && "$no_proxy" == 'escaped space' ]] || return 1
+  [[ "$https_proxy" == http://service.example:443 && "$ALL_PROXY" == http://all.example:1080 ]] || return 1
+  [[ "$HTTP_PROXY" == "\$(touch $fixture/injected-service)" && ! -e "$fixture/injected-service" ]] || return 1
+  [[ ! -e "$fixture/injected-file" && "$PATH" == "$original_path" && ! ${FOO+x} ]] || return 1
+  rm "$fixture/service"
+  load_agent_proxy_env "$fixture/missing"
+  [[ "$http_proxy" == http://service.example:8080 && "$all_proxy" == existing-all ]] || return 1
+)
+
+run upgrade_agent_proxy_fixture
+expect 'agent upgrade safely imports only proxies with service precedence and preserves missing values' 0 is_silent
+
+run appears_in_order3 'sudo -n systemctl restart clawctl-agent.service' 'load_agent_proxy_env' '"$system_bin" verify --since "$started_at" --timeout 2m' "$UPGRADE_AGENT"
+expect 'agent upgrade loads proxies after restart and before readiness verification' 0 is_silent
+
 run appears_in_order3 'got="$(timeout 5 "$bin.new" version' 'sudo -n mv -f "$system_unit.new" "$system_unit"' 'sudo -n systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
 expect 'agent upgrade validates binary before publishing unit and restarting' 0 is_silent
 
