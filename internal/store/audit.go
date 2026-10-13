@@ -28,6 +28,7 @@ import (
 type AuditAction string
 
 const (
+	AuditUsagePolicyApply  AuditAction = "usage-policy-apply"
 	AuditDiskPolicyPreview AuditAction = "disk-policy-preview"
 	AuditDiskPolicyApply   AuditAction = "disk-policy-apply"
 	AuditOpsApproval       AuditAction = "ops-approval"
@@ -167,7 +168,7 @@ func (e AuditEntry) IsOperatorReplay() bool {
 // That catalog controls filtering and unknown_action; newly added observational
 // actions must not silently become canonical mutations. Do not copy this list.
 func IsCanonicalOperatorAction(action AuditAction) bool {
-	return action == AuditDiskPolicyPreview || action == AuditDiskPolicyApply || action == AuditOpsApproval || action == AuditMachineChannel || action == AuditMachineAssignedUser || action == AuditAgentSessionOpen || action == AuditAgentSessionClose || action == AuditMachineLifecycle || action == AuditMachineRename || action == AuditMachineNotes || action == AuditEnrollToken || action == AuditRevokeToken ||
+	return action == AuditUsagePolicyApply || action == AuditDiskPolicyPreview || action == AuditDiskPolicyApply || action == AuditOpsApproval || action == AuditMachineChannel || action == AuditMachineAssignedUser || action == AuditAgentSessionOpen || action == AuditAgentSessionClose || action == AuditMachineLifecycle || action == AuditMachineRename || action == AuditMachineNotes || action == AuditEnrollToken || action == AuditRevokeToken ||
 		action == AuditEnrollmentLimit ||
 		action == AuditDeploymentCreate || action == AuditDeploymentRetry ||
 		action == AuditDeploymentContinue || action == AuditDeploymentSkipFailedBatch || action == AuditDeploymentAbandon ||

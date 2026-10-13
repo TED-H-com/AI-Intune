@@ -1,6 +1,6 @@
 # Token and Model Usage Monitoring for AI Coding CLIs
 
-Status: DRAFT — proposed design, not authorization to implement or deploy.
+Status: U-01 store foundation implemented; remaining phases are proposed, not authorization to implement or deploy.
 Owner: The admin. Scope: account inventory across installed tools; usage parsing for Claude Code and Codex CLI.
 Language: English. Implementation: later, by Codex CLI, in the PR order of §11.
 Builds on: `docs/design/HUB-PHASE2-STANDARD-OPS.md` (Phase 2) and the shipped
@@ -525,6 +525,20 @@ rationale is displayed as untrusted text. Rate limit: 20 proposals/day per token
 | U-08 | Default-on task labels (redaction, restricted storage, grant) | Redaction corpus tests; all-machines default-on/max-40 test |
 | U-09 (private) | Overlay config for reference fleet; canary on one workstation for a week, then fleet | Admin reviews canary numbers vs manual diagnostics |
 | U-10 (later) | Gated preview → admin approval → auto-apply; one-click rollback | Accuracy gate (§7.3), exact-diff approval, revision conflict and rollback tests |
+
+U-01 implementation notes: the store uses complete, versioned per-file snapshots
+for daily/hourly contributions, with durable `(machine, file HMAC, generation,
+offset range)` replay receipts. Appends replace the previous complete contribution;
+rewrites increment generation and may lower totals. Collectors must normalize
+cumulative counters/reset segments before upload (U-02/U-03). Per-file rows retain
+nullable measurements and percentile evidence without inventing merged percentiles.
+Session/job summaries are replacement upserts, never additive re-uploads. Account
+membership is stored per machine; unknown attribution remains machine-scoped.
+Usage policies share immutable `ops_policies` revisions; advice operations cannot
+be consumed by disk execution adapters. Recommendation decision storage supports
+Q5; rule evaluation and automatic reopening remain U-06. Task-label columns and
+exposure are deliberately deferred to U-08. No collector, upload route, schedule,
+UI, alert, MCP tool, or application adapter is enabled by U-01.
 
 Each PR: UI + screenshots where applicable, docs, route manifest, MCP schema,
 `go test ./internal/scrubguard`. Feature enrollment stays default-off; labels default on once enabled.

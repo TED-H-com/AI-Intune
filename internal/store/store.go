@@ -593,6 +593,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate disk timer evidence: %w", err)
 	}
+	if err := migrateUsagePolicyKind(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate usage policy kind: %w", err)
+	}
 	if _, err := db.Exec(schemaSQL); err != nil {
 		if conflictErr := rejectDuplicateDesiredStateResourceRevisions(db); conflictErr != nil &&
 			errors.Is(conflictErr, ErrDesiredResourceRevisionConflict) {

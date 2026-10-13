@@ -111,20 +111,22 @@ func DataRetirementSentence(retention DataRetention) string {
 type DataCategoryKey string
 
 const (
-	DataCategoryRegistry      DataCategoryKey = "registry"
-	DataCategoryIdentity      DataCategoryKey = "identity"
-	DataCategoryCheckins      DataCategoryKey = "checkins"
-	DataCategoryObservations  DataCategoryKey = "observations"
-	DataCategoryTickets       DataCategoryKey = "tickets"
-	DataCategoryCredentials   DataCategoryKey = "credentials"
-	DataCategoryVerifications DataCategoryKey = "verifications"
-	DataCategoryState         DataCategoryKey = "state"
-	DataCategoryWorkload      DataCategoryKey = "workload"
-	DataCategoryCanary        DataCategoryKey = "canary"
-	DataCategoryJobs          DataCategoryKey = "jobs"
-	DataCategoryDiskClean     DataCategoryKey = "disk_clean"
-	DataCategoryAssignments   DataCategoryKey = "assignments"
-	DataCategoryAudit         DataCategoryKey = "audit"
+	DataCategoryRegistry             DataCategoryKey = "registry"
+	DataCategoryIdentity             DataCategoryKey = "identity"
+	DataCategoryCheckins             DataCategoryKey = "checkins"
+	DataCategoryObservations         DataCategoryKey = "observations"
+	DataCategoryTickets              DataCategoryKey = "tickets"
+	DataCategoryCredentials          DataCategoryKey = "credentials"
+	DataCategoryVerifications        DataCategoryKey = "verifications"
+	DataCategoryState                DataCategoryKey = "state"
+	DataCategoryWorkload             DataCategoryKey = "workload"
+	DataCategoryCanary               DataCategoryKey = "canary"
+	DataCategoryJobs                 DataCategoryKey = "jobs"
+	DataCategoryDiskClean            DataCategoryKey = "disk_clean"
+	DataCategoryAssignments          DataCategoryKey = "assignments"
+	DataCategoryAudit                DataCategoryKey = "audit"
+	DataCategoryUsageRecords         DataCategoryKey = "usage_records"
+	DataCategoryUsageRecommendations DataCategoryKey = "usage_recommendations"
 )
 
 // DataCategory 是揭露面上的一列。
@@ -173,10 +175,28 @@ var dataCategoryOrder = []DataCategoryKey{
 	DataCategoryCheckins, DataCategoryObservations, DataCategoryTickets,
 	DataCategoryCredentials, DataCategoryVerifications,
 	DataCategoryState, DataCategoryWorkload, DataCategoryCanary,
-	DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments, DataCategoryAudit,
+	DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments,
+	DataCategoryUsageRecords, DataCategoryUsageRecommendations, DataCategoryAudit,
 }
 
 var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
+	DataCategoryUsageRecords: {
+		title:  "AI usage records",
+		holds:  "Hashed account membership and session or job identifiers, token and call counts, usage estimates, collection freshness, and upload replay receipts. No credentials, prompts, paths, or task labels are stored.",
+		source: DataSourceMachine,
+		tables: []string{
+			"usage_accounts", "usage_files", "usage_upload_receipts",
+			"usage_daily", "usage_window", "usage_sessions", "usage_jobs",
+		},
+		path: "/machines",
+	},
+	DataCategoryUsageRecommendations: {
+		title:  "AI usage recommendations",
+		holds:  "Recommendation evidence digests, rule versions, estimated savings, confidence, and review or snooze status. These records never apply a configuration change.",
+		source: DataSourceHub,
+		tables: []string{"usage_recommendations"},
+		path:   "/machines",
+	},
 	DataCategoryRegistry: {
 		title:  "名冊",
 		holds:  "這台機器的顯示名稱、主機名稱、作業系統、架構、Tailscale 位址、執行身分、通道，以及進名冊與退役的時刻。",
