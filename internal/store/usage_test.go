@@ -479,9 +479,7 @@ func TestUsageDecisionsAndBindingDenials(t *testing.T) {
 			if _, e = s.consumeOpsApproval(out,
 				"advice-dispatch",
 				diskAdmin(),
-				func(dbTx,
-					OpsApproval) (string,
-					error) {
+				func(dbTx, OpsApproval) (string, error) {
 					called = true
 					return "", nil
 				}); e == nil || called {

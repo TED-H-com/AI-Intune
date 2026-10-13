@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // Rebuild the legacy parent on one connection with FK enforcement temporarily
@@ -70,6 +72,64 @@ func migrateUsagePolicyKind(db *sql.DB) error {
 	}
 	if bad {
 		return errors.New("store: usage policy migration foreign key violation")
+	}
+	return tx.Commit()
+}
+
+// Parse legacy timestamps in Go: SQLite date functions lose subsecond precision.
+// Adding each column and backfilling it in one transaction makes retries safe.
+func migrateUsageSnapshotTimes(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, spec := range []struct{ table, column, timestamp string }{
+		{"usage_accounts", "last_seen_ns", "last_seen"},
+		{"usage_sessions", "end_ns", "json_extract(body, '$.End')"},
+		{"usage_jobs", "last_seen_ns", "json_extract(body, '$.LastSeen')"},
+	} {
+		columns, err := columnSet(tx, spec.table)
+		if err != nil {
+			return err
+		}
+		if columns[spec.column] {
+			continue
+		}
+		if _, err := tx.Exec("ALTER TABLE " + spec.table + " ADD COLUMN " + spec.column + " INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+		rows, err := tx.Query("SELECT rowid, " + spec.timestamp + " FROM " + spec.table)
+		if err != nil {
+			return err
+		}
+		var backfill []struct{ rowID, ns int64 }
+		for rows.Next() {
+			var rowID int64
+			var raw string
+			if err := rows.Scan(&rowID, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			stamp, err := time.Parse(time.RFC3339Nano, raw)
+			if err != nil {
+				rows.Close()
+				return fmt.Errorf("%s timestamp: %w", spec.table, err)
+			}
+			backfill = append(backfill, struct{ rowID, ns int64 }{rowID, stamp.UnixNano()})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, row := range backfill {
+			if _, err := tx.Exec("UPDATE "+spec.table+" SET "+spec.column+"=? WHERE rowid=?", row.ns, row.rowID); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }

@@ -1741,7 +1741,7 @@ CREATE TABLE IF NOT EXISTS usage_files (
 CREATE TABLE IF NOT EXISTS usage_accounts (
  account_id TEXT NOT NULL, machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
  provider TEXT NOT NULL, plan TEXT NOT NULL, discovery_source TEXT NOT NULL,
- last_seen TEXT NOT NULL, conflict INTEGER NOT NULL DEFAULT 0, pinned_plan TEXT,
+ last_seen TEXT NOT NULL, last_seen_ns INTEGER NOT NULL, conflict INTEGER NOT NULL DEFAULT 0, pinned_plan TEXT,
  PRIMARY KEY(account_id,machine_id)
 );
 CREATE TABLE IF NOT EXISTS usage_daily (
@@ -1762,11 +1762,11 @@ CREATE TABLE IF NOT EXISTS usage_window (
 CREATE INDEX IF NOT EXISTS usage_window_account ON usage_window(account_id,hour);
 CREATE TABLE IF NOT EXISTS usage_sessions (
  machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), session_hmac TEXT NOT NULL,
- body TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(machine_id,session_hmac)
+ body TEXT NOT NULL, updated_at TEXT NOT NULL, end_ns INTEGER NOT NULL, PRIMARY KEY(machine_id,session_hmac)
 );
 CREATE TABLE IF NOT EXISTS usage_jobs (
  machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), fingerprint TEXT NOT NULL,
- day TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(machine_id,fingerprint,day)
+ day TEXT NOT NULL, body TEXT NOT NULL, last_seen_ns INTEGER NOT NULL, PRIMARY KEY(machine_id,fingerprint,day)
 );
 CREATE TABLE IF NOT EXISTS usage_recommendations (
  id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, rule_version INTEGER NOT NULL CHECK(rule_version>0),

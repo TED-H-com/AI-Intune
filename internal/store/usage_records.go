@@ -33,9 +33,9 @@ func (s *Store) UpsertUsageAccount(a UsageAccount) error {
 	}
 	defer tx.Rollback()
 	var old UsageAccount
-	var seen string
-	e = tx.QueryRow(`SELECT account_id,machine_id,provider,plan,discovery_source,last_seen,conflict,COALESCE(pinned_plan,'') FROM usage_accounts WHERE account_id=? AND machine_id=?`, a.AccountID, a.MachineID).Scan(&old.AccountID, &old.MachineID, &old.Provider, &old.Plan, &old.DiscoverySource, &seen, &old.Conflict, &old.PinnedPlan)
-	if e == nil && seen == fmtTime(a.LastSeen) {
+	var seenNS int64
+	e = tx.QueryRow(`SELECT account_id,machine_id,provider,plan,discovery_source,last_seen_ns,conflict,COALESCE(pinned_plan,'') FROM usage_accounts WHERE account_id=? AND machine_id=?`, a.AccountID, a.MachineID).Scan(&old.AccountID, &old.MachineID, &old.Provider, &old.Plan, &old.DiscoverySource, &seenNS, &old.Conflict, &old.PinnedPlan)
+	if e == nil && seenNS == a.LastSeen.UnixNano() {
 		old.LastSeen = a.LastSeen
 		if a.PinnedPlan == "" {
 			a.PinnedPlan = old.PinnedPlan
@@ -49,18 +49,18 @@ func (s *Store) UpsertUsageAccount(a UsageAccount) error {
 		return e
 	}
 	_, e = tx.Exec(`INSERT INTO usage_accounts(account_id, machine_id, provider, plan, discovery_source, last_seen,
-conflict, pinned_plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id, machine_id) DO UPDATE
+conflict, pinned_plan, last_seen_ns) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id, machine_id) DO UPDATE
 SET provider=excluded.provider, plan=excluded.plan, discovery_source=excluded.discovery_source,
-last_seen=excluded.last_seen, conflict=excluded.conflict, pinned_plan=COALESCE(excluded.pinned_plan,
-usage_accounts.pinned_plan) WHERE excluded.last_seen>=usage_accounts.last_seen`,
+last_seen=excluded.last_seen, last_seen_ns=excluded.last_seen_ns, conflict=excluded.conflict, pinned_plan=COALESCE(excluded.pinned_plan,
+usage_accounts.pinned_plan) WHERE excluded.last_seen_ns>usage_accounts.last_seen_ns`,
 		a.AccountID,
 		a.MachineID,
 		a.Provider,
 		a.Plan,
 		a.DiscoverySource,
-		fmtTime(a.LastSeen),
+		a.LastSeen.UTC().Format(time.RFC3339Nano),
 		a.Conflict,
-		nullStr(a.PinnedPlan))
+		nullStr(a.PinnedPlan), a.LastSeen.UnixNano())
 	if e != nil {
 		return e
 	}
@@ -147,9 +147,11 @@ func (s *Store) UpsertUsageSession(machine string, a UsageSession) error {
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return e
 	}
-	_, e = tx.Exec(`INSERT INTO usage_sessions VALUES (?, ?, ?, ?) ON CONFLICT(machine_id, session_hmac) DO UPDATE SET
-body=excluded.body, updated_at=excluded.updated_at WHERE json_extract(excluded.body,
-'$.End')>=json_extract(usage_sessions.body, '$.End')`, machine, a.SessionHMAC, string(mustScriptJSON(a)), fmtTime(s.now().UTC()))
+	_, e = tx.Exec(`INSERT INTO usage_sessions(machine_id, session_hmac, body, updated_at, end_ns)
+VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id, session_hmac) DO UPDATE SET
+body=excluded.body, updated_at=excluded.updated_at, end_ns=excluded.end_ns
+WHERE excluded.end_ns>usage_sessions.end_ns`,
+		machine, a.SessionHMAC, string(mustScriptJSON(a)), fmtTime(s.now().UTC()), a.End.UnixNano())
 	if e != nil {
 		return e
 	}
@@ -218,9 +220,11 @@ func (s *Store) UpsertUsageJob(machine string, a UsageJob) error {
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return e
 	}
-	_, e = tx.Exec(`INSERT INTO usage_jobs VALUES (?, ?, ?, ?) ON CONFLICT(machine_id, fingerprint, day) DO UPDATE SET
-body=excluded.body WHERE json_extract(excluded.body, '$.LastSeen')>=json_extract(usage_jobs.body,
-'$.LastSeen')`, machine, a.Fingerprint, a.Day, string(mustScriptJSON(a)))
+	_, e = tx.Exec(`INSERT INTO usage_jobs(machine_id, fingerprint, day, body, last_seen_ns)
+VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id, fingerprint, day) DO UPDATE SET
+body=excluded.body, last_seen_ns=excluded.last_seen_ns
+WHERE excluded.last_seen_ns>usage_jobs.last_seen_ns`,
+		machine, a.Fingerprint, a.Day, string(mustScriptJSON(a)), a.LastSeen.UnixNano())
 	if e != nil {
 		return e
 	}

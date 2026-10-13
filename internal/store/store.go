@@ -611,6 +611,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if err := migrateUsageSnapshotTimes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate usage snapshot times: %w", err)
+	}
 	if err := addMissingColumns(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
