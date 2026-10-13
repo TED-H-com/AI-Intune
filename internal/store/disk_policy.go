@@ -68,7 +68,7 @@ func humanDiskAdmin(a AuditEntry) error {
 	return nil
 }
 func (s *Store) DiskPolicies() ([]OpsPolicy, error) {
-	rows, err := s.rdb.Query(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies ORDER BY id,revision DESC LIMIT 500`)
+	rows, err := s.rdb.Query(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies WHERE kind='disk' ORDER BY id,revision DESC LIMIT 500`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func scanOpsPolicy(row interface{ Scan(...any) error }) (OpsPolicy, error) {
 	return p, err
 }
 func (s *Store) DiskPolicy(id string) (OpsPolicy, error) {
-	p, err := scanOpsPolicy(s.rdb.QueryRow(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies WHERE id=? ORDER BY revision DESC LIMIT 1`, id))
+	p, err := scanOpsPolicy(s.rdb.QueryRow(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies WHERE kind='disk' AND id=? ORDER BY revision DESC LIMIT 1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		err = operatorError(OperatorCodeMaintenanceNotFound, "disk policy not found")
 	}
@@ -200,6 +200,15 @@ func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, 
 	}
 	if revision != *req.ExpectedRevision {
 		return reject("REVISION_CONFLICT", "policy revision changed")
+	}
+	if revision > 0 {
+		var kind string
+		if err = tx.QueryRow(`SELECT kind FROM ops_policies WHERE id=? AND revision=?`, req.ID, revision).Scan(&kind); err != nil {
+			return out, err
+		}
+		if kind != "disk" {
+			return reject("REVISION_CONFLICT", "policy kind does not match disk operation")
+		}
 	}
 	var previousBody json.RawMessage
 	if revision > 0 {

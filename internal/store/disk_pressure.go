@@ -123,7 +123,7 @@ func (s *Store) reconcileDiskPressureMachine(id string, now time.Time) error {
 		digest = a.Digest
 		err = tx.QueryRow(`SELECT body FROM ops_policies WHERE id=? AND digest=? AND superseded_at IS NULL`, policyID, digest).Scan(&body)
 	} else if err == sql.ErrNoRows {
-		err = tx.QueryRow(`SELECT id,body,digest FROM ops_policies WHERE superseded_at IS NULL AND (SELECT COUNT(*) FROM ops_policies WHERE superseded_at IS NULL)=1`).Scan(&policyID, &body, &digest)
+		err = tx.QueryRow(`SELECT id,body,digest FROM ops_policies WHERE kind='disk' AND superseded_at IS NULL AND (SELECT COUNT(*) FROM ops_policies WHERE kind='disk' AND superseded_at IS NULL)=1`).Scan(&policyID, &body, &digest)
 	}
 	if err == sql.ErrNoRows {
 		outcome = "policy_unassigned"

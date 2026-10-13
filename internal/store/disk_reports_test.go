@@ -494,3 +494,33 @@ func TestDiskReportUploadRechecksAuthorityInsideWriter(t *testing.T) {
 		t.Fatal("failed recheck mutated report", count, err)
 	}
 }
+
+func TestDiskPressureFallbackIgnoresUsagePolicy(t *testing.T) {
+	s, req, now := deepFixture(t)
+	policy := DefaultUsagePolicy()
+	preview, err := UsagePolicyPreviewDigest("usage-default", 0, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.PublishUsagePolicy("usage-default", 0, policy, preview, diskAdmin()); err != nil {
+		t.Fatal(err)
+	}
+	c := healthyCheckin(now.Add(time.Second))
+	c.ScriptV1 = true
+	c.DiskOpsV2 = true
+	c.DiskTotalBytes = 1000
+	c.DiskFreeBytes = 199
+	if err = s.RecordCheckin(req.Targets[0], c, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ReconcileDiskPressure(now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = s.rdb.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("jobs=%d want 1 with one disk policy and one usage policy", count)
+	}
+}

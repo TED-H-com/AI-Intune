@@ -508,10 +508,20 @@ func validOperatorRetentionReceipt(receipt operatorRetentionReceipt, req Operato
 }
 
 func validOperatorRetentionCounts(counts []PruneCount, evaluatedAt time.Time, policy RetentionPolicy) bool {
-	if len(counts) != len(pruneJobs) {
+	usageJobs := usageJobsForPolicy(DefaultUsagePolicy())
+	// Replay validates historical horizons against the logged receipt, not a
+	// usage policy that may have changed since the original prune.
+	if len(counts) != len(pruneJobs)+len(usageJobs) {
 		return false
 	}
 	for index, item := range counts {
+		if index >= len(pruneJobs) {
+			horizon := evaluatedAt.Sub(item.Older)
+			if item.Table != usageJobs[index-len(pruneJobs)].table || item.Deleted < 0 || item.Kept < 0 || horizon < 24*time.Hour || horizon%(24*time.Hour) != 0 {
+				return false
+			}
+			continue
+		}
 		job := pruneJobs[index]
 		if item.Table != job.table || item.Deleted < 0 || item.Kept < 0 ||
 			!item.Older.Equal(evaluatedAt.Add(-job.class.horizon(policy))) {

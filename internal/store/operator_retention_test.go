@@ -22,7 +22,7 @@ func retentionFixture(t *testing.T) (*Store, time.Time, OperatorPrunePreview) {
 		t.Fatal(err)
 	}
 	if preview.TotalDeleted != 1 || preview.ExpectedRevision != 0 ||
-		preview.Confirmation != "DELETE 1 ROWS" || len(preview.Counts) != len(pruneJobs) {
+		preview.Confirmation != "DELETE 1 ROWS" || len(preview.Counts) != (len(pruneJobs)+8) {
 		t.Fatalf("preview=%+v", preview)
 	}
 	return st, now, preview
@@ -58,7 +58,7 @@ func TestOperatorRetentionPreviewApplyAndReplayAreAtomic(t *testing.T) {
 	req := retentionApplyRequest(preview)
 
 	first, err := st.ApplyOperatorPrune(req)
-	if err != nil || first.TotalDeleted != 1 || first.Revision != int64(len(pruneJobs)) ||
+	if err != nil || first.TotalDeleted != 1 || first.Revision != int64((len(pruneJobs)+8)) ||
 		first.Replayed || !first.Audited || first.KeptNewest != preview.KeptNewest {
 		t.Fatalf("first=%+v err=%v", first, err)
 	}
@@ -77,7 +77,7 @@ func TestOperatorRetentionPreviewApplyAndReplayAreAtomic(t *testing.T) {
 		AuditRetentionPrune, req.IdempotencyKey).Scan(&auditRows)
 	_ = st.db.QueryRow(`SELECT COUNT(*) FROM retention_log WHERE at=?`,
 		fmtTime(preview.EvaluatedAt)).Scan(&retentionRows)
-	if oldRows != 0 || receipts != 1 || auditRows != 2 || retentionRows != len(pruneJobs) {
+	if oldRows != 0 || receipts != 1 || auditRows != 2 || retentionRows != (len(pruneJobs)+8) {
 		t.Fatalf("old=%d receipts=%d audits=%d retention=%d", oldRows, receipts, auditRows, retentionRows)
 	}
 }
@@ -132,7 +132,7 @@ func TestOperatorRetentionStatusDistinguishesNeverRunFromZeroRowRun(t *testing.T
 	}
 	after, err := st.OperatorRetentionStatus(now, DefaultRetention())
 	if err != nil || !after.HasRun || after.LastPruneAt == nil || after.LastPruneRows != 0 ||
-		after.Revision != int64(len(pruneJobs)) {
+		after.Revision != int64((len(pruneJobs)+8)) {
 		t.Fatalf("after=%+v err=%v", after, err)
 	}
 }
@@ -147,7 +147,7 @@ func TestOperatorRetentionStatusDistinguishesNeverRunFromZeroRowRun(t *testing.T
 // validOperatorRetentionCounts 的 item.Table != job.table 就先開火了，
 // 量到的會是表名那一條而不是長度那一條（紅燈盤實測：只拿掉長度子句時
 // 這支仍然綠）。拿掉尾巴之後剩下每一格都還對齊 pruneJobs，
-// len(counts) != len(pruneJobs) 是唯一還會開火的子句。
+// len(counts) != (len(pruneJobs)+8) 是唯一還會開火的子句。
 func TestRetentionReplayRefusesAReceiptThatDropsATable(t *testing.T) {
 	st, _, preview := retentionFixture(t)
 	req := retentionApplyRequest(preview)
@@ -156,7 +156,7 @@ func TestRetentionReplayRefusesAReceiptThatDropsATable(t *testing.T) {
 	}
 
 	honest, err := st.ApplyOperatorPrune(req)
-	if err != nil || !honest.Replayed || len(honest.Counts) != len(pruneJobs) {
+	if err != nil || !honest.Replayed || len(honest.Counts) != (len(pruneJobs)+8) {
 		t.Fatalf("沒有一次會交回每一張表的誠實重放，下面的拒絕就無法歸因於少掉的那一列: "+
 			"honest=%+v err=%v", honest, err)
 	}

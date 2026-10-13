@@ -370,6 +370,7 @@ type Change struct {
 // ---------------------------------------------------------------- Store
 
 type Store struct {
+	usageToolCallLimit atomic.Int64
 	diskOpsV2Writes    atomic.Bool
 	diskManifestSigner atomic.Pointer[rsa.PrivateKey]
 	// db is the single writer connection. rdb is the query-only reader pool,
@@ -593,6 +594,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate disk timer evidence: %w", err)
 	}
+	if err := migrateUsagePolicyKind(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate usage policy kind: %w", err)
+	}
 	if _, err := db.Exec(schemaSQL); err != nil {
 		if conflictErr := rejectDuplicateDesiredStateResourceRevisions(db); conflictErr != nil &&
 			errors.Is(conflictErr, ErrDesiredResourceRevisionConflict) {
@@ -606,6 +611,10 @@ func Open(path string) (*Store, error) {
 		}
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	if err := migrateUsageSnapshotTimes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate usage snapshot times: %w", err)
 	}
 	if err := addMissingColumns(db); err != nil {
 		db.Close()

@@ -273,3 +273,29 @@ func TestDataAndMachineDisclosureContractsWithoutSockets(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageDisclosureRetentionContract(t *testing.T) {
+	disclosure := dataClientDisclosure(t, time.Now().UTC())
+	for _, category := range disclosure.Categories {
+		if category.Retention.Kind != operator.DataRetentionUsagePolicy {
+			continue
+		}
+		for _, mutate := range []func(*operator.DataCategory){
+			func(c *operator.DataCategory) { c.Key = operator.DataCategoryRegistry },
+			func(c *operator.DataCategory) { c.Retention.Days = 30 },
+			func(c *operator.DataCategory) { c.Retention.Class = "usage" },
+			func(c *operator.DataCategory) { c.Retention.RingRows = 1 },
+		} {
+			invalid := category
+			mutate(&invalid)
+			if err := validateDataCategory(invalid); err == nil {
+				t.Fatal("accepted inconsistent usage retention", invalid)
+			}
+		}
+	}
+	// Only the operation-scoped approvals overlap is valid.
+	disclosure.Categories[1].Tables = append(disclosure.Categories[1].Tables, disclosure.Categories[0].Tables[0])
+	if err := validateDataDisclosure(disclosure); err == nil {
+		t.Fatal("accepted unrelated duplicate table")
+	}
+}

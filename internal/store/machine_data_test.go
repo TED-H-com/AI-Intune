@@ -38,6 +38,11 @@ func TestEveryMachineScopedTableIsDisclosed(t *testing.T) {
 			}
 		}
 	}
+	// Lifecycle rows inherit machine scope through their recommendation FK.
+	if cols := tableColumns(t, s, "usage_recommendation_cycles"); len(cols) == 0 {
+		t.Fatal("missing lifecycle table")
+	}
+	scoped["usage_recommendation_cycles"] = true
 	declared := map[string]bool{}
 	for _, table := range MachineDataTables() {
 		if declared[table.Table] {

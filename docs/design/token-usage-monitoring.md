@@ -1,6 +1,6 @@
 # Token and Model Usage Monitoring for AI Coding CLIs
 
-Status: DRAFT — proposed design, not authorization to implement or deploy.
+Status: U-01 store foundation implemented; remaining phases are proposed, not authorization to implement or deploy.
 Owner: The admin. Scope: account inventory across installed tools; usage parsing for Claude Code and Codex CLI.
 Language: English. Implementation: later, by Codex CLI, in the PR order of §11.
 Builds on: `docs/design/HUB-PHASE2-STANDARD-OPS.md` (Phase 2) and the shipped
@@ -526,6 +526,22 @@ rationale is displayed as untrusted text. Rate limit: 20 proposals/day per token
 | U-09 (private) | Overlay config for reference fleet; canary on one workstation for a week, then fleet | Admin reviews canary numbers vs manual diagnostics |
 | U-10 (later) | Gated preview → admin approval → auto-apply; one-click rollback | Accuracy gate (§7.3), exact-diff approval, revision conflict and rollback tests |
 
+U-01 implementation notes: the store uses complete, versioned per-file snapshots
+for daily/hourly contributions, with durable `(machine, file HMAC, generation,
+offset range)` replay receipts. Appends replace the previous complete contribution;
+rewrites increment generation and may lower totals. Collectors must normalize
+cumulative counters/reset segments before upload (U-02/U-03). Per-file rows retain
+nullable measurements and percentile evidence without inventing merged percentiles.
+Session/job summaries are replacement upserts, never additive re-uploads. Account
+membership is stored per machine; unknown attribution remains machine-scoped.
+Usage policies share immutable `ops_policies` revisions; advice operations cannot
+be consumed by disk execution adapters. Recommendation decision storage supports
+Q5, including fresh approval identities for repeated decisions after an explicit
+human-admin reopen with an atomic audit event. Rule evaluation and automatic
+reopening remain U-06. Task-label columns and exposure are deliberately deferred
+to U-08. No collector, upload route, schedule,
+UI, alert, MCP tool, or application adapter is enabled by U-01.
+
 Each PR: UI + screenshots where applicable, docs, route manifest, MCP schema,
 `go test ./internal/scrubguard`. Feature enrollment stays default-off; labels default on once enabled.
 U-10 stays disabled until its accuracy gate passes. Never merge without the
@@ -617,3 +633,15 @@ admin's request.
 
 - Q9 accuracy gate parameter: ≥20 approved recommendations with verified intended
   results and no rollback over 30 days (§7.3); later-phase direction is answered.
+
+U-01 retention uses the shared scheduled and operator preview/apply pruning path.
+Without a published usage policy, default usage retention applies; until policy
+assignment exists, multiple current usage policies use the longest configured
+horizon in each class. Daily contributions, account membership and upload receipts
+use daily retention; hourly windows use window retention; sessions, jobs,
+recommendations, lifecycle rows and usage approval decisions use session retention.
+File checkpoints remain to reject stale uploads after contribution/receipt expiry.
+Legacy receipts without arrival timestamps receive the migration time. Task labels
+have no storage in U-01; their retention belongs to U-08. Shared ops_approvals rows
+are disclosed and counted by operation, with usage decisions and snooze rationales
+under usage recommendations and disk approvals under Disk clean.

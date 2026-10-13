@@ -62,10 +62,10 @@ func (s *Store) OpsApprovalsFiltered(state, machine, operation string, now time.
 	if machine != "" && !validJobReadStoredIdentifier(machine, 128) {
 		return nil, operatorError("BAD_REQUEST", "invalid machine ID")
 	}
-	if operation != "" && !diskOperationValid(operation) {
+	if operation != "" && !opsOperationValid(operation) {
 		return nil, operatorError("BAD_REQUEST", "invalid operation")
 	}
-	rows, err := s.rdb.Query(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE (?='' OR CASE WHEN state IN ('pending','approved') AND deadline<=? THEN 'expired' ELSE state END=?) AND (?='' OR machine_id=?) AND (?='' OR operation=?) ORDER BY created_at DESC,id LIMIT 500`, state, fmtTime(now), state, machine, machine, operation, operation)
+	rows, err := s.rdb.Query(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE (?='' OR machine_id=?) AND (?='' OR operation=?) AND (?='' OR CASE WHEN state IN ('pending','approved') AND store_time_key(deadline)<=store_time_key(?) THEN 'expired' ELSE state END=?) ORDER BY store_time_key(created_at) DESC,id LIMIT 500`, machine, machine, operation, operation, state, now.Format(time.RFC3339Nano), state)
 	if err != nil {
 		return nil, err
 	}
@@ -79,16 +79,33 @@ func (s *Store) OpsApprovalsFiltered(state, machine, operation string, now time.
 		if (a.State == "pending" || a.State == "approved") && !a.Deadline.After(now) {
 			a.State = "expired"
 		}
-		out = append(out, a)
+		if state == "" || a.State == state {
+			out = append(out, a)
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
+
+// The closed registry records policy domain and execution eligibility. Adding
+// advice never makes it eligible for disk dispatch or approval consumption.
+type opsOperationSpec struct {
+	PolicyKind string
+	Executable bool
+}
+
+var opsOperationRegistry = map[string]opsOperationSpec{
+	"quarantine": {"disk", true}, "delete": {"disk", true},
+	"restore": {"disk", true}, "safe-clean": {"disk", true}, "reject": {"disk", true},
+	"usage-recommendation-v1": {"usage", false},
+}
+
+func opsOperationValid(op string) bool { _, ok := opsOperationRegistry[op]; return ok }
 func diskOperationValid(op string) bool {
-	switch op {
-	case "quarantine", "delete", "restore", "safe-clean", "reject":
-		return true
-	}
-	return false
+	spec, ok := opsOperationRegistry[op]
+	return ok && spec.PolicyKind == "disk" && spec.Executable
 }
 func (s *Store) diskWriteScope(a AuditEntry) error {
 	if err := humanDiskAdmin(a); err != nil {
@@ -107,10 +124,14 @@ func (s *Store) ConfigureDiskOpsV2Writes(enabled bool) { s.diskOpsV2Writes.Store
 // createOpsApproval is a trusted operator-service entry point reserved for
 // reviewed adapters. Caller supplies exact policy and report digests.
 func (s *Store) createOpsApproval(a OpsApproval, audit AuditEntry) (OpsApproval, error) {
-	if err := s.diskWriteScope(audit); err != nil {
+	if a.Operation == "usage-recommendation-v1" {
+		if err := humanDiskAdmin(audit); err != nil {
+			return a, err
+		}
+	} else if err := s.diskWriteScope(audit); err != nil {
 		return a, err
 	}
-	if !validJobReadStoredIdentifier(a.ID, 128) || !diskOperationValid(a.Operation) || a.PolicyRevision < 1 || !validLowerSHA256Digest(a.PolicyDigest) || !validLowerSHA256Digest(a.ItemDigest) {
+	if !validJobReadStoredIdentifier(a.ID, 128) || !opsOperationValid(a.Operation) || a.PolicyRevision < 1 || !validLowerSHA256Digest(a.PolicyDigest) || !validLowerSHA256Digest(a.ItemDigest) {
 		return a, operatorError("BAD_REQUEST", "invalid approval binding")
 	}
 	now := s.now().UTC().Truncate(time.Second)
@@ -128,11 +149,39 @@ func (s *Store) createOpsApproval(a OpsApproval, audit AuditEntry) (OpsApproval,
 	}
 	defer tx.Rollback()
 	var n int
-	if err = tx.QueryRow(`SELECT COUNT(*) FROM ops_policies WHERE id=? AND revision=? AND digest=? AND superseded_at IS NULL`, a.PolicyID, a.PolicyRevision, a.PolicyDigest).Scan(&n); err != nil {
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM ops_policies WHERE id=? AND revision=? AND digest=? AND superseded_at IS NULL AND kind=?`, a.PolicyID, a.PolicyRevision, a.PolicyDigest, opsOperationPolicyKind(a.Operation)).Scan(&n); err != nil {
 		return a, err
 	}
 	if n != 1 {
 		return a, operatorError("REVISION_CONFLICT", "policy revoked")
+	}
+	if a.Operation == "usage-recommendation-v1" {
+		existing, e := scanOpsApproval(tx.QueryRow(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE id=?`, a.ID))
+		if e == nil {
+			if existing.Operation != a.Operation || existing.MachineID != a.MachineID || existing.Actor != a.Actor || existing.PolicyID != a.PolicyID || existing.PolicyRevision != a.PolicyRevision || existing.PolicyDigest != a.PolicyDigest || existing.ItemDigest != a.ItemDigest {
+				return a, ErrUsageConflict
+			}
+			audit.Action = AuditOpsApproval
+			audit.Subject = a.ID
+			audit.OK = true
+			audit.Detail = OperatorIdempotencyReplayPrefix + "usage advice receipt"
+			if err = s.recordAuditTx(tx, audit); err != nil {
+				return a, err
+			}
+			return existing, tx.Commit()
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return a, e
+		}
+	}
+	if a.Operation == "usage-recommendation-v1" {
+		var r UsageRecommendation
+		if err = tx.QueryRow(`SELECT r.id,r.evidence_digest,r.rule_version FROM usage_recommendations r LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE COALESCE(c.approval_id,r.id)=? AND r.machine_id=? AND r.state='open'`, a.ID, a.MachineID).Scan(&r.ID, &r.EvidenceDigest, &r.RuleVersion); err != nil {
+			return a, err
+		}
+		if a.ItemDigest != UsageRecommendationItemDigest(r) {
+			return a, ErrUsageConflict
+		}
 	}
 	if _, err = tx.Exec(`INSERT INTO ops_approvals(id,state,actor,machine_id,operation,policy_id,policy_revision,policy_digest,item_digest,created_at,deadline) VALUES (?,'pending',?,?,?,?,?,?,?,?,?)`, a.ID, a.Actor, a.MachineID, a.Operation, a.PolicyID, a.PolicyRevision, a.PolicyDigest, a.ItemDigest, fmtTime(now), fmtTime(a.Deadline)); err != nil {
 		return a, err
@@ -154,6 +203,9 @@ func validLowerSHA256Digest(d string) bool {
 // DecideOpsApproval requires the exact immutable binding again, including the
 // policy revision and deadline. Service-token principals fail before any lookup.
 func (s *Store) decideOpsApproval(binding OpsApproval, approve bool, audit AuditEntry) (OpsApproval, error) {
+	if !diskOperationValid(binding.Operation) {
+		return OpsApproval{}, ErrUsageInvalid
+	}
 	if err := s.diskWriteScope(audit); err != nil {
 		return OpsApproval{}, err
 	}
@@ -219,6 +271,9 @@ func (s *Store) decideOpsApproval(binding OpsApproval, approve bool, audit Audit
 // The callback is private and accepts the verified ledger binding; only reviewed
 // adapters may wrap it. P2-01 deliberately exposes no arbitrary job factory API.
 func (s *Store) consumeOpsApproval(binding OpsApproval, key string, audit AuditEntry, createJob func(dbTx, OpsApproval) (string, error)) (out OpsApproval, err error) {
+	if !diskOperationValid(binding.Operation) {
+		return out, ErrUsageInvalid
+	}
 	audit.Action = AuditOpsApproval
 	audit.Subject = binding.ID
 	audit.IdempotencyKey = key
@@ -371,3 +426,5 @@ func opsApprovalAuditDetail(a OpsApproval) string {
 		DecisionReason string    `json:"decision_reason,omitempty"`
 	}{a.ID, a.Operation, a.PolicyRevision, a.PolicyDigest, a.ItemDigest, a.State, a.JobID, a.Deadline, a.DecisionReason}))
 }
+
+func opsOperationPolicyKind(op string) string { return opsOperationRegistry[op].PolicyKind }
