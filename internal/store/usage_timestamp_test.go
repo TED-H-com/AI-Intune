@@ -27,7 +27,7 @@ func TestUsageSnapshotTimestampOrdering(t *testing.T) {
 			job := UsageJob{Fingerprint: usageTestHash, Day: "2026-10-13", Model: "gpt-5", Effort: "high", FirstSeen: whole, LastSeen: whole}
 			write := func() {
 				t.Helper()
-				for name, err := range map[string]error{"account": s.UpsertUsageAccount(account), "session": s.UpsertUsageSession(machine, session), "job": s.UpsertUsageJob(machine, job)} {
+				for name, err := range map[string]error{"account": s.UpsertUsageAccount(account.MachineID, account), "session": s.UpsertUsageSession(machine, session), "job": s.UpsertUsageJob(machine, job)} {
 					if err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
@@ -91,7 +91,7 @@ ALTER TABLE usage_jobs DROP COLUMN last_seen_ns`); err != nil {
 				account.Plan = "other"
 				session.Metrics.Calls++
 				job.Runs++
-				for name, err := range map[string]error{"account": s.UpsertUsageAccount(account), "session": s.UpsertUsageSession(machine, session), "job": s.UpsertUsageJob(machine, job)} {
+				for name, err := range map[string]error{"account": s.UpsertUsageAccount(account.MachineID, account), "session": s.UpsertUsageSession(machine, session), "job": s.UpsertUsageJob(machine, job)} {
 					if !errors.Is(err, ErrUsageConflict) {
 						t.Fatalf("%s equal timestamp: %v", name, err)
 					}

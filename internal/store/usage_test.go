@@ -124,13 +124,13 @@ func TestUsageRecordsPrivacyAndIdempotence(t *testing.T) {
 	now := s.now().UTC()
 	a := UsageAccount{AccountID: usageTestHash, MachineID: m, Provider: "openai", Plan: "pro", DiscoverySource: "status", LastSeen: now}
 	for i := 0; i < 2; i++ {
-		if e := s.UpsertUsageAccount(a); e != nil {
+		if e := s.UpsertUsageAccount(a.MachineID, a); e != nil {
 			t.Fatal(e)
 		}
 	}
 	a.LastSeen = now.Add(-time.Hour)
 	a.Plan = "free"
-	if e := s.UpsertUsageAccount(a); e != nil {
+	if e := s.UpsertUsageAccount(a.MachineID, a); e != nil {
 		t.Fatal(e)
 	}
 	accounts, e := s.UsageAccounts()
@@ -138,7 +138,7 @@ func TestUsageRecordsPrivacyAndIdempotence(t *testing.T) {
 		t.Fatal(accounts, e)
 	}
 	a.AccountID = "person@example.invalid"
-	if e = s.UpsertUsageAccount(a); e == nil {
+	if e = s.UpsertUsageAccount(a.MachineID, a); e == nil {
 		t.Fatal("accepted identity")
 	}
 	session := UsageSession{SessionHMAC: usageTestHash,
@@ -584,7 +584,7 @@ func TestUsageQuotaEvidenceAndSharedAccountMembership(t *testing.T) {
 	}
 	for _, machine := range []string{m, second} {
 		account.MachineID = machine
-		if e := s.UpsertUsageAccount(account); e != nil {
+		if e := s.UpsertUsageAccount(account.MachineID, account); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -631,7 +631,7 @@ func TestUsageEqualTimestampConflicts(t *testing.T) {
 	session := UsageSession{SessionHMAC: usageTestHash, Tool: "codex", SourceType: "exec", Start: now, End: now, Metrics: UsageMetrics{Calls: 2}}
 	job := UsageJob{Fingerprint: usageTestHash, Day: "2026-10-13", Model: "gpt-5", Effort: "high", Runs: 2, FirstSeen: now, LastSeen: now}
 	for i := 0; i < 2; i++ {
-		if err := s.UpsertUsageAccount(account); err != nil {
+		if err := s.UpsertUsageAccount(account.MachineID, account); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.UpsertUsageSession(m, session); err != nil {
@@ -644,7 +644,7 @@ func TestUsageEqualTimestampConflicts(t *testing.T) {
 	account.Plan = "free"
 	session.Metrics.Calls = 1
 	job.Runs = 1
-	for name, err := range map[string]error{"account": s.UpsertUsageAccount(account), "session": s.UpsertUsageSession(m, session), "job": s.UpsertUsageJob(m, job)} {
+	for name, err := range map[string]error{"account": s.UpsertUsageAccount(account.MachineID, account), "session": s.UpsertUsageSession(m, session), "job": s.UpsertUsageJob(m, job)} {
 		if !errors.Is(err, ErrUsageConflict) {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -664,7 +664,7 @@ func TestUsageEqualTimestampConflicts(t *testing.T) {
 	account.LastSeen = now.Add(time.Second)
 	session.End = account.LastSeen
 	job.LastSeen = account.LastSeen
-	if err = s.UpsertUsageAccount(account); err != nil {
+	if err = s.UpsertUsageAccount(account.MachineID, account); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.UpsertUsageSession(m, session); err != nil {
@@ -679,7 +679,7 @@ func TestUsageEqualTimestampConflicts(t *testing.T) {
 	session.Metrics.Calls = 2
 	job.LastSeen = now
 	job.Runs = 2
-	if err = s.UpsertUsageAccount(account); err != nil {
+	if err = s.UpsertUsageAccount(account.MachineID, account); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.UpsertUsageSession(m, session); err != nil {

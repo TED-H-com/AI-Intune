@@ -17,8 +17,13 @@ type UsageAccount struct {
 	Conflict                                                          bool
 }
 
+// The caller supplies the authenticated machine independently of uploaded data.
 // Equal timestamps require identical content digests; conflicting snapshots fail closed.
-func (s *Store) UpsertUsageAccount(a UsageAccount) error {
+func (s *Store) UpsertUsageAccount(machine string, a UsageAccount) error {
+	if !validJobReadStoredIdentifier(machine, 128) || a.MachineID != "" && a.MachineID != machine {
+		return ErrUsageInvalid
+	}
+	a.MachineID = machine
 	if !usageHash(a.AccountID) ||
 		!usageEnum(a.Provider, "anthropic", "openai", "xai", "github", "google", "other") ||
 		!usageEnum(a.Plan, "unknown", "free", "pro", "max", "plus", "team", "business", "enterprise", "other") ||

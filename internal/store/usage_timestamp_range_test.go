@@ -34,7 +34,7 @@ func TestUsageRejectsPoisonedSnapshotTimestamps(t *testing.T) {
 	account := UsageAccount{AccountID: usageTestHash, MachineID: machine, Provider: "openai", Plan: "pro", DiscoverySource: "status", LastSeen: now}
 	session := UsageSession{SessionHMAC: usageTestHash, Tool: "codex", SourceType: "exec", Start: now, End: now}
 	job := UsageJob{Fingerprint: usageTestHash, Day: "2026-10-13", Model: "gpt-5", Effort: "high", FirstSeen: now, LastSeen: now}
-	for _, err := range []error{s.UpsertUsageAccount(account), s.UpsertUsageSession(machine, session), s.UpsertUsageJob(machine, job)} {
+	for _, err := range []error{s.UpsertUsageAccount(account.MachineID, account), s.UpsertUsageSession(machine, session), s.UpsertUsageJob(machine, job)} {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func TestUsageRejectsPoisonedSnapshotTimestamps(t *testing.T) {
 		a.LastSeen = stamp
 		b.Start, b.End = stamp, stamp
 		c.FirstSeen, c.LastSeen = stamp, stamp
-		for name, err := range map[string]error{"account": s.UpsertUsageAccount(a), "session": s.UpsertUsageSession(machine, b), "job": s.UpsertUsageJob(machine, c)} {
+		for name, err := range map[string]error{"account": s.UpsertUsageAccount(a.MachineID, a), "session": s.UpsertUsageSession(machine, b), "job": s.UpsertUsageJob(machine, c)} {
 			if !errors.Is(err, ErrUsageInvalid) {
 				t.Fatalf("%s at %s: %v", name, stamp, err)
 			}
@@ -105,7 +105,7 @@ func TestUsageMigrationRejectsPoisonedTimestamp(t *testing.T) {
 			var column string
 			switch table {
 			case "usage_accounts":
-				err = s.UpsertUsageAccount(UsageAccount{AccountID: usageTestHash, MachineID: machine, Provider: "openai", Plan: "pro", DiscoverySource: "status", LastSeen: stamp})
+				err = s.UpsertUsageAccount(machine, UsageAccount{AccountID: usageTestHash, MachineID: machine, Provider: "openai", Plan: "pro", DiscoverySource: "status", LastSeen: stamp})
 				column = "last_seen_ns"
 			case "usage_sessions":
 				err = s.UpsertUsageSession(machine, UsageSession{SessionHMAC: usageTestHash, Tool: "codex", SourceType: "exec", Start: stamp, End: stamp})
