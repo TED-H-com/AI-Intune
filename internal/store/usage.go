@@ -14,6 +14,20 @@ import (
 )
 
 var ErrUsageInvalid = errors.New("store: invalid usage record")
+var ErrUsageUploadTooLarge = errors.New("store: too many usage tool-call entries")
+
+const DefaultUsageToolCallLimit = 1000
+
+// ConfigureUsageToolCallLimit sets the maximum number of ToolCalls map entries
+// across all daily and window aggregates in a single upload.
+func (s *Store) ConfigureUsageToolCallLimit(limit int) error {
+	if limit <= 0 {
+		return ErrUsageInvalid
+	}
+	s.usageToolCallLimit.Store(int64(limit))
+	return nil
+}
+
 var ErrUsageConflict = errors.New("store: usage snapshot conflict")
 
 // validateUsageTimestamp bounds instants before UnixNano conversion. A zero now
@@ -196,6 +210,18 @@ func canonicalUsageAggregates(rows []UsageAggregate) []UsageAggregate {
 // MergeUsageFile atomically replaces a complete file contribution. Replays are
 // harmless; stale/conflicting ranges fail closed. No audit contains usage bodies.
 func (s *Store) MergeUsageFile(machine string, in UsageFileSnapshot) (bool, error) {
+	remaining := s.usageToolCallLimit.Load()
+	if remaining == 0 {
+		remaining = DefaultUsageToolCallLimit
+	}
+	for _, aggregates := range [][]UsageAggregate{in.Daily, in.Window} {
+		for _, aggregate := range aggregates {
+			remaining -= int64(len(aggregate.Metrics.ToolCalls))
+			if remaining < 0 {
+				return false, ErrUsageUploadTooLarge
+			}
+		}
+	}
 	if !usageHash(in.FileHMAC) || in.Generation < 0 || in.OffsetFrom < 0 || in.OffsetTo < in.OffsetFrom {
 		return false, ErrUsageInvalid
 	}

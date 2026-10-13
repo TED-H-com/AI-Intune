@@ -370,6 +370,7 @@ type Change struct {
 // ---------------------------------------------------------------- Store
 
 type Store struct {
+	usageToolCallLimit atomic.Int64
 	diskOpsV2Writes    atomic.Bool
 	diskManifestSigner atomic.Pointer[rsa.PrivateKey]
 	// db is the single writer connection. rdb is the query-only reader pool,
