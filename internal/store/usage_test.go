@@ -249,6 +249,51 @@ func TestUsagePolicyAndAdviceLedger(t *testing.T) {
 	if n := countRows(t, s, `SELECT COUNT(*) FROM jobs`); n != 0 {
 		t.Fatal("advice dispatched job", n)
 	}
+	original := a
+	if e = s.ReopenUsageRecommendation(r.ID); !errors.Is(e, ErrUsageConflict) {
+		t.Fatal("early reopen", e)
+	}
+	for generation := int64(1); generation <= 2; generation++ {
+		cycleNow := reopen
+		s.nowFn = func() time.Time { return cycleNow }
+		if e = s.ReopenUsageRecommendation(r.ID); e != nil {
+			t.Fatal(e)
+		}
+		records, err := s.UsageRecommendations(m)
+		if err != nil || len(records) != 1 || records[0].Generation != generation || records[0].ApprovalID == original.ID {
+			t.Fatal(records, err)
+		}
+		binding.ID = records[0].ApprovalID
+		a, e = s.CreateOpsApproval(binding, diskAdmin())
+		if e != nil || a.State != "pending" {
+			t.Fatal(a, e)
+		}
+		replay, err := s.CreateOpsApproval(binding, diskAdmin())
+		if err != nil || replay.ID != a.ID {
+			t.Fatal(replay, err)
+		}
+		// A stale cycle cannot apply a different decision to the reopened record.
+		if _, err = s.DecideUsageRecommendation(original, "approved", "old cycle", nil, diskAdmin()); !errors.Is(err, ErrUsageConflict) {
+			t.Fatal(err)
+		}
+		if generation == 1 {
+			reopen = reopen.Add(time.Hour)
+			a, e = s.DecideUsageRecommendation(a, "snoozed", "review later", &reopen, diskAdmin())
+		} else {
+			a, e = s.DecideUsageRecommendation(a, "approved", "looks good", nil, diskAdmin())
+		}
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	history, err := scanOpsApproval(s.rdb.QueryRow(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE id=?`, original.ID))
+	if err != nil || history.State != original.State || history.DecisionReason != original.DecisionReason || !history.DecidedAt.Equal(*original.DecidedAt) {
+		t.Fatal(history, err)
+	}
+	if n := countRows(t, s, `SELECT COUNT(*) FROM ops_approvals WHERE operation='usage-recommendation-v1'`); n != 3 {
+		t.Fatal(n)
+	}
+
 }
 func TestUsageLegacyMigrationAndReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ledger.db")
@@ -431,16 +476,14 @@ func TestUsageDecisionsAndBindingDenials(t *testing.T) {
 				t.Fatal(n)
 			}
 			called := false
-			if _,
-				e = s.consumeOpsApproval(out,
+			if _, e = s.consumeOpsApproval(out,
 				"advice-dispatch",
 				diskAdmin(),
 				func(dbTx,
 					OpsApproval) (string,
 					error) {
 					called = true
-					return "",
-						nil
+					return "", nil
 				}); e == nil || called {
 				t.Fatal("advice reached job factory")
 			}
@@ -451,8 +494,7 @@ func TestUsageDecisionsAndBindingDenials(t *testing.T) {
 func TestUsageMigrationPreservesExistingApproval(t *testing.T) {
 	s, _, policy, now := diskPolicyFixture(t)
 	machine := mustEnroll(t, s, "legacy-disk", now)
-	a,
-		e := s.CreateOpsApproval(OpsApproval{ID: "legacy-approval",
+	a, e := s.CreateOpsApproval(OpsApproval{ID: "legacy-approval",
 		MachineID:      machine,
 		Operation:      "quarantine",
 		PolicyID:       policy.Policy.ID,
@@ -581,5 +623,83 @@ func TestUsageQuotaEvidenceAndSharedAccountMembership(t *testing.T) {
 	defaults := DefaultUsagePolicy()
 	if defaults.LinuxNice != 19 || defaults.LinuxIOClass != 3 || defaults.WindowsPriority != "below-normal" || !defaults.WindowsLowIOPriority {
 		t.Fatal(defaults)
+	}
+}
+
+func TestUsageEqualTimestampConflicts(t *testing.T) {
+	s, m, _ := usageFixture(t)
+	now := s.now().UTC().Truncate(time.Second)
+	account := UsageAccount{AccountID: usageTestHash, MachineID: m, Provider: "openai", Plan: "pro", DiscoverySource: "status", LastSeen: now}
+	session := UsageSession{SessionHMAC: usageTestHash, Tool: "codex", SourceType: "exec", Start: now, End: now, Metrics: UsageMetrics{Calls: 2}}
+	job := UsageJob{Fingerprint: usageTestHash, Day: "2026-10-13", Model: "gpt-5", Effort: "high", Runs: 2, FirstSeen: now, LastSeen: now}
+	for i := 0; i < 2; i++ {
+		if err := s.UpsertUsageAccount(account); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpsertUsageSession(m, session); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpsertUsageJob(m, job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	account.Plan = "free"
+	session.Metrics.Calls = 1
+	job.Runs = 1
+	for name, err := range map[string]error{"account": s.UpsertUsageAccount(account), "session": s.UpsertUsageSession(m, session), "job": s.UpsertUsageJob(m, job)} {
+		if !errors.Is(err, ErrUsageConflict) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	accounts, err := s.UsageAccounts()
+	if err != nil || accounts[0].Plan != "pro" {
+		t.Fatal(accounts, err)
+	}
+	sessions, err := s.UsageSessions(m)
+	if err != nil || sessions[0].Metrics.Calls != 2 {
+		t.Fatal(sessions, err)
+	}
+	jobs, err := s.UsageJobs(m)
+	if err != nil || jobs[0].Runs != 2 {
+		t.Fatal(jobs, err)
+	}
+	account.LastSeen = now.Add(time.Second)
+	session.End = account.LastSeen
+	job.LastSeen = account.LastSeen
+	if err = s.UpsertUsageAccount(account); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpsertUsageSession(m, session); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpsertUsageJob(m, job); err != nil {
+		t.Fatal(err)
+	}
+	account.LastSeen = now
+	account.Plan = "pro"
+	session.End = now
+	session.Metrics.Calls = 2
+	job.LastSeen = now
+	job.Runs = 2
+	if err = s.UpsertUsageAccount(account); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpsertUsageSession(m, session); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpsertUsageJob(m, job); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err = s.UsageAccounts()
+	if err != nil || accounts[0].Plan != "free" {
+		t.Fatal(accounts, err)
+	}
+	sessions, err = s.UsageSessions(m)
+	if err != nil || sessions[0].Metrics.Calls != 1 {
+		t.Fatal(sessions, err)
+	}
+	jobs, err = s.UsageJobs(m)
+	if err != nil || jobs[0].Runs != 1 {
+		t.Fatal(jobs, err)
 	}
 }

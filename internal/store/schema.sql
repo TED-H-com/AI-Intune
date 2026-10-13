@@ -1792,3 +1792,17 @@ CREATE TRIGGER IF NOT EXISTS usage_recommendation_state_transition BEFORE UPDATE
  (OLD.state='open' AND NEW.state IN ('approved','dismissed','snoozed','expired','superseded')) OR
  (OLD.state='snoozed' AND NEW.state IN ('open','expired','superseded')))
  BEGIN SELECT RAISE(ABORT,'invalid usage recommendation transition'); END;
+
+-- Separate lifecycle identities preserve every prior approval receipt.
+CREATE TABLE IF NOT EXISTS usage_recommendation_cycles (
+ recommendation_id TEXT PRIMARY KEY REFERENCES usage_recommendations(id) ON DELETE CASCADE,
+ generation INTEGER NOT NULL CHECK(generation>0), approval_id TEXT NOT NULL UNIQUE
+);
+CREATE TRIGGER IF NOT EXISTS usage_recommendation_reopen_cycle
+ AFTER UPDATE OF state ON usage_recommendations
+ WHEN OLD.state='snoozed' AND NEW.state='open'
+ BEGIN
+ INSERT INTO usage_recommendation_cycles VALUES (NEW.id,1,NEW.id || ':reopen:1')
+ ON CONFLICT(recommendation_id) DO UPDATE SET
+ generation=generation+1, approval_id=NEW.id || ':reopen:' || (generation+1);
+ END;

@@ -122,8 +122,7 @@ func (s *Store) publishUsagePolicy(id string, expected int64, p UsagePolicy, pre
 	body := mustScriptJSON(p)
 	newDigest := digestOf(string(body))
 	if digest == newDigest && (revision == expected || revision == expected+1) {
-		out,
-			e = scanOpsPolicy(tx.QueryRow(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies WHERE id=? AND revision=?`,
+		out, e = scanOpsPolicy(tx.QueryRow(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies WHERE id=? AND revision=?`,
 			id,
 			revision))
 		if e != nil {
@@ -152,8 +151,7 @@ func (s *Store) publishUsagePolicy(id string, expected int64, p UsagePolicy, pre
 	if _, e = tx.Exec(`UPDATE ops_policies SET superseded_at=? WHERE id=? AND superseded_at IS NULL`, fmtTime(now), id); e != nil {
 		return out, e
 	}
-	if _,
-		e = tx.Exec(`INSERT INTO ops_policies VALUES (?,'usage',?,?,?,?,?,NULL)`,
+	if _, e = tx.Exec(`INSERT INTO ops_policies VALUES (?,'usage',?,?,?,?,?,NULL)`,
 		id,
 		out.Revision,
 		string(body),

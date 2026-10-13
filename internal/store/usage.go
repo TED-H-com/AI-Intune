@@ -227,8 +227,7 @@ generation=excluded.generation, offset_to=excluded.offset_to, digest=excluded.di
 		}
 		for _, a := range rows {
 			body, _ := json.Marshal(a.Metrics)
-			_,
-				e = tx.Exec(`INSERT INTO `+table+` (machine_id,file_hmac,tool,account_id,model,effort,effort_source,source_type,`+col+`,project_hmac,metrics) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			_, e = tx.Exec(`INSERT INTO `+table+` (machine_id,file_hmac,tool,account_id,model,effort,effort_source,source_type,`+col+`,project_hmac,metrics) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 				machine,
 				in.FileHMAC,
 				a.Tool,
@@ -245,8 +244,7 @@ generation=excluded.generation, offset_to=excluded.offset_to, digest=excluded.di
 			}
 		}
 	}
-	if _,
-		e = tx.Exec(`INSERT INTO usage_upload_receipts VALUES (?,?,?,?,?,?)`,
+	if _, e = tx.Exec(`INSERT INTO usage_upload_receipts VALUES (?,?,?,?,?,?)`,
 		machine,
 		in.FileHMAC,
 		in.Generation,
@@ -265,8 +263,7 @@ func (s *Store) UsageContributions(machine string, window bool) ([]UsageAggregat
 	if window {
 		table, col = "usage_window", "hour"
 	}
-	rows,
-		e := s.rdb.Query(`SELECT tool,account_id,model,effort,effort_source,source_type,`+col+`,project_hmac,metrics FROM `+table+` WHERE machine_id=? ORDER BY `+col+`,file_hmac`,
+	rows, e := s.rdb.Query(`SELECT tool,account_id,model,effort,effort_source,source_type,`+col+`,project_hmac,metrics FROM `+table+` WHERE machine_id=? ORDER BY `+col+`,file_hmac`,
 		machine)
 	if e != nil {
 		return nil, e

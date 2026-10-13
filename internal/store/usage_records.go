@@ -16,6 +16,7 @@ type UsageAccount struct {
 	Conflict                                                          bool
 }
 
+// Equal timestamps require identical content digests; conflicting snapshots fail closed.
 func (s *Store) UpsertUsageAccount(a UsageAccount) error {
 	if !usageHash(a.AccountID) ||
 		!usageEnum(a.Provider, "anthropic", "openai", "xai", "github", "google", "other") ||
@@ -31,6 +32,22 @@ func (s *Store) UpsertUsageAccount(a UsageAccount) error {
 		return e
 	}
 	defer tx.Rollback()
+	var old UsageAccount
+	var seen string
+	e = tx.QueryRow(`SELECT account_id,machine_id,provider,plan,discovery_source,last_seen,conflict,COALESCE(pinned_plan,'') FROM usage_accounts WHERE account_id=? AND machine_id=?`, a.AccountID, a.MachineID).Scan(&old.AccountID, &old.MachineID, &old.Provider, &old.Plan, &old.DiscoverySource, &seen, &old.Conflict, &old.PinnedPlan)
+	if e == nil && seen == fmtTime(a.LastSeen) {
+		old.LastSeen = a.LastSeen
+		if a.PinnedPlan == "" {
+			a.PinnedPlan = old.PinnedPlan
+		}
+		if digestOf(string(mustScriptJSON(old))) != digestOf(string(mustScriptJSON(a))) {
+			return ErrUsageConflict
+		}
+		return nil
+	}
+	if e != nil && !errors.Is(e, sql.ErrNoRows) {
+		return e
+	}
 	_, e = tx.Exec(`INSERT INTO usage_accounts(account_id, machine_id, provider, plan, discovery_source, last_seen,
 conflict, pinned_plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id, machine_id) DO UPDATE
 SET provider=excluded.provider, plan=excluded.plan, discovery_source=excluded.discovery_source,
@@ -114,6 +131,22 @@ func (s *Store) UpsertUsageSession(machine string, a UsageSession) error {
 		return e
 	}
 	defer tx.Rollback()
+	var raw string
+	e = tx.QueryRow(`SELECT body FROM usage_sessions WHERE machine_id=? AND session_hmac=?`, machine, a.SessionHMAC).Scan(&raw)
+	if e == nil {
+		var old UsageSession
+		if e = json.Unmarshal([]byte(raw), &old); e != nil {
+			return e
+		}
+		if old.End.Equal(a.End) {
+			if digestOf(string(mustScriptJSON(old))) != digestOf(string(mustScriptJSON(a))) {
+				return ErrUsageConflict
+			}
+			return nil
+		}
+	} else if !errors.Is(e, sql.ErrNoRows) {
+		return e
+	}
 	_, e = tx.Exec(`INSERT INTO usage_sessions VALUES (?, ?, ?, ?) ON CONFLICT(machine_id, session_hmac) DO UPDATE SET
 body=excluded.body, updated_at=excluded.updated_at WHERE json_extract(excluded.body,
 '$.End')>=json_extract(usage_sessions.body, '$.End')`, machine, a.SessionHMAC, string(mustScriptJSON(a)), fmtTime(s.now().UTC()))
@@ -169,6 +202,22 @@ func (s *Store) UpsertUsageJob(machine string, a UsageJob) error {
 		return e
 	}
 	defer tx.Rollback()
+	var raw string
+	e = tx.QueryRow(`SELECT body FROM usage_jobs WHERE machine_id=? AND fingerprint=? AND day=?`, machine, a.Fingerprint, a.Day).Scan(&raw)
+	if e == nil {
+		var old UsageJob
+		if e = json.Unmarshal([]byte(raw), &old); e != nil {
+			return e
+		}
+		if old.LastSeen.Equal(a.LastSeen) {
+			if digestOf(string(mustScriptJSON(old))) != digestOf(string(mustScriptJSON(a))) {
+				return ErrUsageConflict
+			}
+			return nil
+		}
+	} else if !errors.Is(e, sql.ErrNoRows) {
+		return e
+	}
 	_, e = tx.Exec(`INSERT INTO usage_jobs VALUES (?, ?, ?, ?) ON CONFLICT(machine_id, fingerprint, day) DO UPDATE SET
 body=excluded.body WHERE json_extract(excluded.body, '$.LastSeen')>=json_extract(usage_jobs.body,
 '$.LastSeen')`, machine, a.Fingerprint, a.Day, string(mustScriptJSON(a)))
@@ -275,8 +324,7 @@ WHERE id=?`,
 	if !errors.Is(e, sql.ErrNoRows) {
 		return e
 	}
-	_,
-		e = tx.Exec(`INSERT INTO usage_recommendations VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'open',NULL,?,?)`,
+	_, e = tx.Exec(`INSERT INTO usage_recommendations VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'open',NULL,?,?)`,
 		a.ID,
 		a.RuleID,
 		a.RuleVersion,
@@ -300,15 +348,18 @@ WHERE id=?`,
 // UsageRecommendationRecord adds lifecycle metadata to immutable evidence.
 type UsageRecommendationRecord struct {
 	UsageRecommendation
-	State     string
-	ReopenAt  *time.Time
-	CreatedAt time.Time
+	ApprovalID string
+	Generation int64
+	State      string
+	ReopenAt   *time.Time
+	CreatedAt  time.Time
 }
 
 func (s *Store) UsageRecommendations(machine string) ([]UsageRecommendationRecord, error) {
-	rows, e := s.rdb.Query(`SELECT id, rule_id, rule_version, machine_id, scope, scope_hmac, evidence_digest, evidence_start,
+	rows, e := s.rdb.Query(`SELECT r.id, rule_id, rule_version, machine_id, scope, scope_hmac, evidence_digest, evidence_start,
 evidence_end, est_savings_tokens, est_savings_usd, confidence, proposer, state, reopen_at,
-created_at FROM usage_recommendations WHERE machine_id=? ORDER BY created_at, id LIMIT 500`, machine)
+created_at, COALESCE(c.approval_id,r.id), COALESCE(c.generation,0) FROM usage_recommendations r
+LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machine_id=? ORDER BY created_at, r.id LIMIT 500`, machine)
 	if e != nil {
 		return nil, e
 	}
@@ -333,7 +384,7 @@ created_at FROM usage_recommendations WHERE machine_id=? ORDER BY created_at, id
 			&a.Proposer,
 			&a.State,
 			&reopen,
-			&created); e != nil {
+			&created, &a.ApprovalID, &a.Generation); e != nil {
 			return nil, e
 		}
 		a.EvidenceStart = parseTime(start)
@@ -346,4 +397,26 @@ created_at FROM usage_recommendations WHERE machine_id=? ORDER BY created_at, id
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// ReopenUsageRecommendation starts a fresh decision cycle once its snooze is due.
+// Immutable evidence and previous approval receipts remain untouched.
+func (s *Store) ReopenUsageRecommendation(id string) error {
+	tx, err := s.beginWrite(context.Background(), "usage_reopen")
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE usage_recommendations SET state='open',reopen_at=NULL WHERE id=? AND state='snoozed' AND reopen_at<=?`, id, fmtTime(s.now().UTC()))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrUsageConflict
+	}
+	return tx.Commit()
 }

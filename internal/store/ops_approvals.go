@@ -171,7 +171,7 @@ func (s *Store) createOpsApproval(a OpsApproval, audit AuditEntry) (OpsApproval,
 	}
 	if a.Operation == "usage-recommendation-v1" {
 		var r UsageRecommendation
-		if err = tx.QueryRow(`SELECT id,evidence_digest,rule_version FROM usage_recommendations WHERE id=? AND machine_id=? AND state='open'`, a.ID, a.MachineID).Scan(&r.ID, &r.EvidenceDigest, &r.RuleVersion); err != nil {
+		if err = tx.QueryRow(`SELECT r.id,r.evidence_digest,r.rule_version FROM usage_recommendations r LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE COALESCE(c.approval_id,r.id)=? AND r.machine_id=? AND r.state='open'`, a.ID, a.MachineID).Scan(&r.ID, &r.EvidenceDigest, &r.RuleVersion); err != nil {
 			return a, err
 		}
 		if a.ItemDigest != UsageRecommendationItemDigest(r) {

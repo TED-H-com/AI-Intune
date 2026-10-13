@@ -76,7 +76,7 @@ func (s *Store) decideUsageRecommendation(binding OpsApproval, decision, reason 
 	if current != 1 {
 		return out, ErrUsageConflict
 	}
-	result, e := tx.Exec(`UPDATE usage_recommendations SET state=?,reopen_at=? WHERE id=? AND state='open'`, decision, optionalUsageTime(reopen), out.ID)
+	result, e := tx.Exec(`UPDATE usage_recommendations SET state=?,reopen_at=? WHERE id=(SELECT r.id FROM usage_recommendations r LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE COALESCE(c.approval_id,r.id)=?) AND state='open'`, decision, optionalUsageTime(reopen), out.ID)
 	if e != nil {
 		return out, e
 	}
@@ -87,8 +87,7 @@ func (s *Store) decideUsageRecommendation(binding OpsApproval, decision, reason 
 	if n != 1 {
 		return out, ErrUsageConflict
 	}
-	_,
-		e = tx.Exec(`UPDATE ops_approvals SET state=?,decision_actor=?,decided_at=?,decision_reason=? WHERE id=?`,
+	_, e = tx.Exec(`UPDATE ops_approvals SET state=?,decision_actor=?,decided_at=?,decision_reason=? WHERE id=?`,
 		ledgerState,
 		audit.AuthSubject,
 		fmtTime(now),
