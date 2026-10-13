@@ -211,3 +211,55 @@ func TestUsagePruneUsesPublishedPolicy(t *testing.T) {
 		t.Fatal("replay resurrected", rows, err)
 	}
 }
+
+func TestUsageAppendAfterPruneDoesNotRestoreExpiredContributions(t *testing.T) {
+	for _, published := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default", true: "published"}[published], func(t *testing.T) {
+			s, machine, in := usageFixture(t)
+			now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+			s.nowFn = func() time.Time { return now }
+			p := DefaultUsagePolicy()
+			if published {
+				p.WindowRetentionDays = 3
+				digest, err := UsagePolicyPreviewDigest("short-window", 0, p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = s.PublishUsagePolicy("short-window", 0, p, digest, diskAdmin()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			in.Window = append([]UsageAggregate(nil), in.Daily...)
+			in.Window[0].Period = now.Format(time.RFC3339)
+			if changed, err := s.MergeUsageFile(machine, in); err != nil || !changed {
+				t.Fatal(changed, err)
+			}
+			now = now.Add(time.Duration(p.WindowRetentionDays)*24*time.Hour + time.Hour)
+			if _, err := s.Prune(now, DefaultRetention(), false); err != nil {
+				t.Fatal(err)
+			}
+			next := in
+			next.OffsetFrom = in.OffsetTo
+			next.OffsetTo++
+			recent := in.Window[0]
+			recent.Period = now.Format(time.RFC3339)
+			next.Window = append(append([]UsageAggregate(nil), in.Window...), recent)
+			for _, generation := range []int64{0, 1} {
+				next.Generation = generation
+				if generation == 1 {
+					next.OffsetFrom = 0
+				}
+				if changed, err := s.MergeUsageFile(machine, next); err != nil || !changed {
+					t.Fatal(changed, err)
+				}
+				rows, err := s.UsageContributions(machine, true)
+				if err != nil || len(rows) != 1 || rows[0].Period != recent.Period {
+					t.Fatal("expired hours restored", rows, err)
+				}
+				if changed, err := s.MergeUsageFile(machine, next); err != nil || changed {
+					t.Fatal("replay", changed, err)
+				}
+			}
+		})
+	}
+}

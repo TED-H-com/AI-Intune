@@ -480,7 +480,7 @@ func TestEveryDisclosedCategoryCarriesThePinnedSentences(t *testing.T) {
 				t.Errorf("資料來源句子的實際值=%q，期望值=%q", category.SourceSentence, wantSource)
 			}
 
-			retentionHeads[DataRetentionUsagePolicy] = "Usage policy retention: daily contributions, accounts and receipts use DailyRetentionDays; windows use WindowRetentionDays; sessions, jobs, recommendations and usage approvals use SessionRetentionDays. File replay checkpoints remain; task labels are not stored."
+			retentionHeads[DataRetentionUsagePolicy] = "Usage policy retention: daily contributions, accounts and receipts use DailyRetentionDays; windows use WindowRetentionDays; sessions, jobs, recommendations and usage approvals use SessionRetentionDays. Snoozed recommendations and their current approvals remain until SessionRetentionDays after reopen_at. File replay checkpoints remain; task labels are not stored."
 			retirementSentences[DataRetentionUsagePolicy] = "Expired usage rows continue to be pruned after retirement; file replay checkpoints remain."
 			retentionHead, knownRetention := retentionHeads[category.Retention.Kind]
 			wantRetirement, knownRetirement := retirementSentences[category.Retention.Kind]

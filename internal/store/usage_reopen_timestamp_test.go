@@ -7,7 +7,7 @@ import (
 )
 
 func TestUsageFractionalReopen(t *testing.T) {
-	for _, delta := range []time.Duration{100 * time.Millisecond, 100*time.Millisecond + time.Nanosecond, time.Nanosecond} {
+	for _, delta := range []time.Duration{100 * time.Millisecond, 100*time.Millisecond + time.Nanosecond, time.Nanosecond, 180 * 24 * time.Hour} {
 		t.Run(delta.String(), func(t *testing.T) {
 			s, machine, _ := usageFixture(t)
 			now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
@@ -54,6 +54,18 @@ func TestUsageFractionalReopen(t *testing.T) {
 					t.Fatal("early cycle", n)
 				}
 			}
+			// Retention must leave both recommendation and approval available at the reopen time.
+			preview, err := s.Prune(reopen, DefaultRetention(), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := s.Prune(reopen, DefaultRetention(), false)
+			if err != nil || preview.Total() != actual.Total() {
+				t.Fatal(preview, actual, err)
+			}
+			if n := countRows(t, s, `SELECT count(*) FROM ops_approvals WHERE operation='usage-recommendation-v1'`); n != 1 {
+				t.Fatal("lost snooze approval", n)
+			}
 			now = reopen
 			if err := s.ReopenUsageRecommendation(r.ID, diskAdmin()); err != nil {
 				t.Fatal(err)
@@ -81,6 +93,16 @@ func TestUsageFractionalReopen(t *testing.T) {
 			h, err := s.machineDataHolding(MachineDataTable{Table: "usage_recommendation_cycles"}, other)
 			if err != nil || h.Rows != 0 {
 				t.Fatal(h, err)
+			}
+			// Once the snooze has reopened, normal retention still removes the
+			// recommendation, its lifecycle row, and the old approval evidence.
+			if _, err := s.Prune(reopen.Add(91*24*time.Hour), DefaultRetention(), false); err != nil {
+				t.Fatal(err)
+			}
+			for _, table := range []string{"usage_recommendations", "usage_recommendation_cycles", "ops_approvals"} {
+				if n := countRows(t, s, "SELECT count(*) FROM "+table); n != 0 {
+					t.Fatal("expired lifecycle retained", table, n)
+				}
 			}
 		})
 	}

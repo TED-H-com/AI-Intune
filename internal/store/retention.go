@@ -278,8 +278,13 @@ func (j pruneJob) where() (del, kept string) {
 	// ⚠ 兩條從同一個字串生出來，一個是另一個的 NOT。
 	// 各自手寫的兩句 SQL 會慢慢漂開，然後「留了幾筆」就開始說謊。
 	if j.usageHorizon != 0 {
+		if j.table == "usage_recommendations" {
+			return `julianday(MAX(created_at, COALESCE(reopen_at, created_at))) < julianday(?)`, `julianday(MAX(created_at, COALESCE(reopen_at, created_at))) < julianday(?) AND 0`
+		}
 		if j.table == "ops_approvals" {
-			return fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND (%s)`, j.table, j.cutCol, keep), fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND 0`, j.table, j.cutCol)
+			// Match recommendation expiry in previews as well as deletion runs.
+			stamp := `MAX(ops_approvals.created_at, COALESCE((SELECT r.reopen_at FROM usage_recommendations r LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE COALESCE(c.approval_id,r.id)=ops_approvals.id), ops_approvals.created_at))`
+			return fmt.Sprintf(`julianday(%s) < julianday(?) AND (%s)`, stamp, keep), fmt.Sprintf(`julianday(%s) < julianday(?) AND 0`, stamp)
 		}
 		return fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND (%s)`, j.table, j.cutCol, keep), fmt.Sprintf(`julianday(%s.%s) < julianday(?) AND NOT (%s)`, j.table, j.cutCol, keep)
 	}

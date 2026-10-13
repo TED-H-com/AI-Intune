@@ -279,6 +279,10 @@ generation=excluded.generation, offset_to=excluded.offset_to, digest=excluded.di
 		digest); e != nil {
 		return false, e
 	}
+	jobs, e := usagePruneJobs(tx)
+	if e != nil {
+		return false, e
+	}
 	for i, rows := range [][]UsageAggregate{in.Daily, in.Window} {
 		table, col := "usage_daily", "day"
 		if i == 1 {
@@ -288,6 +292,14 @@ generation=excluded.generation, offset_to=excluded.offset_to, digest=excluded.di
 			return false, e
 		}
 		for _, a := range rows {
+			// Keep the digest of the complete snapshot, but never restore expired contributions.
+			period, _ := time.Parse("2006-01-02", a.Period)
+			if i == 1 {
+				period, _ = time.Parse(time.RFC3339, a.Period)
+			}
+			if period.Before(now.Add(-jobs[i].usageHorizon).Truncate(time.Second)) {
+				continue
+			}
 			body, _ := json.Marshal(a.Metrics)
 			_, e = tx.Exec(`INSERT INTO `+table+` (machine_id,file_hmac,tool,account_id,model,effort,effort_source,source_type,`+col+`,project_hmac,metrics) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 				machine,

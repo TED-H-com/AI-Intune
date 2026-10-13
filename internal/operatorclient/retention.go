@@ -238,7 +238,7 @@ func canonicalRetentionResponseTime(value time.Time) bool {
 func validateRetentionCounts(counts []store.PruneCount, evaluatedAt time.Time,
 	policy store.OperatorRetentionPolicy, total, kept int64,
 ) error {
-	if counts == nil || len(counts) != 5 || total < 0 || kept < 0 {
+	if counts == nil || len(counts) != 13 || total < 0 || kept < 0 {
 		return errors.New("operator client: retention counts are incomplete")
 	}
 	want := []struct {
@@ -251,10 +251,16 @@ func validateRetentionCounts(counts []store.PruneCount, evaluatedAt time.Time,
 		{"canary_silent_failures", policy.ObservationsSeconds},
 		{"notifications", policy.ObservationsSeconds},
 	}
+	for _, name := range []string{"usage_daily", "usage_window", "usage_sessions", "usage_jobs", "usage_accounts", "usage_upload_receipts", "usage_recommendations", "ops_approvals"} {
+		want = append(want, struct {
+			name    string
+			seconds int64
+		}{name, 0})
+	}
 	var gotTotal, gotKept int64
 	for i, item := range counts {
 		if item.Table != want[i].name || item.Deleted < 0 || item.Kept < 0 ||
-			!item.Older.Equal(evaluatedAt.Add(-time.Duration(want[i].seconds)*time.Second)) {
+			!validRetentionBoundary(item.Older, evaluatedAt, want[i].seconds) {
 			return errors.New("operator client: retention count boundary is invalid")
 		}
 		gotTotal += item.Deleted
@@ -264,4 +270,12 @@ func validateRetentionCounts(counts []store.PruneCount, evaluatedAt time.Time,
 		return errors.New("operator client: retention count totals are inconsistent")
 	}
 	return nil
+}
+
+func validRetentionBoundary(older, at time.Time, seconds int64) bool {
+	if seconds != 0 {
+		return older.Equal(at.Add(-time.Duration(seconds) * time.Second))
+	}
+	horizon := at.Sub(older)
+	return older.Location() == time.UTC && horizon >= 24*time.Hour && horizon%(24*time.Hour) == 0
 }

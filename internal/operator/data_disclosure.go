@@ -82,7 +82,7 @@ func DataRetentionSentence(retention DataRetention) string {
 	case DataRetentionTimed:
 		head = fmt.Sprintf("留 %d 天，每一組最新的那一列永遠留著。", retention.Days)
 	case DataRetentionUsagePolicy:
-		return "Usage policy retention: daily contributions, accounts and receipts use DailyRetentionDays; windows use WindowRetentionDays; sessions, jobs, recommendations and usage approvals use SessionRetentionDays. File replay checkpoints remain; task labels are not stored."
+		return "Usage policy retention: daily contributions, accounts and receipts use DailyRetentionDays; windows use WindowRetentionDays; sessions, jobs, recommendations and usage approvals use SessionRetentionDays. Snoozed recommendations and their current approvals remain until SessionRetentionDays after reopen_at. File replay checkpoints remain; task labels are not stored."
 	case DataRetentionKept:
 		head = "不按時間清。"
 	default:
