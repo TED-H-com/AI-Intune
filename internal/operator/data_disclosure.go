@@ -58,7 +58,8 @@ const (
 	// DataRetentionTimed：保留期到了就清，每一組最新的那一列除外。
 	DataRetentionTimed DataRetentionKind = "timed"
 	// DataRetentionKept：不按時間清。
-	DataRetentionKept DataRetentionKind = "kept"
+	DataRetentionKept        DataRetentionKind = "kept"
+	DataRetentionUsagePolicy DataRetentionKind = "usage_policy"
 )
 
 // DataRetention 是一類資料留多久。
@@ -80,6 +81,8 @@ func DataRetentionSentence(retention DataRetention) string {
 	switch retention.Kind {
 	case DataRetentionTimed:
 		head = fmt.Sprintf("留 %d 天，每一組最新的那一列永遠留著。", retention.Days)
+	case DataRetentionUsagePolicy:
+		return "Usage policy retention: daily contributions, accounts and receipts use DailyRetentionDays; windows use WindowRetentionDays; sessions, jobs, recommendations and usage approvals use SessionRetentionDays. Snoozed recommendations and their current approvals remain until SessionRetentionDays after reopen_at. File replay checkpoints remain; task labels are not stored."
 	case DataRetentionKept:
 		head = "不按時間清。"
 	default:
@@ -100,6 +103,8 @@ func DataRetirementSentence(retention DataRetention) string {
 	switch retention.Kind {
 	case DataRetentionTimed:
 		return "退役不刪列，但不再有新的一列；現有的照上面那個天數自然到期。"
+	case DataRetentionUsagePolicy:
+		return "Expired usage rows continue to be pruned after retirement; file replay checkpoints remain."
 	case DataRetentionKept:
 		return "退役不刪列，也不再有新的一列；現有的留著。"
 	default:
@@ -111,20 +116,22 @@ func DataRetirementSentence(retention DataRetention) string {
 type DataCategoryKey string
 
 const (
-	DataCategoryRegistry      DataCategoryKey = "registry"
-	DataCategoryIdentity      DataCategoryKey = "identity"
-	DataCategoryCheckins      DataCategoryKey = "checkins"
-	DataCategoryObservations  DataCategoryKey = "observations"
-	DataCategoryTickets       DataCategoryKey = "tickets"
-	DataCategoryCredentials   DataCategoryKey = "credentials"
-	DataCategoryVerifications DataCategoryKey = "verifications"
-	DataCategoryState         DataCategoryKey = "state"
-	DataCategoryWorkload      DataCategoryKey = "workload"
-	DataCategoryCanary        DataCategoryKey = "canary"
-	DataCategoryJobs          DataCategoryKey = "jobs"
-	DataCategoryDiskClean     DataCategoryKey = "disk_clean"
-	DataCategoryAssignments   DataCategoryKey = "assignments"
-	DataCategoryAudit         DataCategoryKey = "audit"
+	DataCategoryRegistry             DataCategoryKey = "registry"
+	DataCategoryIdentity             DataCategoryKey = "identity"
+	DataCategoryCheckins             DataCategoryKey = "checkins"
+	DataCategoryObservations         DataCategoryKey = "observations"
+	DataCategoryTickets              DataCategoryKey = "tickets"
+	DataCategoryCredentials          DataCategoryKey = "credentials"
+	DataCategoryVerifications        DataCategoryKey = "verifications"
+	DataCategoryState                DataCategoryKey = "state"
+	DataCategoryWorkload             DataCategoryKey = "workload"
+	DataCategoryCanary               DataCategoryKey = "canary"
+	DataCategoryJobs                 DataCategoryKey = "jobs"
+	DataCategoryDiskClean            DataCategoryKey = "disk_clean"
+	DataCategoryAssignments          DataCategoryKey = "assignments"
+	DataCategoryAudit                DataCategoryKey = "audit"
+	DataCategoryUsageRecords         DataCategoryKey = "usage_records"
+	DataCategoryUsageRecommendations DataCategoryKey = "usage_recommendations"
 )
 
 // DataCategory 是揭露面上的一列。
@@ -173,10 +180,29 @@ var dataCategoryOrder = []DataCategoryKey{
 	DataCategoryCheckins, DataCategoryObservations, DataCategoryTickets,
 	DataCategoryCredentials, DataCategoryVerifications,
 	DataCategoryState, DataCategoryWorkload, DataCategoryCanary,
-	DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments, DataCategoryAudit,
+	DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments,
+	DataCategoryUsageRecords, DataCategoryUsageRecommendations, DataCategoryAudit,
 }
 
 var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
+	DataCategoryUsageRecords: {
+		title:  "AI usage records",
+		holds:  "Hashed account membership and session or job identifiers, token and call counts, usage estimates, collection freshness, and upload replay receipts. No credentials, prompts, paths, or task labels are stored.",
+		source: DataSourceMachine,
+		tables: []string{
+			"usage_accounts", "usage_files", "usage_upload_receipts",
+			"usage_daily", "usage_window", "usage_sessions", "usage_jobs",
+		},
+		path: "/machines",
+	},
+	DataCategoryUsageRecommendations: {
+		title:    "AI usage recommendations",
+		freeText: "Human review decisions and snooze rationales in ops_approvals (usage-recommendation-v1 rows).",
+		holds:    "Recommendation evidence digests, rule versions, estimated savings, confidence, and review or snooze status, and lifecycle approval identifiers and generations. These records never apply a configuration change.",
+		source:   DataSourceHub,
+		tables:   []string{"usage_recommendations", "usage_recommendation_cycles", "ops_approvals"},
+		path:     "/machines",
+	},
 	DataCategoryRegistry: {
 		title:  "名冊",
 		holds:  "這台機器的顯示名稱、主機名稱、作業系統、架構、Tailscale 位址、執行身分、通道，以及進名冊與退役的時刻。",
@@ -318,13 +344,19 @@ func DataDisclosureFor(policy store.RetentionPolicy, evaluatedAt time.Time) (Dat
 		SchemaVersion: DataDisclosureSchemaVersion,
 		EvaluatedAt:   evaluatedAt.UTC(),
 	}
+	seenTables := map[string]bool{}
 	for _, key := range dataCategoryOrder {
 		category, err := dataCategoryFor(key, policy)
 		if err != nil {
 			return DataDisclosure{}, err
 		}
 		disclosure.Categories = append(disclosure.Categories, category)
-		disclosure.Tables += len(category.Tables)
+		for _, table := range category.Tables {
+			if !seenTables[table] {
+				disclosure.Tables++
+				seenTables[table] = true
+			}
+		}
 		if category.Retention.Kind == DataRetentionTimed {
 			disclosure.Timed++
 		}
@@ -345,6 +377,9 @@ func dataCategoryFor(key DataCategoryKey, policy store.RetentionPolicy) (DataCat
 		Key: key, Title: shape.title, Holds: shape.holds, Source: shape.source,
 		Tables: append([]string(nil), shape.tables...), FreeText: shape.freeText,
 		Capability: "view", Path: shape.path, Retention: retention,
+	}
+	if key == DataCategoryUsageRecords || key == DataCategoryUsageRecommendations {
+		category.Retention.Kind = DataRetentionUsagePolicy
 	}
 	category.SourceSentence = DataSourceSentence(category.Source)
 	category.RetentionSentence = DataRetentionSentence(category.Retention)
@@ -453,6 +488,13 @@ func (s *Service) MachineData(machineID string, policy store.RetentionPolicy, ev
 		RetiredAt:     detail.Item.RetiredAt,
 	}
 	for _, category := range disclosure.Categories {
+		if category.Key == DataCategoryUsageRecommendations || category.Key == DataCategoryDiskClean {
+			holding, err := s.store.MachineApprovalDataHolding(machineID, category.Key == DataCategoryUsageRecommendations)
+			if err != nil {
+				return MachineDataResult{}, err
+			}
+			byTable["ops_approvals"] = holding
+		}
 		measured, err := machineDataCategory(category, byTable, disclosure.EvaluatedAt)
 		if err != nil {
 			return MachineDataResult{}, err

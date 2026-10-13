@@ -90,13 +90,13 @@ func validateDataDisclosure(disclosure operator.DataDisclosure) error {
 			return err
 		}
 		for _, table := range category.Tables {
-			if previous, repeated := seen[table]; repeated {
+			if previous, repeated := seen[table]; repeated && !(table == "ops_approvals" && previous == operator.DataCategoryDiskClean && category.Key == operator.DataCategoryUsageRecommendations) {
 				return fmt.Errorf("operator client: %q is covered by both %q and %q",
 					table, previous, category.Key)
 			}
 			seen[table] = category.Key
 		}
-		tables += len(category.Tables)
+		tables = len(seen)
 		if category.Retention.Kind == operator.DataRetentionTimed {
 			timed++
 		}
@@ -156,6 +156,10 @@ func validateDataRetention(key operator.DataCategoryKey, retention operator.Data
 		if retention.Days < 1 || retention.Class == "" {
 			return fmt.Errorf("operator client: data category %q indicates time-based retention, but specifies no retention duration (%+v)",
 				key, retention)
+		}
+	case operator.DataRetentionUsagePolicy:
+		if (key != operator.DataCategoryUsageRecords && key != operator.DataCategoryUsageRecommendations) || retention.Days != 0 || retention.Class != "" || retention.RingRows != 0 || retention.RingSubject != "" {
+			return fmt.Errorf("operator client: data category %q has invalid usage retention (%+v)", key, retention)
 		}
 	case operator.DataRetentionKept:
 		if retention.Days != 0 || retention.Class != "" {

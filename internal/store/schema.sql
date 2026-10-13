@@ -1593,7 +1593,7 @@ CREATE INDEX IF NOT EXISTS service_token_rotation_budget ON service_token_rotati
 
 -- Phase 2 disk foundation: additive, revision bodies are immutable.
 CREATE TABLE IF NOT EXISTS ops_policies (
- id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind='disk'),
+ id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('disk','usage')),
  revision INTEGER NOT NULL CHECK(revision>0), body TEXT NOT NULL,
  digest TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
  superseded_at TEXT, PRIMARY KEY(id,revision)
@@ -1731,3 +1731,78 @@ CREATE TABLE IF NOT EXISTS disk_canary_days (
 -- Only open alert severity counts are needed by the cached HTML banner.
 CREATE INDEX IF NOT EXISTS disk_alert_banner_open ON disk_alerts(severity) WHERE cleared_at IS NULL;
 CREATE INDEX IF NOT EXISTS disk_canary_retention ON disk_canary_days(day);
+
+-- U-01: latest complete per-file contributions. Rewrites replace, never add twice.
+CREATE TABLE IF NOT EXISTS usage_files (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), file_hmac TEXT NOT NULL,
+ generation INTEGER NOT NULL CHECK(generation>=0), offset_to INTEGER NOT NULL CHECK(offset_to>=0),
+ digest TEXT NOT NULL, PRIMARY KEY(machine_id,file_hmac)
+);
+CREATE TABLE IF NOT EXISTS usage_accounts (
+ account_id TEXT NOT NULL, machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ provider TEXT NOT NULL, plan TEXT NOT NULL, discovery_source TEXT NOT NULL,
+ last_seen TEXT NOT NULL, last_seen_ns INTEGER NOT NULL, conflict INTEGER NOT NULL DEFAULT 0, pinned_plan TEXT,
+ PRIMARY KEY(account_id,machine_id)
+);
+CREATE TABLE IF NOT EXISTS usage_daily (
+ machine_id TEXT NOT NULL, file_hmac TEXT NOT NULL, tool TEXT NOT NULL, account_id TEXT NOT NULL,
+ model TEXT NOT NULL, effort TEXT NOT NULL, effort_source TEXT NOT NULL, source_type TEXT NOT NULL,
+ day TEXT NOT NULL, project_hmac TEXT NOT NULL DEFAULT '', metrics TEXT NOT NULL,
+ PRIMARY KEY(machine_id,file_hmac,tool,account_id,model,effort,effort_source,source_type,day,project_hmac),
+ FOREIGN KEY(machine_id,file_hmac) REFERENCES usage_files(machine_id,file_hmac) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS usage_daily_account ON usage_daily(account_id,day);
+CREATE TABLE IF NOT EXISTS usage_window (
+ machine_id TEXT NOT NULL, file_hmac TEXT NOT NULL, tool TEXT NOT NULL, account_id TEXT NOT NULL,
+ model TEXT NOT NULL, effort TEXT NOT NULL, effort_source TEXT NOT NULL, source_type TEXT NOT NULL,
+ hour TEXT NOT NULL, project_hmac TEXT NOT NULL DEFAULT '', metrics TEXT NOT NULL,
+ PRIMARY KEY(machine_id,file_hmac,tool,account_id,model,effort,effort_source,source_type,hour,project_hmac),
+ FOREIGN KEY(machine_id,file_hmac) REFERENCES usage_files(machine_id,file_hmac) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS usage_window_account ON usage_window(account_id,hour);
+CREATE TABLE IF NOT EXISTS usage_sessions (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), session_hmac TEXT NOT NULL,
+ body TEXT NOT NULL, updated_at TEXT NOT NULL, end_ns INTEGER NOT NULL, PRIMARY KEY(machine_id,session_hmac)
+);
+CREATE TABLE IF NOT EXISTS usage_jobs (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), fingerprint TEXT NOT NULL,
+ day TEXT NOT NULL, body TEXT NOT NULL, last_seen_ns INTEGER NOT NULL, PRIMARY KEY(machine_id,fingerprint,day)
+);
+CREATE TABLE IF NOT EXISTS usage_recommendations (
+ id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, rule_version INTEGER NOT NULL CHECK(rule_version>0),
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), scope TEXT NOT NULL,
+ scope_hmac TEXT NOT NULL, evidence_digest TEXT NOT NULL, evidence_start TEXT NOT NULL, evidence_end TEXT NOT NULL,
+ est_savings_tokens INTEGER NOT NULL CHECK(est_savings_tokens>=0), est_savings_usd REAL NOT NULL CHECK(est_savings_usd>=0),
+ confidence TEXT NOT NULL CHECK(confidence IN ('high','medium','low')),
+ state TEXT NOT NULL CHECK(state IN ('open','approved','dismissed','snoozed','expired','superseded')),
+ reopen_at TEXT, proposer TEXT NOT NULL, created_at TEXT NOT NULL,
+ UNIQUE(rule_id,rule_version,machine_id,scope,scope_hmac,evidence_digest)
+);
+CREATE TABLE IF NOT EXISTS usage_upload_receipts (
+ machine_id TEXT NOT NULL, file_hmac TEXT NOT NULL, generation INTEGER NOT NULL,
+ offset_from INTEGER NOT NULL, offset_to INTEGER NOT NULL, digest TEXT NOT NULL, received_at TEXT NOT NULL,
+ PRIMARY KEY(machine_id,file_hmac,generation,offset_from,offset_to),
+ FOREIGN KEY(machine_id,file_hmac) REFERENCES usage_files(machine_id,file_hmac) ON DELETE CASCADE
+);
+CREATE TRIGGER IF NOT EXISTS usage_recommendation_evidence_immutable
+ BEFORE UPDATE OF id,rule_id,rule_version,machine_id,scope,scope_hmac,evidence_digest,evidence_start,evidence_end,est_savings_tokens,est_savings_usd,confidence,proposer,created_at ON usage_recommendations
+ BEGIN SELECT RAISE(ABORT,'immutable usage recommendation evidence'); END;
+CREATE TRIGGER IF NOT EXISTS usage_recommendation_state_transition BEFORE UPDATE OF state ON usage_recommendations
+ WHEN NOT (NEW.state=OLD.state OR
+ (OLD.state='open' AND NEW.state IN ('approved','dismissed','snoozed','expired','superseded')) OR
+ (OLD.state='snoozed' AND NEW.state IN ('open','expired','superseded')))
+ BEGIN SELECT RAISE(ABORT,'invalid usage recommendation transition'); END;
+
+-- Separate lifecycle identities preserve every prior approval receipt.
+CREATE TABLE IF NOT EXISTS usage_recommendation_cycles (
+ recommendation_id TEXT PRIMARY KEY REFERENCES usage_recommendations(id) ON DELETE CASCADE,
+ generation INTEGER NOT NULL CHECK(generation>0), approval_id TEXT NOT NULL UNIQUE
+);
+CREATE TRIGGER IF NOT EXISTS usage_recommendation_reopen_cycle
+ AFTER UPDATE OF state ON usage_recommendations
+ WHEN OLD.state='snoozed' AND NEW.state='open'
+ BEGIN
+ INSERT INTO usage_recommendation_cycles VALUES (NEW.id,1,NEW.id || ':reopen:1')
+ ON CONFLICT(recommendation_id) DO UPDATE SET
+ generation=generation+1, approval_id=NEW.id || ':reopen:' || (generation+1);
+ END;

@@ -12,6 +12,9 @@ import (
 // and JSON transports must not disagree about a domain rejection, and an
 // unexpected storage/runtime error must never be rendered back to the caller.
 func HTTPError(err error) (status int, code, detail string) {
+	if errors.Is(err, store.ErrUsageUploadTooLarge) {
+		return http.StatusRequestEntityTooLarge, "USAGE_UPLOAD_TOO_LARGE", "too many usage tool-call entries"
+	}
 	if store.IsBusy(err) {
 		return http.StatusServiceUnavailable, model.ErrHubBusy, "the hub is busy; retry shortly"
 	}

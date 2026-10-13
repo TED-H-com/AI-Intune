@@ -44,7 +44,7 @@ func (s *Store) OpsApproval(id string, now time.Time) (OpsApproval, error) {
 	return a, err
 }
 func (s *Store) DiskPolicyRevision(id string, revision int64) (OpsPolicy, error) {
-	p, err := scanOpsPolicy(s.rdb.QueryRow(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies WHERE id=? AND revision=?`, id, revision))
+	p, err := scanOpsPolicy(s.rdb.QueryRow(`SELECT id,kind,revision,body,digest,created_by,created_at,superseded_at FROM ops_policies WHERE id=? AND revision=? AND kind='disk'`, id, revision))
 	if errors.Is(err, sql.ErrNoRows) {
 		err = operatorError(OperatorCodeMaintenanceNotFound, "policy revision not found")
 	}

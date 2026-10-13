@@ -83,3 +83,10 @@ func TestHTTPErrorMapsWriterBusy(t *testing.T) {
 		t.Fatalf("busy detail leaked storage text: %q", detail)
 	}
 }
+
+func TestHTTPErrorUsageUploadTooLarge(t *testing.T) {
+	status, code, _ := HTTPError(errors.Join(errors.New("upload rejected"), store.ErrUsageUploadTooLarge))
+	if status != http.StatusRequestEntityTooLarge || code != "USAGE_UPLOAD_TOO_LARGE" {
+		t.Fatalf("got %d %s", status, code)
+	}
+}
