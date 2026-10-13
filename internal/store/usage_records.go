@@ -159,7 +159,7 @@ WHERE excluded.end_ns>usage_sessions.end_ns`,
 	return tx.Commit()
 }
 func (s *Store) UsageSessions(machine string) ([]UsageSession, error) {
-	rows, e := s.rdb.Query(`SELECT body FROM usage_sessions WHERE machine_id=? ORDER BY session_hmac LIMIT 500`, machine)
+	rows, e := s.rdb.Query(`SELECT body FROM usage_sessions WHERE machine_id=? ORDER BY end_ns DESC,session_hmac LIMIT 500`, machine)
 	if e != nil {
 		return nil, e
 	}
@@ -232,7 +232,7 @@ WHERE excluded.last_seen_ns>usage_jobs.last_seen_ns`,
 	return tx.Commit()
 }
 func (s *Store) UsageJobs(machine string) ([]UsageJob, error) {
-	rows, e := s.rdb.Query(`SELECT body FROM usage_jobs WHERE machine_id=? ORDER BY day,fingerprint LIMIT 500`, machine)
+	rows, e := s.rdb.Query(`SELECT body FROM usage_jobs WHERE machine_id=? ORDER BY day DESC,fingerprint LIMIT 500`, machine)
 	if e != nil {
 		return nil, e
 	}
@@ -404,12 +404,16 @@ LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machin
 	if e = rows.Err(); e != nil {
 		return nil, e
 	}
+	// Prioritize actionable cards before limiting. Compare parsed instants because
 	// RFC3339 TEXT is not ordered by instant when fractions or offsets vary.
 	sort.Slice(out, func(i, j int) bool {
+		if (out[i].State == "open") != (out[j].State == "open") {
+			return out[i].State == "open"
+		}
 		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
 			return out[i].ID < out[j].ID
 		}
-		return out[i].CreatedAt.Before(out[j].CreatedAt)
+		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
 	if len(out) > 500 {
 		out = out[:500]
