@@ -24,7 +24,7 @@ func (s *Store) decideUsageRecommendation(binding OpsApproval, decision, reason 
 	}
 	now := s.now().UTC().Truncate(time.Second)
 	if decision == "snoozed" {
-		if reopen == nil || !reopen.After(now) {
+		if reopen == nil || validateUsageTimestamp(*reopen, time.Time{}) != nil || !reopen.After(now) {
 			return out, ErrUsageInvalid
 		}
 		reason = "snooze:" + reopen.UTC().Format(time.RFC3339Nano) + ":" + reason

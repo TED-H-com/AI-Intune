@@ -116,6 +116,10 @@ func migrateUsageSnapshotTimes(db *sql.DB) error {
 				rows.Close()
 				return fmt.Errorf("%s timestamp: %w", spec.table, err)
 			}
+			if err := validateUsageTimestamp(stamp, time.Now()); err != nil {
+				rows.Close()
+				return fmt.Errorf("%s timestamp: %w", spec.table, err)
+			}
 			backfill = append(backfill, struct{ rowID, ns int64 }{rowID, stamp.UnixNano()})
 		}
 		if err := rows.Err(); err != nil {

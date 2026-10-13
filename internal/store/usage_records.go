@@ -25,7 +25,7 @@ func (s *Store) UpsertUsageAccount(a UsageAccount) error {
 		!usageEnum(a.DiscoverySource, "status", "metadata", "api", "dashboard", "overlay") ||
 		a.PinnedPlan != "" &&
 			!usageEnum(a.PinnedPlan, "unknown", "free", "pro", "max", "plus", "team", "business", "enterprise", "other") ||
-		a.LastSeen.IsZero() {
+		validateUsageTimestamp(a.LastSeen, s.now()) != nil {
 		return ErrUsageInvalid
 	}
 	tx, e := s.beginWrite(context.Background(), "usage_account")
@@ -103,7 +103,8 @@ func (a UsageSession) validate() error {
 			!usageHash(a.ProjectHMAC) ||
 		a.JobFingerprint != "" &&
 			!usageHash(a.JobFingerprint) ||
-		a.Start.IsZero() ||
+		validateUsageTimestamp(a.Start, time.Time{}) != nil ||
+		validateUsageTimestamp(a.End, time.Time{}) != nil ||
 		a.End.Before(a.Start) ||
 		a.MaxContext < 0 ||
 		a.MaxCallsPerTurn < 0 ||
@@ -143,6 +144,9 @@ func (s *Store) UpsertUsageSession(machine string, a UsageSession) error {
 	a = canonicalUsageSession(a)
 	if e := a.validate(); e != nil {
 		return e
+	}
+	if validateUsageTimestamp(a.Start, s.now()) != nil || validateUsageTimestamp(a.End, s.now()) != nil {
+		return ErrUsageInvalid
 	}
 	tx, e := s.beginWrite(context.Background(), "usage_session")
 	if e != nil {
@@ -214,7 +218,9 @@ func (s *Store) UpsertUsageJob(machine string, a UsageJob) error {
 		!usageEnum(a.Effort, "unknown", "minimal", "low", "medium", "high", "max", "xhigh", "ultra") ||
 		a.Runs < 0 ||
 		a.MedianIntervalSeconds < 0 ||
-		a.FirstSeen.IsZero() ||
+		validateUsageTimestamp(a.FirstSeen, s.now()) != nil ||
+		validateUsageTimestamp(a.LastSeen, s.now()) != nil ||
+		validateUsageTimestamp(day, s.now()) != nil ||
 		a.LastSeen.Before(a.FirstSeen) ||
 		a.TokensPerRun.validate() != nil {
 		return ErrUsageInvalid
@@ -300,7 +306,8 @@ func (s *Store) CreateUsageRecommendation(a UsageRecommendation) error {
 			!(len(a.Proposer) > 6 &&
 				a.Proposer[:6] == "agent:" &&
 				validJobReadStoredIdentifier(a.Proposer[6:], 128)) ||
-		a.EvidenceStart.IsZero() ||
+		validateUsageTimestamp(a.EvidenceStart, s.now()) != nil ||
+		validateUsageTimestamp(a.EvidenceEnd, s.now()) != nil ||
 		!a.EvidenceEnd.After(a.EvidenceStart) ||
 		a.EstSavingsTokens < 0 ||
 		(UsageMetrics{EstCostUSD: a.EstSavingsUSD}).validate() != nil {
@@ -466,6 +473,9 @@ func (s *Store) reopenUsageRecommendation(id string, audit AuditEntry) error {
 	reopen, err := time.Parse(time.RFC3339Nano, raw.String)
 	if err != nil {
 		return err
+	}
+	if validateUsageTimestamp(reopen, time.Time{}) != nil {
+		return ErrUsageInvalid
 	}
 	if s.now().Before(reopen) {
 		return ErrUsageConflict

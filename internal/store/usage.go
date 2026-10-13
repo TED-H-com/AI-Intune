@@ -15,6 +15,17 @@ import (
 var ErrUsageInvalid = errors.New("store: invalid usage record")
 var ErrUsageConflict = errors.New("store: usage snapshot conflict")
 
+// validateUsageTimestamp bounds instants before UnixNano conversion. A zero now
+// disables the clock-skew check for scheduled times and offline validation.
+func validateUsageTimestamp(t, now time.Time) error {
+	if t.Before(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)) ||
+		t.After(time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)) ||
+		!now.IsZero() && t.After(now.Add(5*time.Minute)) {
+		return ErrUsageInvalid
+	}
+	return nil
+}
+
 // UsageMetrics contains numeric evidence only. Nil means not measured.
 type UsageMetrics struct {
 	Calls, Sessions, Turns                          int64
@@ -142,7 +153,7 @@ func (a UsageAggregate) validate(window bool) error {
 		layout = "2006-01-02T15:00:00Z"
 	}
 	t, e := time.Parse(layout, a.Period)
-	if e != nil || t.Format(layout) != a.Period {
+	if e != nil || t.Format(layout) != a.Period || validateUsageTimestamp(t, time.Time{}) != nil {
 		return ErrUsageInvalid
 	}
 	return a.Metrics.validate()
@@ -187,13 +198,22 @@ func (s *Store) MergeUsageFile(machine string, in UsageFileSnapshot) (bool, erro
 	if !usageHash(in.FileHMAC) || in.Generation < 0 || in.OffsetFrom < 0 || in.OffsetTo < in.OffsetFrom {
 		return false, ErrUsageInvalid
 	}
+	now := s.now()
 	for _, a := range in.Daily {
 		if e := a.validate(false); e != nil {
+			return false, e
+		}
+		period, _ := time.Parse("2006-01-02", a.Period)
+		if e := validateUsageTimestamp(period, now); e != nil {
 			return false, e
 		}
 	}
 	for _, a := range in.Window {
 		if e := a.validate(true); e != nil {
+			return false, e
+		}
+		period, _ := time.Parse(time.RFC3339, a.Period)
+		if e := validateUsageTimestamp(period, now); e != nil {
 			return false, e
 		}
 	}
