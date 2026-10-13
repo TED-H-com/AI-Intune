@@ -391,7 +391,7 @@ func (s *Store) UsageRecommendations(machine string) ([]UsageRecommendationRecor
 	rows, e := s.rdb.Query(`SELECT r.id, rule_id, rule_version, machine_id, scope, scope_hmac, evidence_digest, evidence_start,
 evidence_end, est_savings_tokens, est_savings_usd, confidence, proposer, state, reopen_at,
 created_at, COALESCE(c.approval_id,r.id), COALESCE(c.generation,0) FROM usage_recommendations r
-LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machine_id=?`, machine)
+LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machine_id=? ORDER BY (state='open') DESC, store_time_key(created_at) DESC,r.id LIMIT 500`, machine)
 	if e != nil {
 		return nil, e
 	}
@@ -430,20 +430,6 @@ LEFT JOIN usage_recommendation_cycles c ON c.recommendation_id=r.id WHERE machin
 	}
 	if e = rows.Err(); e != nil {
 		return nil, e
-	}
-	// Prioritize actionable cards before limiting. Compare parsed instants because
-	// RFC3339 TEXT is not ordered by instant when fractions or offsets vary.
-	sort.Slice(out, func(i, j int) bool {
-		if (out[i].State == "open") != (out[j].State == "open") {
-			return out[i].State == "open"
-		}
-		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
-			return out[i].ID < out[j].ID
-		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
-	})
-	if len(out) > 500 {
-		out = out[:500]
 	}
 	return out, nil
 }

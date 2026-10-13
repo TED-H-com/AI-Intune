@@ -52,12 +52,18 @@ func TestUsageRecommendationsActionableNewestBeforeLimit(t *testing.T) {
 		t.Run(fmt.Sprintf("open-%d", openCount), func(t *testing.T) {
 			s, machine, _ := usageFixture(t)
 			base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			if _, err := s.db.Exec(`DROP TRIGGER usage_recommendation_evidence_immutable`); err != nil {
+				t.Fatal(err)
+			}
 			for i := 0; i < 606; i++ {
-				created := base.Add(time.Duration(i/2) * time.Second)
+				created := base.Add(time.Duration(i/2) * time.Nanosecond)
 				s.nowFn = func() time.Time { return created }
 				id := fmt.Sprintf("recommendation-%04d", i)
 				r := UsageRecommendation{ID: id, RuleID: "lower-effort", RuleVersion: 1, MachineID: machine, Scope: "machine", EvidenceDigest: digestOf(id), EvidenceStart: base.Add(-time.Hour), EvidenceEnd: base, Confidence: "high", Proposer: "rule"}
 				if err := s.CreateUsageRecommendation(r); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.db.Exec(`UPDATE usage_recommendations SET created_at=? WHERE id=?`, created.In(time.FixedZone("offset", 3600*(i%3))).Format(time.RFC3339Nano), id); err != nil {
 					t.Fatal(err)
 				}
 				// Closed records are newer than every open record. Include all lifecycle states.
