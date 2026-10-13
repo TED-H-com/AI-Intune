@@ -161,3 +161,25 @@ func TestDiskApprovalDecisionReasonStoredSanitizedAndBound(t *testing.T) {
 		t.Fatal("empty sanitized reason")
 	}
 }
+
+func TestDiskPolicyRevisionRejectsUsagePolicy(t *testing.T) {
+	s, req, disk, _ := diskPolicyFixture(t)
+	policy := DefaultUsagePolicy()
+	preview, err := UsagePolicyPreviewDigest("usage-default", 0, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := s.PublishUsagePolicy("usage-default", 0, policy, preview, diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DiskPolicyRevision(usage.ID, usage.Revision); err == nil {
+		t.Fatal("usage policy returned as disk policy revision")
+	} else if e, ok := err.(*OperatorRequestError); !ok || e.Code != OperatorCodeMaintenanceNotFound {
+		t.Fatalf("expected policy revision not found, got %v", err)
+	}
+	got, err := s.DiskPolicyRevision(req.ID, disk.Policy.Revision)
+	if err != nil || got.Kind != "disk" || got.Digest != disk.Policy.Digest {
+		t.Fatalf("disk policy=%+v: %v", got, err)
+	}
+}
