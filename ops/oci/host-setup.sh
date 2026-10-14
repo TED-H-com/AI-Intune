@@ -148,7 +148,7 @@ fi
 
 public_host=""
 git_ref="main"
-repo="https://github.com/teddashh/AI-Intune.git"
+repo="https://github.com/TED-H-com/AI-Intune.git"
 dry_run=0
 src="/opt/clawctl/src"
 

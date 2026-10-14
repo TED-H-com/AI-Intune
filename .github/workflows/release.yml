@@ -11,9 +11,9 @@ name: Release images
 # Nothing is pushed to GHCR and nothing is written to the transparency log.
 #
 # Verify a published image:
-#   cosign verify ghcr.io/teddashh/clawctl-hub:<version> \
+#   cosign verify ghcr.io/ted-h-com/clawctl-hub:<version> \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-#     --certificate-identity-regexp '^https://github\.com/teddashh/AI-Intune/\.github/workflows/release\.yml@refs/tags/v'
+#     --certificate-identity-regexp '^https://github\.com/TED-H-com/AI-Intune/\.github/workflows/release\.yml@refs/tags/v'
 
 on:
   push:

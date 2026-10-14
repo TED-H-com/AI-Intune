@@ -13,7 +13,7 @@
 
 [Unit]
 Description=Run the clawctl verifier every 15 minutes
-Documentation=https://github.com/teddashh/AI-Intune
+Documentation=https://github.com/TED-H-com/AI-Intune
 
 [Timer]
 OnCalendar=*:0/15

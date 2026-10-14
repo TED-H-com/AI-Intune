@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://teddashh.github.io/AI-Intune/">Website</a> ·
+  <a href="https://ted-h-com.github.io/AI-Intune/">Website</a> ·
   <a href="#english">English</a> ·
   <a href="#繁體中文">繁體中文</a> ·
   <a href="README.zh-TW.md">短版繁體中文</a> ·

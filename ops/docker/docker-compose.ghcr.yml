@@ -1,10 +1,10 @@
 # Optional: run the signed release images from GHCR instead of building locally.
 #
 #   CLAWCTL_VERSION=v1.2.3   # in hub.env; the exact release tag, with the "v"
-#   cosign verify ghcr.io/teddashh/clawctl-hub:$CLAWCTL_VERSION \
+#   cosign verify ghcr.io/ted-h-com/clawctl-hub:$CLAWCTL_VERSION \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-#     --certificate-identity-regexp '^https://github\.com/teddashh/AI-Intune/\.github/workflows/release\.yml@refs/tags/v'
-#   (same for ghcr.io/teddashh/clawctl-hub-init)
+#     --certificate-identity-regexp '^https://github\.com/TED-H-com/AI-Intune/\.github/workflows/release\.yml@refs/tags/v'
+#   (same for ghcr.io/ted-h-com/clawctl-hub-init)
 #   docker compose \
 #     -f ops/docker/docker-compose.yml \
 #     -f ops/docker/docker-compose.ghcr.yml \
@@ -22,10 +22,10 @@ name: clawctl
 services:
   hub-data-init:
     build: !reset null
-    image: ghcr.io/teddashh/clawctl-hub-init:${CLAWCTL_VERSION:?set CLAWCTL_VERSION to a release tag such as v1.2.3}
+    image: ghcr.io/ted-h-com/clawctl-hub-init:${CLAWCTL_VERSION:?set CLAWCTL_VERSION to a release tag such as v1.2.3}
     pull_policy: missing
 
   hub:
     build: !reset null
-    image: ghcr.io/teddashh/clawctl-hub:${CLAWCTL_VERSION:?set CLAWCTL_VERSION to a release tag such as v1.2.3}
+    image: ghcr.io/ted-h-com/clawctl-hub:${CLAWCTL_VERSION:?set CLAWCTL_VERSION to a release tag such as v1.2.3}
     pull_policy: missing

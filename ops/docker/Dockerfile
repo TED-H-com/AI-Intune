@@ -125,7 +125,7 @@ FROM gcr.io/distroless/static-debian12:nonroot AS hub
 
 LABEL org.opencontainers.image.title="clawctl-hub" \
       org.opencontainers.image.description="clawctl fleet Hub (Go + SQLite); Tailscale operator auth" \
-      org.opencontainers.image.source="https://github.com/teddashh/AI-Intune"
+      org.opencontainers.image.source="https://github.com/TED-H-com/AI-Intune"
 
 USER nonroot:nonroot
 
