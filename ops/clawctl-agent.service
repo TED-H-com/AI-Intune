@@ -10,7 +10,7 @@
 
 [Unit]
 Description=clawctl agent (fleet observation)
-Documentation=https://github.com/teddashh/AI-Intune
+Documentation=https://github.com/TED-H-com/AI-Intune
 After=network-online.target
 Wants=network-online.target
 After=user@__CLAWCTL_AGENT_UID__.service

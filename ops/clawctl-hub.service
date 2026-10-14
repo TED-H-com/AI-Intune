@@ -11,7 +11,7 @@
 
 [Unit]
 Description=clawctl hub (fleet console)
-Documentation=https://github.com/teddashh/AI-Intune
+Documentation=https://github.com/TED-H-com/AI-Intune
 After=network-online.target
 Wants=network-online.target
 

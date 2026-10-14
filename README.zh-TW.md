@@ -6,14 +6,14 @@
 
 AI-Intune 是以證據為核心的控制平臺，管理執行 AI agent 與 coding tools 的機器。Hub 記錄機器清單、觀測資料、desired state、job、驗證證據與稽核事件。Agent 由受管機器主動連出。
 
-[專案介紹頁](https://teddashh.github.io/AI-Intune/?lang=zh-TW) · [Apache 2.0 授權](LICENSE)
+[專案介紹頁](https://ted-h-com.github.io/AI-Intune/?lang=zh-TW) · [Apache 2.0 授權](LICENSE)
 
 ## 建置與測試
 
 請在 Linux 上使用 Go 1.27.1：
 
 ```sh
-git clone https://github.com/teddashh/AI-Intune.git
+git clone https://github.com/TED-H-com/AI-Intune.git
 cd AI-Intune
 make test vet
 make hub agent-bundles
