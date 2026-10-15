@@ -31,6 +31,11 @@ type Reference struct {
 	Name string `json:"name"`
 	Ref  string `json:"ref"`
 }
+
+// SecretProvider resolves values independently of delivery transport. Phase 2
+// consumer bindings may select delivery_mode "brokered" (delivered local cache)
+// or "pull" (scoped backend) when configuring a provider at startup. The mode
+// does not change reference URIs or add delivery behavior to the registry.
 type SecretProvider interface {
 	Get(context.Context, string) (Secret, error)
 	List(context.Context, string) ([]Reference, error)
