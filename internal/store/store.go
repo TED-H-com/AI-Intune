@@ -992,13 +992,14 @@ func addMissingColumns(db *sql.DB) error {
 	if err := tx.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='service_tokens'").Scan(&tokenSchema); err != nil {
 		return err
 	}
-	if strings.Contains(tokenSchema, "name TEXT NOT NULL UNIQUE") {
+	if strings.Contains(tokenSchema, "name TEXT NOT NULL UNIQUE") || !strings.Contains(tokenSchema, "'operator-admin'") {
 		definitionStart := strings.Index(tokenSchema, "(")
 		if definitionStart < 0 {
 			return fmt.Errorf("invalid service token schema")
 		}
 		replacement := "CREATE TABLE service_tokens_rotation_migration " + tokenSchema[definitionStart:]
 		replacement = strings.Replace(replacement, "name TEXT NOT NULL UNIQUE", "name TEXT NOT NULL", 1)
+		replacement = strings.Replace(replacement, "'view','operate'", "'view','operate','operator-admin'", 1)
 		for _, stmt := range []string{replacement, "INSERT INTO service_tokens_rotation_migration SELECT * FROM service_tokens", "DROP TABLE service_tokens", "ALTER TABLE service_tokens_rotation_migration RENAME TO service_tokens"} {
 			if _, err := tx.Exec(stmt); err != nil {
 				return fmt.Errorf("migrate service token names: %w", err)

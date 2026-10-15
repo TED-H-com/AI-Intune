@@ -117,6 +117,9 @@ func (h *hub) handleDiskApprovalDecision(w http.ResponseWriter, r *http.Request)
 // boundary's fresh human LocalAPI authorization can admit JSON applies.
 func (h *hub) requireDiskJSONFreshHuman(w http.ResponseWriter, r *http.Request, action store.AuditAction) bool {
 	p, ok := operatorauth.PrincipalFromContext(r.Context())
+	if ok && p.AuthMethod == operatorauth.AuthMethodServiceToken && p.ServiceScope == operatorauth.ServiceScopeOperatorAdmin && strings.HasPrefix(string(action), "schedule-") {
+		return true
+	}
 	if ok && p.AuthMethod == operatorauth.AuthMethodLocalAPI && p.Has(operatorauth.Admin) && p.StableSubject() != "" {
 		return true
 	}

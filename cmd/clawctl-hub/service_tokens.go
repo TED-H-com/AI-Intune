@@ -40,7 +40,7 @@ const serviceTokenCopyScript = `const t=document.getElementById("issued-token");
 var serviceTokenForm = template.Must(template.New("service-tokens").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{{if .ErrorField}}Error: {{end}}Service tokens</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem}label{display:block;margin:.6rem 0}input,select,textarea,button{font:inherit}table{border-collapse:collapse}th,td{padding:.5rem;border:1px solid #ccc;text-align:left}small{display:block}fieldset{margin:1rem 0}.error{background:#fff0f0;color:#8b0000;border:3px solid #b00020;padding:1rem;font-weight:bold}[aria-invalid="true"]{outline:2px solid #b00020}</style></head><body><a href="/account/security">Account security</a><h1>Service tokens</h1>{{if .ErrorField}}<div class="error" role="alert">{{.Message}}</div>{{else}}<p>{{.Message}}</p>{{end}}
 <h2>Create token</h2><form method="post" action="/account/service-tokens/create">
 {{if eq .ErrorField "name"}}<p class="error" id="name-error">{{.Message}}</p>{{end}}<label for="name">Name</label><input id="name" {{if eq .ErrorField "name"}}aria-invalid="true" aria-errormessage="name-error"{{end}} name="name" value="{{.Name}}" required maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" aria-describedby="name-help"><small id="name-help">Letters, digits, - and _ only; 1–64 characters.</small>
-{{if eq .ErrorField "scope"}}<p class="error" id="scope-error">{{.Message}}</p>{{end}}<label for="scope">Scope</label><select id="scope" {{if eq .ErrorField "scope"}}aria-invalid="true" aria-errormessage="scope-error"{{end}} name="scope"><option value="view" {{if eq .Scope "view"}}selected{{end}}>view</option><option value="operate" {{if eq .Scope "operate"}}selected{{end}}>operate</option></select><small>view: read-only routes. operate: view plus running READ-only catalog scripts.</small>
+{{if eq .ErrorField "scope"}}<p class="error" id="scope-error">{{.Message}}</p>{{end}}<label for="scope">Scope</label><select id="scope" {{if eq .ErrorField "scope"}}aria-invalid="true" aria-errormessage="scope-error"{{end}} name="scope"><option value="view" {{if eq .Scope "view"}}selected{{end}}>view</option><option value="operate" {{if eq .Scope "operate"}}selected{{end}}>operate</option><option value="operator-admin" {{if eq .Scope "operator-admin"}}selected{{end}}>Operator admin — routine fleet administration</option></select><small>Operator admin: enroll machines, manage and run schedules, assign profiles, and run deployments. Cannot delete machines or tenants, change authentication/MFA, manage users, or create/rotate service tokens. view: read-only routes. operate: view plus running READ-only catalog scripts.</small>
 {{if eq .ErrorField "expiry_days"}}<p class="error" id="expiry_days-error">{{.Message}}</p>{{end}}<label for="expiry">Expiry</label><select id="expiry" {{if eq .ErrorField "expiry_days"}}aria-invalid="true" aria-errormessage="expiry_days-error"{{end}} name="expiry_days"><option value="30" {{if eq .Expiry "30"}}selected{{end}}>30 days</option><option value="60" {{if eq .Expiry "60"}}selected{{end}}>60 days</option><option value="90" {{if eq .Expiry "90"}}selected{{end}}>90 days</option></select>
 {{if eq .ErrorField "max_lifetime"}}<p class="error" id="max_lifetime-error">{{.Message}}</p>{{end}}<label for="max-lifetime">Maximum chain lifetime</label><select id="max-lifetime" {{if eq .ErrorField "max_lifetime"}}aria-invalid="true" aria-errormessage="max_lifetime-error"{{end}} name="max_lifetime"><option value="none">None (unlimited rotation)</option><option value="180" {{if eq .MaxLifetime "180"}}selected{{end}}>180 days</option><option value="365" {{if eq .MaxLifetime "365"}}selected{{end}}>365 days</option></select>
 <fieldset {{if eq .ErrorField "routes"}}aria-invalid="true" aria-errormessage="routes-error"{{end}}><legend>Allowed routes</legend>{{if eq .ErrorField "routes"}}<p class="error" id="routes-error">{{.Message}}</p>{{end}}<small>Select exact API routes. Script-runs requires operate scope and accepts only READ catalog scripts.</small>{{range .Routes}}<label><input type="checkbox" name="routes" value="{{.Pattern}}" {{if .Selected}}checked{{end}}> {{.Label}} — {{.Description}} <code>{{.Pattern}}</code></label>{{end}}</fieldset>
@@ -85,8 +85,8 @@ func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 	if !serviceTokenAuditName.MatchString(t.Name) {
 		return t, "Name invalid: use 1–64 letters, digits, - or _."
 	}
-	if t.Scope != "view" && t.Scope != "operate" {
-		return t, "Scope invalid: select view or operate."
+	if t.Scope != "view" && t.Scope != "operate" && t.Scope != operatorauth.ServiceScopeOperatorAdmin {
+		return t, "Scope invalid: select view, operate, or operator-admin."
 	}
 	days := 0
 	switch r.PostForm.Get("expiry_days") {
@@ -130,7 +130,10 @@ func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 			}
 			return t, "Selected route is not eligible."
 		}
-		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly && t.Scope != "operate" {
+		if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin && t.Scope != operatorauth.ServiceScopeOperatorAdmin {
+			return t, "Route requires operator-admin scope."
+		}
+		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly && t.Scope != "operate" && t.Scope != operatorauth.ServiceScopeOperatorAdmin {
 			return t, "Script-runs requires operate scope."
 		}
 	}
@@ -279,6 +282,9 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			path := strings.TrimPrefix(strings.SplitN(route, " ", 2)[1], "/v1/operator/")
 			label := strings.ReplaceAll(path, "-", " ")
 			description := "Read " + label
+			if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin {
+				description = "Routine fleet administration (operator-admin required)"
+			}
 			if policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly {
 				description = "Read evidence for read-only catalog script jobs only"
 			}
@@ -427,16 +433,31 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 		principal.TailnetUserLogin = "service:" + token.Name
 		principal.NodeStableID = token.ID
 	}
-	if err != nil || !policy.ServiceTokenEligible.eligible() || policy.Permission == operatorauth.Admin {
+	if token.Name != "" && operatorauth.DangerousAction(pattern) != "" {
+		writeOperatorBoundaryError(response, operatorJSON, 403, "SERVICE_TOKEN_ACTION_FORBIDDEN", "This action requires a human administrator")
+		return
+	}
+	if token.Name != "" && policy.ServiceTokenEligible == serviceEligibleOperatorAdmin && token.Scope != operatorauth.ServiceScopeOperatorAdmin {
+		writeOperatorBoundaryError(response, operatorJSON, 403, "SERVICE_TOKEN_SCOPE_REQUIRED", "This action requires operator-admin scope")
+		return
+	}
+	if err != nil || !policy.ServiceTokenEligible.eligible() || (policy.Permission == operatorauth.Admin && policy.ServiceTokenEligible != serviceEligibleOperatorAdmin) {
 		b.serviceAttempts.allow(source)
 		writeOperatorBoundaryError(response, operatorJSON, 401, "UNAUTHENTICATED", "Authentication required")
 		return
 	}
+	principal.ServiceScope = token.Scope
 	principal.GrantedCapabilities.View = "view"
-	if token.Scope == "operate" {
+	if token.Scope == "operate" || token.Scope == operatorauth.ServiceScopeOperatorAdmin {
 		principal.GrantedCapabilities.Operate = "operate"
 	}
+	if token.Scope == operatorauth.ServiceScopeOperatorAdmin {
+		principal.GrantedCapabilities.Admin = "admin"
+	}
 	principal.AuthorizedCapability = policy.Permission.String()
+	if token.Scope == operatorauth.ServiceScopeOperatorAdmin {
+		principal.AuthorizedCapability = operatorauth.ServiceScopeOperatorAdmin
+	}
 	if policy.ServiceTokenEligible == serviceEligibleSelf {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "application/json")
