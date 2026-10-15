@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"strings"
 	"time"
@@ -117,6 +118,14 @@ type operatorTailnetPeerIgnoreReceipt struct {
 }
 
 func (s *Store) ApplyOperatorTailnetPeerIgnore(req OperatorTailnetPeerIgnoreRequest) (OperatorTailnetPeerIgnoreResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorTailnetPeerIgnoreResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) != req.IdempotencyKey || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorTailnetPeerIgnoreResult{}, operatorError(OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
 	}
@@ -228,7 +237,7 @@ func (s *Store) ApplyOperatorTailnetPeerIgnore(req OperatorTailnetPeerIgnoreRequ
 	}
 
 	peerID, hostname, reason := strings.TrimSpace(req.PeerID), strings.TrimSpace(req.Hostname), strings.TrimSpace(req.Reason)
-	if peerID == "" || len(peerID) > 128 || hostname == "" || len(hostname) > 255 || reason == "" || len(reason) > 500 ||
+	if peerID == "" || len(peerID) > 128 || hostname == "" || len(hostname) > 255 || reason == "" || len([]rune(reason)) > 500 ||
 		(req.Action != "ignore" && req.Action != "unignore") {
 		return reject(OperatorCodeTailnetPeerInvalid, "peer、action 與 reason 必須完整且合法")
 	}
@@ -386,7 +395,7 @@ func validateTailnetPeerIgnoreAuditEvidence(tx dbTx, req OperatorTailnetPeerIgno
 	err := tx.QueryRow(`SELECT COUNT(*) FROM audit_log
 	 WHERE action=? AND COALESCE(reason,'')=? AND idempotency_key=?
 	   AND request_digest=? AND at=? AND outcome=? AND COALESCE(detail,'')=?`,
-		string(AuditTailnetPeerIgnore), truncAudit(req.Reason, auditMaxReason),
+		string(AuditTailnetPeerIgnore), truncReason(req.Reason),
 		req.IdempotencyKey, req.RequestDigest, at, outcomeOf(ok), detail).Scan(&count)
 	return count == 1, err
 }

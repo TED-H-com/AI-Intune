@@ -500,3 +500,14 @@ func TestScriptTargetsUseLatestCheckin(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestScriptReasonsAcceptOperatorProse(t *testing.T) {
+	_, req, _, _ := scriptFixture(t)
+	for _, reason := range []string{"rotate disk on node1, per ticket #42", "node1.example.com: inspect /var/log", "中文，排查磁碟 #42", "  routine check  "} {
+		req.Reason = reason
+		normalized, _, err := normalizeScript(req)
+		if err != nil || normalized.Reason != strings.TrimSpace(reason) {
+			t.Fatalf("ordinary reason rejected: %v", err)
+		}
+	}
+}

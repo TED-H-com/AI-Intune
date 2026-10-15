@@ -160,7 +160,7 @@ func TestDiskWebRoutesEnforceCSRFAndLockedCSP(t *testing.T) {
 		r.RemoteAddr = "100.100.10.20:4321"
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
-		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), "<script") {
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(strings.ReplaceAll(w.Body.String(), "<script data-audit-reason>", ""), "<script") {
 			t.Fatalf("render/CSP %d %s", w.Code, w.Body.String())
 		}
 	}

@@ -1826,7 +1826,7 @@ func TestOperatorBoundarySecurityHeadersAndDestinationParsing(t *testing.T) {
 			t.Errorf("missing security header %s", name)
 		}
 	}
-	if got, want := rec.Header().Get("Content-Security-Policy"), "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"; got != want {
+	if got, want := rec.Header().Get("Content-Security-Policy"), lockedOperatorContentSecurityPolicy; got != want {
 		t.Fatalf("locked CSP=%q", got)
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
@@ -1888,7 +1888,7 @@ func TestOmittedSecurityProfileFailsClosedWithLockedCSP(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != lockedOperatorContentSecurityPolicy || strings.Contains(got, "script-src") {
+	if got := rec.Header().Get("Content-Security-Policy"); got != lockedOperatorContentSecurityPolicy {
 		t.Fatalf("omitted profile CSP=%q", got)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
@@ -1919,7 +1919,7 @@ func TestCrossOriginDenialCannotUseTerminalSecurityProfile(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	got := rec.Header().Get("Content-Security-Policy")
-	if got != lockedOperatorContentSecurityPolicy || strings.Contains(got, "script-src") || strings.Contains(got, terminalassets.PageJSHash) {
+	if got != lockedOperatorContentSecurityPolicy || strings.Contains(got, terminalassets.PageJSHash) {
 		t.Fatalf("CSRF denial CSP=%q", got)
 	}
 

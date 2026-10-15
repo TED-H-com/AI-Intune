@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"sort"
 	"strings"
 	"time"
@@ -262,6 +263,14 @@ func (s *Store) PreviewDiskCleanProfile(scopeType, scopeID string, profile maint
 
 // ApplyDiskCleanProfile publishes one desired_state revision for maintenance/disk-clean.
 func (s *Store) ApplyDiskCleanProfile(req DiskCleanProfileRequest) (DiskCleanProfileResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskCleanProfileResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	operation := fmt.Sprintf("maintenance-profile:%s:%s", req.ScopeType, req.ScopeID)
 	audit := diskCleanAudit(req.Audit, AuditMaintenanceProfile, req.IdempotencyKey, req.RequestDigest,
 		req.ScopeType+":"+req.ScopeID, req.Reason)
@@ -279,7 +288,7 @@ func (s *Store) ApplyDiskCleanProfile(req DiskCleanProfileRequest) (DiskCleanPro
 	reject := func(code, detail string) (DiskCleanProfileResult, error) {
 		return DiskCleanProfileResult{}, s.policyReject(tx, req.IdempotencyKey, operation, req.RequestDigest, &audit, code, detail)
 	}
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired, "reason is required")
 	}
 	if req.ConfirmScopeID != req.ScopeID {
@@ -352,6 +361,14 @@ func (s *Store) ApplyDiskCleanProfile(req DiskCleanProfileRequest) (DiskCleanPro
 // PreviewDiskCleanDryRun checks the targets and returns a digest. Blockers
 // are reported and are not part of the digest.
 func (s *Store) PreviewDiskCleanDryRun(req DiskCleanTargetRequest) (DiskCleanDryRunPreview, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskCleanDryRunPreview{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	tx, err := s.rdb.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return DiskCleanDryRunPreview{}, fmt.Errorf("store: begin disk-clean dry-run preview: %w", err)
@@ -366,6 +383,14 @@ func (s *Store) PreviewDiskCleanDryRun(req DiskCleanTargetRequest) (DiskCleanDry
 
 // ApplyDiskCleanDryRun creates one reversible job per machine and assigns the profile.
 func (s *Store) ApplyDiskCleanDryRun(req DiskCleanTargetRequest) (DiskCleanDryRunResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskCleanDryRunResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	sorted := append([]string(nil), req.MachineIDs...)
 	sort.Strings(sorted)
 	operation := fmt.Sprintf("maintenance-dry-run:%d:%s", req.Revision, strings.Join(sorted, ","))
@@ -423,6 +448,14 @@ func (s *Store) ApplyDiskCleanDryRun(req DiskCleanTargetRequest) (DiskCleanDryRu
 
 // PreviewDiskCleanCanary checks dry-run evidence and names exactly one canary.
 func (s *Store) PreviewDiskCleanCanary(req DiskCleanTargetRequest) (DiskCleanCanaryPreview, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskCleanCanaryPreview{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	tx, err := s.rdb.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return DiskCleanCanaryPreview{}, fmt.Errorf("store: begin disk-clean canary preview: %w", err)
@@ -438,6 +471,14 @@ func (s *Store) PreviewDiskCleanCanary(req DiskCleanTargetRequest) (DiskCleanCan
 
 // ApplyDiskCleanCanary opens a rollout whose first batch is exactly one machine.
 func (s *Store) ApplyDiskCleanCanary(req DiskCleanTargetRequest) (DiskCleanCanaryResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskCleanCanaryResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	sorted := append([]string(nil), req.MachineIDs...)
 	sort.Strings(sorted)
 	operation := fmt.Sprintf("maintenance-canary:%d:%s:%s", req.Revision, req.CanaryMachineID, strings.Join(sorted, ","))
@@ -553,11 +594,27 @@ func (s *Store) previewDiskCleanControl(rolloutID string, continueRollout bool) 
 
 // ApplyDiskCleanContinue opens the rest of the rollout, or finishes when the canary was the only machine.
 func (s *Store) ApplyDiskCleanContinue(req DiskCleanControlRequest) (DiskCleanRolloutResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskCleanRolloutResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	return s.applyDiskCleanControl(req, true)
 }
 
 // ApplyDiskCleanAbandon stops a rollout without opening more jobs.
 func (s *Store) ApplyDiskCleanAbandon(req DiskCleanControlRequest) (DiskCleanRolloutResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskCleanRolloutResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	return s.applyDiskCleanControl(req, false)
 }
 
@@ -585,7 +642,7 @@ func (s *Store) applyDiskCleanControl(req DiskCleanControlRequest, continueRollo
 	reject := func(code, detail string) (DiskCleanRolloutResult, error) {
 		return DiskCleanRolloutResult{}, s.policyReject(tx, req.IdempotencyKey, operation, req.RequestDigest, &audit, code, detail)
 	}
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired, "reason is required")
 	}
 	if req.ConfirmRolloutID != req.RolloutID {

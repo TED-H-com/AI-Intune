@@ -118,7 +118,7 @@ func (s *Server) previewDeploymentControl(w http.ResponseWriter, r *http.Request
 			"沒有建立 skip failed batch preview", "skip failed batch 必須留下理由。", "/deployments/"+r.PathValue("id"))
 		return
 	}
-	if len(reason) > 500 {
+	if len([]rune(reason)) > 500 {
 		s.renderActionStatus(w, r, http.StatusBadRequest, r.PathValue("id"),
 			"沒有建立 deployment action preview", "變更理由最多 500 bytes。", "/deployments/"+r.PathValue("id"))
 		return
@@ -231,7 +231,7 @@ func (s *Server) applyDeploymentControl(w http.ResponseWriter, r *http.Request, 
 			errors.New("skip failed batch 必須留下理由"))
 		return
 	}
-	if len(reason) > 500 {
+	if len([]rune(reason)) > 500 {
 		s.rejectDeploymentWebForm(w, r, deploymentTransportRejectionAction(action), r.PathValue("id"),
 			errors.New("變更理由最多 500 bytes"))
 		return
@@ -313,7 +313,7 @@ func parseDeploymentCreateForm(w http.ResponseWriter, r *http.Request, apply boo
 		return operator.DeploymentCreatePreviewRequest{}, "", errors.New("irreversible 必須是 true 或 false")
 	}
 	reason := strings.TrimSpace(values.Get("reason"))
-	if len(reason) > 500 {
+	if len([]rune(reason)) > 500 {
 		return operator.DeploymentCreatePreviewRequest{}, "", errors.New("變更理由最多 500 bytes")
 	}
 	return operator.DeploymentCreatePreviewRequest{

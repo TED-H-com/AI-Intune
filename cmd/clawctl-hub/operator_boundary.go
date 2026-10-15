@@ -957,7 +957,7 @@ func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
 
 // lockedOperatorContentSecurityPolicy is the policy every non-terminal
 // operator response still sends. It names no script and no connection.
-const lockedOperatorContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+var lockedOperatorContentSecurityPolicy = "script-src '" + web.ReasonScriptHash() + "'; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 // The script hashes are fixed at process start from the embedded bytes. The
 // authority is the listener pinned on this boundary, so only the scheme is

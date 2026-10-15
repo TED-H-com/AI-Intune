@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"strings"
 	"time"
 
@@ -89,6 +90,14 @@ func SettingPolicyPreviewDigest(policyID string, expected int64, s settingpolicy
 // 重新發佈同一組值不會產生新的 revision：那不是一個新的決定，而機器正在跑的
 // digest 也不會因此改變。撞到別人剛發佈的 revision 則明確衝突，不靜默覆蓋。
 func (s *Store) ApplyOperatorSettingPolicy(req OperatorSettingPolicyRequest) (OperatorSettingPolicyResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorSettingPolicyResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorSettingPolicyResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -139,7 +148,7 @@ func (s *Store) ApplyOperatorSettingPolicy(req OperatorSettingPolicyRequest) (Op
 	if err := validPolicyID(req.PolicyID); err != nil {
 		return reject(OperatorCodeSettingPolicyInvalid, err.Error())
 	}
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired, "reason 不可省略：這一份設定會改變機器的節奏")
 	}
 	if req.ConfirmPolicyID != req.PolicyID {
@@ -251,6 +260,14 @@ func SettingAssignmentPreviewDigest(scope settingpolicy.Scope, scopeID, policyID
 
 // ApplyOperatorSettingAssignment pins one published revision to one scope.
 func (s *Store) ApplyOperatorSettingAssignment(req OperatorSettingAssignmentRequest) (OperatorSettingAssignmentResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorSettingAssignmentResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorSettingAssignmentResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -301,7 +318,7 @@ func (s *Store) ApplyOperatorSettingAssignment(req OperatorSettingAssignmentRequ
 		return OperatorSettingAssignmentResult{}, err
 	}
 
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired, "reason 不可省略：這一份指派會改變機器的節奏")
 	}
 	if req.ConfirmScopeID != req.ScopeID {

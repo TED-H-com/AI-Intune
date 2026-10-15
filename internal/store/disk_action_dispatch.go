@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
+	"strings"
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -37,6 +39,14 @@ func (s *Store) ConfigureDiskManifestSigningKey(raw []byte) error {
 // DiskActionDecide consumes the approval with job creation in the canonical
 // human decision transaction. No approved-without-job intermediate is exposed.
 func (s *Store) DiskActionDecide(req OpsApprovalDecisionRequest, apply bool, key string, audit AuditEntry) (OpsApprovalDecisionResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OpsApprovalDecisionResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if err := humanDiskAdmin(audit); err != nil {
 		return OpsApprovalDecisionResult{}, err
 	}
@@ -166,6 +176,14 @@ func (s *Store) SignedDiskManifestForJob(machine, job, id, digest string) (scrip
 }
 
 func (s *Store) DiskRestoreApply(req OpsApprovalDecisionRequest, apply bool, key string, audit AuditEntry) (OpsApprovalDecisionResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OpsApprovalDecisionResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if err := humanDiskAdmin(audit); err != nil {
 		return OpsApprovalDecisionResult{}, err
 	}

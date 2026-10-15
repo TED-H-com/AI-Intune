@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"strings"
 	"time"
 	"unicode"
@@ -96,6 +97,14 @@ func (s *Store) ReauthenticateDiskAdmin(a AuditEntry, password, code string, req
 // OpsApprovalDecision is the canonical UI/JSON/MCP preview/apply boundary.
 // Scope is checked before replay; the decision, receipt and audit are atomic.
 func (s *Store) OpsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, key string, audit AuditEntry) (out OpsApprovalDecisionResult, err error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OpsApprovalDecisionResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if apply && req.Decision == "approved" {
 		if err = humanDiskAdmin(audit); err != nil {
 			return out, err
@@ -132,7 +141,7 @@ func (s *Store) opsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 			return out, err
 		}
 	}
-	if len(req.Reason) > 500 {
+	if len([]rune(req.Reason)) > boundedtext.MaxReasonRunes {
 		return out, operatorError("BAD_REQUEST", "decision reason exceeds bound")
 	}
 	req.Reason = strings.TrimSpace(strings.Map(func(r rune) rune {
@@ -141,7 +150,7 @@ func (s *Store) opsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 		}
 		return r
 	}, req.Reason))
-	if !validJobReadStoredIdentifier(req.ID, 128) || (req.Decision != "approved" && req.Decision != "rejected") || strings.TrimSpace(req.Reason) == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
+	if !validJobReadStoredIdentifier(req.ID, 128) || (req.Decision != "approved" && req.Decision != "rejected") || strings.TrimSpace(req.Reason) == "" || len([]rune(req.Reason)) > boundedtext.MaxReasonRunes || !validAuditReason(req.Reason) {
 		return out, operatorError("BAD_REQUEST", "approval ID, decision and safe reason required")
 	}
 	tx, err := s.beginWrite(context.Background(), "ops_approval_decision")

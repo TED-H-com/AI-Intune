@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"strings"
 	"time"
 )
@@ -235,6 +236,14 @@ func canonicalEnrollmentLimitRejection(code, detail string) bool {
 // precondition 就是那個讀出來的 revision。分兩次讀寫的話，兩個人同時改會有一個人的
 // 判斷是照著另一個人已經覆蓋掉的狀態做的。
 func (s *Store) ApplyOperatorEnrollmentLimit(req OperatorEnrollmentLimitRequest) (OperatorEnrollmentLimitResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorEnrollmentLimitResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return OperatorEnrollmentLimitResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略")
@@ -305,7 +314,7 @@ func (s *Store) ApplyOperatorEnrollmentLimit(req OperatorEnrollmentLimitRequest)
 		return reject(rejection.Code, rejection.Detail)
 	}
 	reason := strings.TrimSpace(req.Reason)
-	if reason == "" || len(reason) > 500 {
+	if reason == "" || len([]rune(reason)) > 500 {
 		return reject(OperatorCodeReasonRequired, "reason 不可省略，最多 500 bytes")
 	}
 
