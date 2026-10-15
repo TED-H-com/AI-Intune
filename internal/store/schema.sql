@@ -1520,6 +1520,7 @@ CREATE TABLE IF NOT EXISTS hub_accounts (
 );
 -- hub_accounts_email is created by Open after additive email/role migration.
 CREATE TABLE IF NOT EXISTS hub_sessions (
+ mfa_verified_at TEXT NOT NULL DEFAULT '',
  session_hash TEXT PRIMARY KEY,
  account_id TEXT NOT NULL REFERENCES hub_accounts(account_id),
  created_at TEXT NOT NULL,

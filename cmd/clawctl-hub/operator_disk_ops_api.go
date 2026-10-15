@@ -113,11 +113,13 @@ func (h *hub) handleDiskApprovalDecision(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// Local sessions have no action-bound JSON reauthentication proof. Only the
-// boundary's fresh human LocalAPI authorization can admit JSON applies.
+// Local sessions require the central boundary's current admin MFA proof.
 func (h *hub) requireDiskJSONFreshHuman(w http.ResponseWriter, r *http.Request, action store.AuditAction) bool {
 	p, ok := operatorauth.PrincipalFromContext(r.Context())
 	if ok && p.AuthMethod == operatorauth.AuthMethodServiceToken && p.ServiceScope == operatorauth.ServiceScopeOperatorAdmin && strings.HasPrefix(string(action), "schedule-") {
+		return true
+	}
+	if ok && p.AuthMethod == operatorauth.AuthMethodLocalAccountSession && p.ActionMFAAuthorized && p.Has(operatorauth.Admin) {
 		return true
 	}
 	if ok && p.AuthMethod == operatorauth.AuthMethodLocalAPI && p.Has(operatorauth.Admin) && p.StableSubject() != "" {
