@@ -78,7 +78,7 @@ func scriptScope(e scriptcatalog.Entry, a AuditEntry) error {
 		if e.Mode != "read" {
 			return operatorError("SERVICE_TOKEN_READ_SCRIPTS_ONLY", "service tokens require a read-only catalog script")
 		}
-		if a.AuthCapability != "operate" {
+		if a.AuthCapability != "operate" && a.AuthCapability != operatorauth.ServiceScopeOperatorAdmin {
 			return operatorError("SCRIPT_SCOPE_REQUIRED", "read scripts require operate")
 		}
 		return nil

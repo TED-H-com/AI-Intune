@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/clientip"
+	"github.com/teddashh/AI-Intune/internal/operatorauth"
 )
 
 var ErrServiceToken = errors.New("service token rejected")
@@ -50,11 +51,11 @@ func ValidServiceSecret(secret string) bool {
 
 func (s *Store) CreateServiceToken(t ServiceToken, actor string) (ServiceToken, string, error) {
 	now := s.now().UTC()
-	if !serviceName.MatchString(t.Name) || (t.Scope != "view" && t.Scope != "operate") || !t.ExpiresAt.After(now) || t.ExpiresAt.After(now.Add(90*24*time.Hour)) || (t.MaxLifetimeSeconds != 0 && t.MaxLifetimeSeconds != 180*86400 && t.MaxLifetimeSeconds != 365*86400) || len(t.Allowlist) == 0 || len(t.Allowlist) > 128 || len(t.SourceCIDRs) > 32 {
+	if !serviceName.MatchString(t.Name) || (t.Scope != "view" && t.Scope != "operate" && t.Scope != operatorauth.ServiceScopeOperatorAdmin) || !t.ExpiresAt.After(now) || t.ExpiresAt.After(now.Add(90*24*time.Hour)) || (t.MaxLifetimeSeconds != 0 && t.MaxLifetimeSeconds != 180*86400 && t.MaxLifetimeSeconds != 365*86400) || len(t.Allowlist) == 0 || len(t.Allowlist) > 128 || len(t.SourceCIDRs) > 32 {
 		return ServiceToken{}, "", ErrServiceToken
 	}
 	for _, v := range t.Allowlist {
-		if !validServiceRoute(v) || (t.Scope != "operate" && (v == "POST /v1/operator/script-runs/preview" || v == "POST /v1/operator/script-runs")) {
+		if (operatorauth.OperatorAdminRoute(v) && t.Scope != operatorauth.ServiceScopeOperatorAdmin) || !validServiceRoute(v) || (t.Scope != "operate" && t.Scope != operatorauth.ServiceScopeOperatorAdmin && (v == "POST /v1/operator/script-runs/preview" || v == "POST /v1/operator/script-runs")) {
 			return ServiceToken{}, "", ErrServiceToken
 		}
 	}
@@ -218,7 +219,7 @@ func (s *Store) AuthenticateServiceToken(secret, route, peer string, required st
 	if !serviceName.MatchString(t.Name) || len(t.Allowlist) == 0 || len(t.Allowlist) > 128 {
 		return ServiceToken{}, ErrServiceToken
 	}
-	if (required != "view" && required != "operate") || (t.Scope != "view" && t.Scope != "operate") || (required == "operate" && t.Scope != "operate") || t.RevokedAt != nil || (t.OverlapDeadline != nil && !t.OverlapDeadline.After(s.now())) || !t.ExpiresAt.After(s.now()) || t.ExpiresAt.After(t.CreatedAt.Add(90*24*time.Hour)) {
+	if !operatorauth.ServiceScopeAllows(t.Scope, required, route) || t.RevokedAt != nil || (t.OverlapDeadline != nil && !t.OverlapDeadline.After(s.now())) || !t.ExpiresAt.After(s.now()) || t.ExpiresAt.After(t.CreatedAt.Add(90*24*time.Hour)) {
 		return t, ErrServiceToken
 	}
 	for _, route := range t.Allowlist {

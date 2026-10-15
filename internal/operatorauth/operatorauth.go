@@ -215,6 +215,7 @@ func (d Decision) Cause() error { return d.cause }
 // tailnet user owning/logged into that node. It is not a fresh assertion about
 // the person currently at the keyboard.
 type Principal struct {
+	ServiceScope         string
 	SourceAddr           string
 	NodeStableID         string
 	DeviceName           string
