@@ -1835,3 +1835,18 @@ CREATE TABLE IF NOT EXISTS channel_bots (
  notes TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_channel_bots_machine ON channel_bots(machine_id);
+
+-- Inbound state is independent of outbound inventory. No resolved credentials.
+CREATE TABLE IF NOT EXISTS chat_allowlist (
+ channel_id TEXT NOT NULL, user_id TEXT NOT NULL, account_id TEXT NOT NULL REFERENCES hub_accounts(account_id),
+ PRIMARY KEY(channel_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS chat_events (
+ channel_id TEXT NOT NULL, event_id TEXT NOT NULL, expires INTEGER NOT NULL,
+ PRIMARY KEY(channel_id,event_id)
+);
+CREATE TABLE IF NOT EXISTS chat_approvals (
+ id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, destination TEXT NOT NULL,
+ requester TEXT NOT NULL, target TEXT NOT NULL, body TEXT NOT NULL, expires INTEGER NOT NULL,
+ consumed INTEGER NOT NULL DEFAULT 0
+);

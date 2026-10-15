@@ -3,8 +3,10 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/teddashh/AI-Intune/internal/channels"
+	"github.com/teddashh/AI-Intune/internal/chat"
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -15,9 +17,12 @@ type channelRow struct {
 	Status string `json:"status"`
 }
 type channelsView struct {
-	Bots     []store.ChannelBot     `json:"bots"`
-	Rows     []channelRow           `json:"channels"`
-	Bindings []store.ChannelBinding `json:"bindings"`
+	Inbound   []chat.Status          `json:"inbound"`
+	Allowlist []store.ChatUser       `json:"allowlist,omitempty"`
+	Approvals []store.ChatApproval   `json:"approvals"`
+	Bots      []store.ChannelBot     `json:"bots"`
+	Rows      []channelRow           `json:"channels"`
+	Bindings  []store.ChannelBinding `json:"bindings"`
 }
 
 func (s *Server) channelRoutes(mux *http.ServeMux) []string {
@@ -38,6 +43,21 @@ func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := channelsView{Rows: []channelRow{}}
+	if s.inbound != nil {
+		view.Inbound = s.inbound.Status()
+	}
+	if accessFromRequest(r).CanAdmin {
+		view.Allowlist, e = s.store.ChatUsers()
+		if e != nil {
+			http.Error(w, "allowlist unavailable", 500)
+			return
+		}
+	}
+	view.Approvals, e = s.store.PendingChatApprovals(time.Now())
+	if e != nil {
+		http.Error(w, "approvals unavailable", 500)
+		return
+	}
 	for _, c := range configs {
 		status, _ := channels.New(c, s.secretProvider).Health(r.Context())
 		view.Rows = append(view.Rows, channelRow{c.ID, c.Kind, string(status)})
@@ -80,6 +100,15 @@ func (s *Server) channelMutation(w http.ResponseWriter, r *http.Request) {
 	a := store.AuditEntry{}
 	operator.ApplyActor(&a, operator.ActorFromRequest(r, operator.SourceKindWeb))
 	op := r.PathValue("operation")
+	if op == "allow-save" || op == "allow-remove" {
+		u := store.ChatUser{ChannelID: r.FormValue("id"), UserID: r.FormValue("user_id"), AccountID: r.FormValue("account_id")}
+		if e := s.store.MutateChatUser(r.Context(), u, op == "allow-remove", a); e != nil {
+			http.Error(w, "allowlist update failed", 400)
+			return
+		}
+		http.Redirect(w, r, "/channels", 303)
+		return
+	}
 	if op == "bot-save" || op == "bot-remove" {
 		b := store.ChannelBot{Name: r.FormValue("name"), Kind: c.Kind, MachineID: r.FormValue("machine_id"), AgentType: r.FormValue("agent_type"), TokenRef: c.TokenRef, Status: r.FormValue("status"), Notes: r.FormValue("notes")}
 		if e := s.store.MutateChannelBot(r.Context(), op[4:], b, a); e != nil {
@@ -114,4 +143,25 @@ func (s *Server) channelMutation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/channels", 303)
+}
+
+// ConfigureInbound installs the explicitly enabled provider front ends.
+func (s *Server) ConfigureInbound(path string) error {
+	cs, e := chat.Load(path)
+	if e != nil {
+		return e
+	}
+	s.inbound = chat.New(cs, s.store, s.operator, s.secretProvider)
+	return nil
+}
+func (s *Server) InboundRoutes(mux *http.ServeMux) []string {
+	const pattern = "POST /v1/channels/{id}/inbound"
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if s.inbound == nil {
+			http.NotFound(w, r)
+			return
+		}
+		s.inbound.ServeHTTP(w, r)
+	})
+	return []string{pattern}
 }

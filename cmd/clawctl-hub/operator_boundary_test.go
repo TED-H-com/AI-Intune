@@ -112,6 +112,7 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 	h := &hub{store: st}
 	nonOperatorMux := http.NewServeMux()
 	nonOperatorRegistered := h.machineAndPublicRoutes(nonOperatorMux)
+	nonOperatorRegistered = append(nonOperatorRegistered, ui.InboundRoutes(nonOperatorMux)...)
 	nonOperatorRegistered = append(nonOperatorRegistered, registerAccountRoutes(nonOperatorMux, st, ui, testOperatorAuthority, clientip.Resolver{})...)
 	operatorMux := http.NewServeMux()
 	operatorRegistered := h.operatorRoutes(operatorMux)
@@ -122,16 +123,16 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		t.Fatal(err)
 	}
-	if len(nonOperatorRegistered) != 28 || len(nonOperatorRoutePolicies) != 28 {
-		t.Fatalf("non-operator registered=%d policies=%d, want 28/28",
+	if len(nonOperatorRegistered) != 29 || len(nonOperatorRoutePolicies) != 29 {
+		t.Fatalf("non-operator registered=%d policies=%d, want 29/29",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
 	if len(operatorRegistered) != 283 || len(operatorRoutePolicies) != 283 {
 		t.Fatalf("operator registered=%d policies=%d, want 283/283",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 311 {
-		t.Fatalf("all registered routes=%d, 預期 311", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 312 {
+		t.Fatalf("all registered routes=%d, 預期 312", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}

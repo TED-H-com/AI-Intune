@@ -221,3 +221,49 @@ func TestDiscordChannelUIAndAPINeverExposeWebhook(t *testing.T) {
 		}
 	}
 }
+
+func TestInboundAdministrationAndOffDefault(t *testing.T) {
+	s, st := newServer(t)
+	account, err := st.CreateFirstAdmin("admin", "long-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	s.InboundRoutes(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/v1/channels/sample/inbound", strings.NewReader(`{}`)))
+	if w.Code != 404 {
+		t.Fatal("off default", w.Code)
+	}
+	body := url.Values{"id": {"sample"}, "user_id": {"123"}, "account_id": {account.AccountID}}.Encode()
+	for _, admin := range []bool{false, true} {
+		caps := operatorauth.CapabilityNames{View: "view"}
+		if admin {
+			caps.Admin = "admin"
+		}
+		r := requestWithCapabilities("POST", "/channels/allow-save", caps)
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Body = io.NopCloser(strings.NewReader(body))
+		w = httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if admin && w.Code != 303 || !admin && w.Code != 403 {
+			t.Fatal(w.Code)
+		}
+	}
+	for _, admin := range []bool{false, true} {
+		caps := operatorauth.CapabilityNames{View: "view"}
+		if admin {
+			caps.Admin = "admin"
+		}
+		w = httptest.NewRecorder()
+		mux.ServeHTTP(w, requestWithCapabilities("GET", "/v1/operator/channels", caps))
+		if w.Code != 200 {
+			t.Fatal(w.Code)
+		}
+		if strings.Contains(w.Body.String(), account.AccountID) != admin {
+			t.Fatal("allowlist visibility")
+		}
+	}
+}

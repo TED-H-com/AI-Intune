@@ -479,7 +479,7 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-305（22 non-operator＋283 operator；142 operator JSON＋141 HTML/BFF/CSV/download），exact auth tally 是
+306（23 non-operator＋283 operator；142 operator JSON＋141 HTML/BFF/CSV/download），exact auth tally 是
 `view=109`／`operate=33`／`admin=141`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
@@ -1190,3 +1190,5 @@ per-machine/global delivery budgets prevent flapping from bypassing throttles. R
 helper absence fails closed. Canary comparison uses daily policy-bound read previews;
 alerts use persisted episodes and the existing notifications ledger. P2-04 retains
 its exact human quarantine/restore operations; P2-05 adds no privileged agent actions.
+
+Inbound chat is an opt-in provider-authenticated front end over the same operator service; see [CHANNELS.md](CHANNELS.md).

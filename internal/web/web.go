@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/chat"
 	"github.com/teddashh/AI-Intune/internal/compliance"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/diskreport"
@@ -50,6 +51,7 @@ type TerminalLinks interface {
 }
 
 type Server struct {
+	inbound           *chat.Engine
 	secretProvider    secrets.SecretProvider
 	scheduleAdmission func(http.ResponseWriter, *http.Request) bool
 	diskAlertBanner   diskAlertBannerCache

@@ -19,4 +19,10 @@
 <label>Token reference<input name="token_ref" required placeholder="env://BOT_TOKEN"></label>
 <label>Status<select name="status"><option>unknown</option><option>active</option><option>disabled</option></select></label>
 <label>Notes<textarea name="notes" maxlength="4096"></textarea></label><button type="submit">Save bot</button></form>{{end}}</div>
+<div class="panel"><h2>Inbound commands</h2>
+<table><tr><th>Channel</th><th>Provider</th><th>Enabled</th></tr>{{range .Channels.Inbound}}<tr><td>{{.ID}}</td><td>{{.Kind}}</td><td>{{.Enabled}}</td></tr>{{else}}<tr><td>Inbound commands are off.</td></tr>{{end}}</table>
+<h3>Pending approvals</h3><table><tr><th>Channel</th><th>Action</th><th>Target</th><th>Expiry (Unix)</th></tr>{{range .Channels.Approvals}}<tr><td>{{.ChannelID}}</td><td>Acknowledge alert</td><td>{{.Target}}</td><td>{{.Expires}}</td></tr>{{else}}<tr><td>No pending approvals.</td></tr>{{end}}</table>
+{{if .Access.CanAdmin}}<h3>Human allowlist</h3><p>Map provider user IDs to current Hub account IDs. Account disablement and removal revoke chat access.</p>
+<table>{{range .Channels.Allowlist}}<tr><td>{{.ChannelID}}</td><td>{{.UserID}}</td><td>{{.AccountID}}</td><td><form method="post" action="/channels/allow-remove"><input type="hidden" name="id" value="{{.ChannelID}}"><input type="hidden" name="user_id" value="{{.UserID}}"><button>Remove</button></form></td></tr>{{end}}</table>
+<form method="post" action="/channels/allow-save"><label>Channel ID<input name="id" required></label><label>Chat user ID<input name="user_id" required></label><label>Hub account ID<input name="account_id" required></label><button>Save mapping</button></form>{{end}}</div>
 {{template "foot" .}}{{end}}

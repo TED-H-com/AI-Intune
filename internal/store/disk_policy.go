@@ -63,7 +63,7 @@ type DiskPolicyResult struct {
 }
 
 func humanDiskAdmin(a AuditEntry) error {
-	if a.AuthSubject == "" || a.AuthDecision != string(operatorauth.Authorized) || (a.AuthMethod != operatorauth.AuthMethodLocalAccountSession && a.AuthMethod != operatorauth.AuthMethodLocalAPI) || !(a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "/clawctl-admin") || strings.HasSuffix(a.AuthCapability, "-admin")) {
+	if a.AuthSubject == "" || a.AuthDecision != string(operatorauth.Authorized) || (a.AuthMethod != operatorauth.AuthMethodLocalAccountSession && a.AuthMethod != operatorauth.AuthMethodLocalAPI && a.AuthMethod != operatorauth.AuthMethodChatAllowlist) || !(a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "/clawctl-admin") || strings.HasSuffix(a.AuthCapability, "-admin")) {
 		return operatorError("FORBIDDEN", "disk operations require a verified human admin session")
 	}
 	return nil
