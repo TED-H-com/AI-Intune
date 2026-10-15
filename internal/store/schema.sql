@@ -1807,3 +1807,19 @@ CREATE TRIGGER IF NOT EXISTS usage_recommendation_reopen_cycle
  ON CONFLICT(recommendation_id) DO UPDATE SET
  generation=generation+1, approval_id=NEW.id || ':reopen:' || (generation+1);
  END;
+
+-- Outbound channel configuration contains credential references only.
+CREATE TABLE IF NOT EXISTS outbound_channels (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+ token_ref TEXT NOT NULL DEFAULT '', chat_ref TEXT NOT NULL DEFAULT '',
+ url_ref TEXT NOT NULL DEFAULT '', secret_ref TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS channel_bindings (
+ channel_id TEXT NOT NULL REFERENCES outbound_channels(id) ON DELETE CASCADE,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ PRIMARY KEY(channel_id, machine_id)
+);
+CREATE TABLE IF NOT EXISTS channel_initialization (
+ id INTEGER PRIMARY KEY CHECK(id = 1)
+);
+CREATE INDEX IF NOT EXISTS idx_channel_bindings_machine ON channel_bindings(machine_id);

@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 301 個 production operations 基線
+## 304 個 production operations 基線
 
-此數字按 HTTP method + route 計數：22 個 non-operator operations、279 個 operator
-operations；其中 141 個為 operator JSON、138 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=107`、`operate=33`、`admin=139`。這組數字由 route/API/service/Web/CLI
-合約測試固定；301-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：22 個 non-operator operations、282 個 operator
+operations；其中 142 個為 operator JSON、140 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=109`、`operate=33`、`admin=140`。這組數字由 route/API/service/Web/CLI
+合約測試固定；304-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -91,7 +91,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 
 | 22 | `POST /v1/disk-actions/{job_id}/results` | Machine credential | 否 | Private exact action receipts; immutable replay ledger |
 
-### Operator HTML/BFF 與 JSON（279）
+### Operator HTML/BFF 與 JSON（282）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -353,7 +353,7 @@ HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-141 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+142 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
@@ -399,6 +399,10 @@ domain service 見 `internal/operator/`。
 | 299 | `POST /tenant/schedules/{id}/run-now` | HTML | 是 | `operate`；idempotent manual run; write catalog scripts require admin |
 | 300 | `GET /secrets` | HTML | 讀取 | `admin`；read-only secret reference status; never values |
 | 301 | `GET /v1/operator/secrets` | JSON | 讀取 | `admin`；name/ref/status only; never values |
+| 302 | `GET /channels` | HTML | 讀取 | `view`；channel health and metadata bindings |
+| 303 | `GET /v1/operator/channels` | JSON | 讀取 | `view`；safe channel inventory |
+| 304 | `POST /channels/{operation}` | HTML | 寫入 | `admin`；save/remove/test/bind/unbind; audited and same-origin |
+
 
 ## Workload / submenu parity matrix
 

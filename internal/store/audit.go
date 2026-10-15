@@ -28,6 +28,11 @@ import (
 type AuditAction string
 
 const (
+	AuditChannelManage AuditAction = "channel-manage"
+	AuditChannelTest   AuditAction = "channel-test"
+)
+
+const (
 	AuditUsagePolicyApply  AuditAction = "usage-policy-apply"
 	AuditDiskPolicyPreview AuditAction = "disk-policy-preview"
 	AuditDiskPolicyApply   AuditAction = "disk-policy-apply"

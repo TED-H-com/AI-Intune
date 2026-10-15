@@ -26,6 +26,7 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/agentlink"
 	"github.com/teddashh/AI-Intune/internal/blobstore"
+	"github.com/teddashh/AI-Intune/internal/channels"
 	"github.com/teddashh/AI-Intune/internal/clientip"
 	"github.com/teddashh/AI-Intune/internal/expect"
 	"github.com/teddashh/AI-Intune/internal/ledgerlock"
@@ -679,6 +680,10 @@ func serve(argv []string) {
 	ui.SetOperatorService(operatorService)
 	ui.SetHubBase(h.publicURL)
 	ui.SetSecretProvider(secrets.New(secrets.NotifyReferences(h.notifyEnv)))
+	if err := h.store.InitializeChannels(context.Background(), channels.NotifyConfigs(h.notifyEnv)); err != nil {
+		log.Fatalf("initialize channel inventory: %v", err)
+	}
+
 	ui.SetTerminalLimits(h.terminalIdleTimeout, h.terminalMaxLifetime)
 	if err := ui.SetRetentionPolicy(h.retention); err != nil {
 		log.Fatalf("invalid web retention policy configuration: %v", err)
