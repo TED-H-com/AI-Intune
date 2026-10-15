@@ -1558,6 +1558,15 @@ CREATE TABLE IF NOT EXISTS hub_login_failures (
 
 CREATE INDEX IF NOT EXISTS idx_hub_login_failures_age ON hub_login_failures(last_failed_at);
 
+-- Second-factor failures per account across every client key. Only password
+-- holders reach the second factor, so this lock is not an anonymous lockout.
+CREATE TABLE IF NOT EXISTS hub_mfa_failures (
+ account_id TEXT PRIMARY KEY REFERENCES hub_accounts(account_id),
+ failed_attempts INTEGER NOT NULL,
+ locked_until TEXT,
+ last_failed_at TEXT NOT NULL
+);
+
 -- Durable scheduler configuration, slot receipts, and job attribution.
 CREATE TABLE IF NOT EXISTS schedules (
  id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
