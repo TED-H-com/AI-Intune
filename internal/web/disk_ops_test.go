@@ -315,7 +315,7 @@ func TestDiskOpsScreenshotFixtures(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.render(w, r, f.template, f.data)
 		body := w.Body.Bytes()
-		if !bytes.Contains(body, []byte("</html>")) || bytes.Contains(body, []byte("<script")) {
+		if !bytes.Contains(body, []byte("</html>")) || bytes.Contains(bytes.ReplaceAll(body, []byte("<script data-audit-reason>"), nil), []byte("<script")) {
 			t.Fatal("incomplete or scripted fixture", f.name)
 		}
 		if err := os.WriteFile(filepath.Join(dir, f.name+".html"), body, 0644); err != nil {
@@ -382,7 +382,7 @@ func TestDiskMachineScreenshotFixtures(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: f.view})
 		body := w.Body.Bytes()
-		if !bytes.Contains(body, []byte("</html>")) || bytes.Contains(body, []byte("<script")) || bytes.Contains(body, []byte("ZgotmplZ")) {
+		if !bytes.Contains(body, []byte("</html>")) || bytes.Contains(bytes.ReplaceAll(body, []byte("<script data-audit-reason>"), nil), []byte("<script")) || bytes.Contains(body, []byte("ZgotmplZ")) {
 			t.Fatalf("invalid fixture %s: %s", f.name, body)
 		}
 		if f.name == "disk-machine" && (!bytes.Contains(body, []byte("cache lock held by 2")) || !bytes.Contains(body, []byte("value=\"88\""))) {

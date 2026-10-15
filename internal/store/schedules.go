@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"regexp"
 	"strings"
 	"time"
@@ -279,8 +280,10 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 			return out, e
 		}
 	}
-	if strings.TrimSpace(req.Reason) == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
-		return out, scriptBad("invalid reason")
+	var reasonErr error
+	req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+	if reasonErr != nil {
+		return out, scriptBad(reasonErr.Error())
 	}
 
 	canonical := req

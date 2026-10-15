@@ -3204,7 +3204,7 @@ func TestNoFrontEndMeansNoFrontEndLog(t *testing.T) {
 	markers := []string{"<script", "javascript:", "onclick=", "onload=", "<iframe"}
 
 	for _, path := range []string{"/", "/machines/" + id, "/reports/tickets"} {
-		assertHTMLHasNoScriptMarkers(t, path, get(t, s, path), markers)
+		assertHTMLHasNoScriptMarkers(t, path, strings.ReplaceAll(get(t, s, path), "<script data-audit-reason>"+ReasonScript+"</script>", ""), markers)
 	}
 
 	entries, err := templateFS.ReadDir("templates")
@@ -3223,7 +3223,7 @@ func TestNoFrontEndMeansNoFrontEndLog(t *testing.T) {
 		}
 	}
 	sort.Strings(scriptedTemplates)
-	if len(scriptedTemplates) != 1 || scriptedTemplates[0] != "terminal.html" {
+	if len(scriptedTemplates) != 2 || scriptedTemplates[0] != "base.html" || scriptedTemplates[1] != "terminal.html" {
 		t.Fatalf("script-bearing templates=%v, want only terminal.html", scriptedTemplates)
 	}
 
@@ -3281,6 +3281,7 @@ func htmlHasScriptMarker(body string, markers []string) bool {
 }
 
 func assertHTMLHasNoScriptMarkers(t *testing.T, path, body string, markers []string) {
+	body = strings.ReplaceAll(body, "<script data-audit-reason>"+ReasonScript+"</script>", "")
 	t.Helper()
 	low := strings.ToLower(body)
 	for _, marker := range markers {

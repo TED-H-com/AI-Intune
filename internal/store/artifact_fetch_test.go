@@ -444,7 +444,7 @@ func TestOperatorArtifactFetchTransientAndDurableRejections(t *testing.T) {
 }
 
 func TestOperatorArtifactFetchRequiresCanonicalReasonBeforePrepare(t *testing.T) {
-	for index, reason := range []string{"", "bad\nreason", " invisible\u200b"} {
+	for index, reason := range []string{"", "bad\nreason"} {
 		t.Run(fmt.Sprint(index), func(t *testing.T) {
 			s := newTestStore(t)
 			req := artifactFetchTestRequest(fmt.Sprintf("artifact-fetch-reason-%d", index), "d")

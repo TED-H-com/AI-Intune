@@ -572,7 +572,7 @@ func validateOperatorDeploymentRejectionEvidence(tx dbTx, action operatorDeploym
  WHERE action=? AND COALESCE(machine_id,'')=? AND subject=? AND COALESCE(reason,'')=?
    AND idempotency_key=? AND request_digest=? AND at=? AND outcome='failed'
    AND COALESCE(detail,'')=?`, string(audit.Action), audit.MachineID,
-		truncAudit(audit.Subject, auditMaxReason), truncAudit(audit.Reason, auditMaxReason),
+		truncAudit(audit.Subject, auditMaxReason), truncReason(audit.Reason),
 		req.IdempotencyKey, req.RequestDigest, cached.CreatedAt, cached.ErrorDetail.String).Scan(&count)
 	return count == 1, err
 }
@@ -655,7 +655,7 @@ func validateOperatorDeploymentSuccessEvidence(tx dbTx, receipt operatorDeployme
  WHERE action=? AND COALESCE(machine_id,'')=? AND subject=? AND COALESCE(reason,'')=?
    AND idempotency_key=? AND request_digest=? AND at=? AND outcome='ok'
    AND COALESCE(detail,'')=?`, string(audit.Action), audit.MachineID,
-		truncAudit(receipt.Deployment.DeploymentID, auditMaxReason), truncAudit(audit.Reason, auditMaxReason),
+		truncAudit(receipt.Deployment.DeploymentID, auditMaxReason), truncReason(audit.Reason),
 		req.IdempotencyKey, req.RequestDigest, fmtTime(receipt.AppliedAt),
 		operatorDeploymentSuccessDetail(receipt)).Scan(&originalSuccessAudits)
 	return originalSuccessAudits == 1, err

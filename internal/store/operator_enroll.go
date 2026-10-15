@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"strings"
 	"time"
@@ -274,6 +275,13 @@ func operatorEnrollTokenStoredRejectionMatchesCode(raw, code string) bool {
 // canonical operator token issuance. The registry row, token hash, redacted
 // replay receipt, and audit evidence either commit together or not at all.
 func (s *Store) ApplyOperatorEnrollToken(req OperatorEnrollTokenCreateRequest) (OperatorEnrollTokenCreateResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorEnrollTokenCreateResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return OperatorEnrollTokenCreateResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略")
@@ -538,7 +546,7 @@ func validateOperatorEnrollTokenRejectionEvidence(tx dbTx, cached operatorCached
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='failed'
 	   AND COALESCE(detail,'')=?`,
 		string(AuditEnrollToken), truncAudit(req.DisplayName, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		cached.CreatedAt, cached.ErrorDetail.String).Scan(&originalRejectionAudits)
 	if err != nil {
 		return false, err
@@ -568,7 +576,7 @@ func validateOperatorEnrollTokenSuccessEvidence(tx dbTx, receipt operatorEnrollT
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='ok'
 	   AND COALESCE(detail,'')=?`,
 		string(AuditEnrollToken), receipt.MachineID, truncAudit(receipt.DisplayName, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		fmtTime(receipt.CreatedAt), operatorEnrollTokenSuccessDetail(receipt)).Scan(&originalSuccessAudits)
 	if err != nil {
 		return false, err
