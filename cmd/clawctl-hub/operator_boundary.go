@@ -793,6 +793,9 @@ func (b *operatorBoundary) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if b.cloud != nil && !b.cloud.requireMFA && principal.AuthMethod == operatorauth.AuthMethodLocalAccountSession {
 		authed = web.WithMFAEnforcementDisabled(authed)
 	}
+	if !b.authorizeActionMFA(w, authed, pattern, policy) {
+		return
+	}
 	b.csrfNext.ServeHTTP(w, authed)
 }
 

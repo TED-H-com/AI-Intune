@@ -945,6 +945,7 @@ func addMissingColumns(db *sql.DB) error {
 			"source_plan": "TEXT NOT NULL DEFAULT '' CHECK (length(CAST(source_plan AS BLOB)) <= 8192)",
 		},
 	}
+	want["hub_sessions"] = map[string]string{"mfa_verified_at": "TEXT NOT NULL DEFAULT ''"}
 	want["service_tokens"] = map[string]string{
 		"rotation_chain_id":      "TEXT NOT NULL DEFAULT ''",
 		"rotated_from":           "TEXT NOT NULL DEFAULT ''",

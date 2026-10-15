@@ -701,6 +701,7 @@ func WithMFAEnforcementDisabled(r *http.Request) *http.Request {
 }
 
 type accessView struct {
+	SessionMFAWindow       bool
 	MFAEnforcementDisabled bool
 	LocalSession           bool
 	Known                  bool
@@ -724,6 +725,7 @@ func accessFromRequest(r *http.Request) accessView {
 	}
 	return accessView{
 		MFAEnforcementDisabled: r.Context().Value(mfaEnforcementDisabledKey{}) == true && principal.AuthMethod == operatorauth.AuthMethodLocalAccountSession,
+		SessionMFAWindow:       principal.AuthMethod == operatorauth.AuthMethodLocalAccountSession && r.Context().Value(mfaEnforcementDisabledKey{}) != true,
 		LocalSession:           principal.AuthMethod == operatorauth.AuthMethodLocalAccountSession,
 		Known:                  true, Login: principal.TailnetUserLogin, Device: principal.DeviceName,
 		Subject: principal.StableSubject(), Permissions: principal.PermissionLabel(),

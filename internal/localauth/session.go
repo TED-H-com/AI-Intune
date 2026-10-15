@@ -43,7 +43,7 @@ func (a *Authorizer) Authorize(r *http.Request, required operatorauth.Permission
 	if err != nil {
 		return nil, deny
 	}
-	p := operatorauth.Principal{SourceAddr: r.RemoteAddr, NodeStableID: "local-session", DeviceName: "browser", TailnetUserID: "local:" + account.AccountID, TailnetUserLogin: account.Username, TailnetDisplayName: account.Username, AuthMethod: operatorauth.AuthMethodLocalAccountSession, GrantedCapabilities: a.Names}
+	p := operatorauth.Principal{MFAVerifiedAt: account.SessionMFAVerifiedAt, SourceAddr: r.RemoteAddr, NodeStableID: "local-session", DeviceName: "browser", TailnetUserID: "local:" + account.AccountID, TailnetUserLogin: account.Username, TailnetDisplayName: account.Username, AuthMethod: operatorauth.AuthMethodLocalAccountSession, GrantedCapabilities: a.Names}
 	switch required {
 	case operatorauth.View:
 		p.AuthorizedCapability = a.Names.View
