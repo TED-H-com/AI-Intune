@@ -26,7 +26,7 @@ func TestActionMFAWindowBoundary(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := &operatorBoundary{cloud: &cloudBoundaryConfig{requireMFA: true, adminMFAWindow: tc.window}}
-			r := httptest.NewRequest("POST", "https://hub.example.com/action", strings.NewReader("reason=rotate+disk+on+castle1%2C+per+ticket+%2342&preview_digest=abc&idempotency_key=retry-key&password=&code="))
+			r := httptest.NewRequest("POST", "https://hub.example.com/action", strings.NewReader("reason=rotate+disk+on+sampleagent1%2C+per+ticket+%2342&preview_digest=abc&idempotency_key=retry-key&password=&code="))
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			r = operatorauth.WithPrincipal(r, operatorauth.Principal{AuthMethod: operatorauth.AuthMethodLocalAccountSession, MFAVerifiedAt: time.Now().Add(-tc.age)})
 			w := httptest.NewRecorder()
@@ -40,7 +40,7 @@ func TestActionMFAWindowBoundary(t *testing.T) {
 					t.Fatal("missing action proof")
 				}
 			} else {
-				for _, want := range []string{"Confirm your identity", `name="reason" value="rotate disk on castle1, per ticket #42"`, `name="preview_digest" value="abc"`, `name="idempotency_key" value="retry-key"`} {
+				for _, want := range []string{"Confirm your identity", `name="reason" value="rotate disk on sampleagent1, per ticket #42"`, `name="preview_digest" value="abc"`, `name="idempotency_key" value="retry-key"`} {
 					if !strings.Contains(w.Body.String(), want) {
 						t.Errorf("missing preserved field %s", want)
 					}
@@ -107,7 +107,7 @@ func TestActionMFARoundTrip(t *testing.T) {
 	if _, err = st.DB().Exec(`UPDATE hub_sessions SET mfa_verified_at=?`, time.Now().Add(-13*time.Hour).UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
-	reason := "rotate disk on castle1, per ticket #42"
+	reason := "rotate disk on sampleagent1, per ticket #42"
 	body := "reason=" + url.QueryEscape(reason) + "&idempotency_key=retry-key"
 	// An invalid operation is intentional: the handler must receive the original
 	// inputs after step-up rather than dispatching any actual fleet work.

@@ -272,7 +272,7 @@ with `Retry-After: 2`; retry after that delay rather than issuing parallel reads
 
 For a public HTTPS Hub, use `clawctl-operator --hub-url https://hub.example.com --token-file /path/to/token mcp` (or `call <tool> [json]`). The file must be regular, mode 0600, and not a symlink. Redirects and ambient proxies remain disabled. Tailnet literal-origin mode is unchanged when no token file is supplied.
 
-Create and revoke tokens at `/account/service-tokens` with a human admin session and MFA. Tokens expire within 90 days and grant only view/operate. A nonempty allowlist is required. Entries are exact method plus registered eligible route pattern, such as `GET /v1/operator/machines` or `GET /v1/operator/machines/{id}`. Read-only view JSON routes and the two read-script routes described below are service-token eligible. Other mutations, previews, admin and approval-gated routes require a human. Source CIDRs and failure limiter keys use the configured client-IP resolver. Forwarded client headers are accepted only from configured trusted proxies.
+Create and revoke tokens at `/account/service-tokens` with a human admin session and MFA. Tokens expire within 90 days and support `view`, `operate`, and `operator-admin`. A nonempty allowlist is required. Entries are exact method plus registered eligible route pattern, such as `GET /v1/operator/machines` or `GET /v1/operator/machines/{id}`. Read-only view JSON routes and the two read-script routes described below are service-token eligible. The routine administration routes below additionally accept `operator-admin`; other admin and approval-gated routes require a human. Source CIDRs and failure limiter keys use the configured client-IP resolver. Forwarded client headers are accepted only from configured trusted proxies.
 
 
 ### Service tokens and ad hoc catalog scripts
@@ -295,11 +295,12 @@ Script request rate limits still apply to service tokens, shared across preview
 and apply by stable `service:<name>` subject. Success and denial audits retain
 that service identity. Existing bounded rate-limit denial auditing still applies.
 
-Schedule configuration is human-only: upsert and set-enabled preview/apply
-(`POST /v1/operator/schedules/{operation}/{phase}`) and run-now
-(`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
-Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
-Schedule list/get eligibility remains unchanged (currently human-only).
+Schedule list/get, upsert and set-enabled preview/apply
+(`POST /v1/operator/schedules/{operation}/{phase}`), and run-now
+(`POST /v1/operator/schedules/{id}/run-now`) accept explicitly allowlisted
+`operator-admin` tokens. `view` and `operate` tokens cannot manage schedules.
+Catalog approval, revision, preview digest, idempotency and rate-limit checks
+still apply to delegated actions.
 No routes or capability tallies changed.
 
 ## Hermes credential lifecycle
@@ -310,22 +311,51 @@ The preset includes jobs_summary, approvals_summary, hub_status, job
 list/get/evidence, and READ-only script-runs preview/apply. Save the displayed
 credential immediately into a regular mode-0600 file on the Hermes host.
 
-Run `clawctl-operator --hub-url https://hub.example.com token rotate --token-file
-PATH --min-remaining 14d` daily, or use `--force` for immediate rotation.
-Durations accept days (`14d`) or Go duration units (`336h`).
-The command prints only whether rotation happened. Exit codes: 0 rotated/not
-due, 1 operation failure, 2 usage failure. Long-running clients must reread the
-file within the 10-minute overlap. See the
-[systemd user service and timer example](../ops/hermes/README.md).
+Service tokens cannot mint or rotate credentials, including their own. The
+legacy `token rotate` command and POST rotate route return 403
+`SERVICE_TOKEN_ACTION_FORBIDDEN`. Have a human admin create a replacement token
+at `/account/service-tokens`, install it in the bot's regular mode-0600 file,
+and revoke the old token. Do not enable unattended rotation timers. Existing
+rotation-chain metadata does not grant permission to rotate.
 
-Rotation writes the returned credential to a 0600 temporary file and fsyncs it
-before rename, then fsyncs the directory and confirms GET self with the installed
-credential. Failed rename or file fsync keeps a recovery file and reports its
-path. A lost response or crash can be recovered by re-rotating the predecessor
-within its original overlap while the successor is unused; re-issue revokes the
-unused successor. Once the successor authenticates, predecessor rotation returns
-409. Chain-wide budgets include re-issues, and successors wait for the prior
-overlap to end before rotating again.
+### Delegating routine administration
+
+Choose **Operator admin — routine fleet administration** on the token creation
+page (`scope=operator-admin` in the creation form). The scope includes eligible
+view/read-script access and allows these explicitly allowlisted JSON operations:
+
+- Create enrollment tickets (preview and apply).
+- List/read, create/edit, enable/disable and run schedules, including approved write schedules.
+- Assign profiles (preview and apply).
+- Create and run deployments, including continuation and retry.
+
+Bots of every scope are forbidden from deleting machines or tenants, changing
+MFA/authentication settings, creating or editing users, and minting or rotating
+service tokens. These return `SERVICE_TOKEN_ACTION_FORBIDDEN`; lower scopes
+requesting routine admin operations return `SERVICE_TOKEN_SCOPE_REQUIRED`.
+The allowlist, CIDRs, catalog approval, preview digest, revision and idempotency
+requirements remain in force. Unknown routes default to human-only.
+
+For example, an enrollment bot can allowlist just:
+
+```text
+POST /v1/operator/enrollment-tokens/preview
+POST /v1/operator/enrollment-tokens
+```
+
+A scheduling bot can allowlist:
+
+```text
+GET /v1/operator/schedules
+GET /v1/operator/schedules/{id}
+POST /v1/operator/schedules/{operation}/{phase}
+POST /v1/operator/schedules/{id}/run-now
+```
+
+Use the registered route patterns literally in the allowlist; substitute IDs and
+operations in actual requests. Supply a normal audit reason such as
+`rotate disk on sampleagent1, per ticket #42`; never include credentials. Keep
+fleet-specific bot names, routes, hostnames and configuration in the Private overlay.
 
 
 ### Human schedules UI and timezone behavior
@@ -333,7 +363,7 @@ overlap to end before rotating again.
 The Hub’s **Schedules** entry beside Disk pages opens `/tenant/schedules`.
 View permits list/detail access; Operate permits preview/apply/run-now. Catalog
 write scripts require Admin, including changes to an existing write schedule.
-Admin apply and run-now use the same fresh human reauthentication as Disk.
+Human admin apply and run-now use the same session MFA window as Disk; expired forms prompt for MFA and retain their inputs.
 The pages use session authentication, cross-origin protection, audit, script
 mutation rate limits, catalog approvals and the shared operator/store functions.
 Changes and enable/disable require preview digest, idempotency key and expected
