@@ -174,7 +174,8 @@ rm "$TMP/first/claude" "$TMP/bin/claude" "$TMP/bin/codex" "$TMP/bin/node"
 mkdir -p "$HOME/.grok/bin"
 cp "$TMP/bin/cli" "$HOME/.grok/bin/grok"
 command() {
-    if [ "${1:-}" = -v ] && [ "${2:-}" = node ]; then return 1; fi
+    # The installer must see node, claude and codex as missing even when the host has them in /usr/bin.
+    if [ "${1:-}" = -v ]; then case "${2:-}" in node|claude|codex) return 1 ;; esac; fi
     builtin command "$@"
 }
 export -f command
