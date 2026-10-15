@@ -1,112 +1,159 @@
 # Secret providers
 
-Phase 1 keeps the public default local and generic: environment and env-style
-files require no external service. Configuration holds references, never secret
-values. The `internal/secrets` registry selects a `SecretProvider` by URI scheme;
-providers implement `Get(ctx, ref)`, `List(ctx, scope)`, and `Health(ctx)`.
-The registry lists configured references only (optionally filtered by URI prefix),
-not every environment variable or filesystem entry. Register backends at startup.
-The registered `bws` backend returns “not configured” until Phase 2; consequently
-aggregate registry health reports that backend unavailable even when local
-providers work. A missing or empty value is `ErrMissing`; read/validation failures
-are errors. Callers must not log backend errors or include them in status APIs.
-
-## References
+The local defaults require no external service. Configuration holds references,
+never values. `internal/secrets` dispatches `Get(ctx, ref)`, `List(ctx, scope)`
+and `Health(ctx)` by URI scheme. List enumerates configured references only.
 
 - `env://NAME` reads a process environment variable.
-- `file:///absolute/path#KEY` reads KEY from a KEY=VALUE file. URI-escape special
-  path and key characters. The parser ignores blank/comment lines, accepts
-  `export ` and matching single/double quotes, and performs no shell expansion.
-  Duplicate keys use the last value. Reads retain the legacy one MiB limit.
-- `bws://project/key` identifies a planned Bitwarden Secrets Manager secret.
+- `file:///absolute/path#KEY` reads an env-style file. URI-escape path/key
+  characters. Blank/comment lines, `export `, and matching quotes are supported;
+  duplicate keys use the last value. No shell expansion; one MiB read limit.
+- `bws://Shared/API_KEY` reads a Bitwarden Secrets Manager project/key.
+  Project UUIDs also work: `bws://11111111-1111-1111-1111-111111111111/API_KEY`.
+  Names are exact and must be usable as URI hosts; use UUIDs for other names.
+  Escape special key characters. Empty values are missing. Duplicate matching
+  project names or keys fail rather than selecting an arbitrary value.
 
-`Secret` has private storage and redacts String, GoString, every fmt verb, and
-JSON output. Consumers explicitly call `Reveal()` at the integration boundary;
-once revealed, the caller is responsible for keeping that string out of logs and
-responses. Do not place secret values in names, references, or errors.
+`Secret` redacts fmt and JSON output. Only integration boundaries call `Reveal()`;
+consumers must keep revealed strings out of logs and responses. References and
+names are metadata: never put secret values in them. Backend errors use fixed
+classes; raw command output and stderr never enter errors or status responses.
 
-## Notify compatibility and status
+## Bitwarden configuration
 
-`--notify-env` and `CLAWCTL_NOTIFY_ENV` remain paths to the existing notify file.
-The four existing Telegram/webhook keys are represented internally as file URIs.
-Notify startup, delivery, and notify-check resolve them through the registry.
-File parsing, trimming, permission warnings, channel validation, legacy command
-precedence, and re-reading on delivery for rotation remain supported. Notify does
-not fall back to process environment values.
+Install the official `bws` binary from Bitwarden; no personal-vault `bw serve`
+is used. Set `CLAWCTL_SECRETS_CONFIG` to an absolute JSON configuration path on
+Hub or agent. Without it, env/file behavior and the unconfigured bws placeholder
+remain unchanged. Example (all names and paths are placeholders):
 
-The read-only `/secrets` page and `GET /v1/operator/secrets` list configured names,
-references, and `present`, `missing`, or `error` status. They never return resolved
-values or backend error details. Both require the existing operator `Admin`
-capability, with a shared authorization check for future operator-admin scope
-support, and disable response caching. The navigation link is admin-only.
-No secret editing or arbitrary caller-supplied reference lookup is exposed.
+```json
+{
+  "references": [
+    {"name": "service-api", "ref": "bws://Shared/API_KEY"}
+  ],
+  "bws": {
+    "binary": "/usr/local/bin/bws",
+    "server_url": "https://vault.bitwarden.com",
+    "token_ref": "file:///var/lib/example-secrets/token.env#BWS_TOKEN",
+    "timeout_seconds": 10,
+    "ttl_seconds": 60,
+    "cache_dir": "/var/lib/example-secrets/cache",
+    "deny_projects": ["Confidential", "22222222-2222-2222-2222-222222222222"]
+  }
+}
+```
 
-## Planned Phase 2: Bitwarden Secrets Manager
+Provision `BWS_TOKEN` in that private env-style file outside application config.
+Alternatively use `token_ref: "env://SERVICE_BWS_TOKEN"`. Only env/file token refs
+are accepted. The token is re-read for each command, passed solely through the
+child's `BWS_ACCESS_TOKEN`, and never placed in argv. The selected source env
+variable and inherited `BWS_*` variables are removed from the child environment.
+The parent environment is not modified. Protect process access and token files
+with the service account's OS permissions.
 
-This is a design for an example deployment, not an implemented backend. Phase 1
-keeps its local defaults and the `bws` placeholder returning `ErrNotConfigured`.
-Bitwarden Secrets Manager would be the source of truth for managed secrets.
+Binary defaults to `bws`, server to US cloud `https://vault.bitwarden.com`;
+EU uses `https://vault.bitwarden.eu`. For self-hosting, supply the HTTPS server
+base URL. Credentials/query strings in server URLs are rejected. The explicit
+`--server-url` overrides CLI server configuration. Commands are executed directly,
+without a shell: `bws project list --output json` and
+`bws secret list <project_id> --output json`, plus that server flag. See the
+[official CLI documentation](https://bitwarden.com/help/secrets-manager-cli/).
+Timeout defaults to 10 seconds per subprocess; expiry kills the command and
+bounds pipe cleanup. Output is limited to eight MiB; stderr is discarded.
 
-### Example organization and access
+Project names resolve to UUIDs with an in-memory TTL cache. UUID refs skip name
+lookup unless a denylist is configured. With a denylist, IDs also resolve through
+project metadata so switching between a name and ID cannot bypass denial.
+Deny checks happen before value commands and before cache reads are returned.
+Use both immutable IDs and names in the Hub denylist, and deny access in the
+machine account grants too. A name-only policy follows metadata refreshed at
+TTL expiry; UUIDs avoid rename ambiguity. Directly denied names/IDs never invoke
+bws; alias checks may list project metadata but never fetch denied values.
 
-A Bitwarden Secrets Manager Free plan example uses 2 users, 3 projects, and
-3 machine accounts. Projects categorize secrets; machine accounts represent
-roles shared across appropriate hosts, not one account per machine. For example:
+## Cache and lifecycle
 
-| Project category | Work role | Home role | Hub role |
-| --- | --- | --- | --- |
-| Personal | No | Read | No |
-| FreeTWAI | Read | Read | Read |
-| Confidential | Read | No | No |
+Only requested values are retained in memory for `ttl_seconds` (default 60).
+Fresh reads avoid bws; expired reads try the source again. A failed refresh may
+return the last known good value while health records the source failure. An
+optional `cache_dir` persists each requested ref atomically, file mode `0600`,
+directory mode `0700`. It must be an absolute, dedicated private directory;
+existing directory permissions are restricted at startup. Public/nonregular
+cache files are ignored. Files contain plaintext values: protect backups and
+local account access accordingly. Cache files are scoped by server, token ref,
+and secret ref; tokens themselves are never persisted there.
 
-The two users administer the organization. The three machine accounts are Work,
-Home, and Hub, with read-only access to the projects each role needs. These names
-and grants are illustrative, not built-in categories or a required topology.
-Provision role tokens only to hosts assigned that role; sharing a role means
-revoking its access can affect multiple hosts.
+LKG has **no maximum stale age**: enabling persistence deliberately favors
+availability during outages, including across restarts. Leave `cache_dir` unset
+to disable disk persistence. Successful missing/empty results evict the ref;
+missing projects, denials and caller cancellation do not use stale fallback.
+Failures (including authentication, malformed output and timeouts) can use LKG.
+Revocation cannot be discovered while offline. For immediate revocation, stop
+consumers, delete the dedicated cache directory and restart them. Also purge
+caches when changing machine account grants or token identity at an existing
+token ref. Rotate source values normally; healthy refresh observes them after
+TTL expiry. A fresh Test fetch bypasses value caches and fallback entirely.
+Do not use availability-first LKG where immediate offline revocation is required.
 
-Recommend keeping the most sensitive project (Confidential in this example)
-unreadable by the Hub. Authorized role accounts pull those secrets directly, so
-the Hub does not receive or cache their values.
+`BWS.Status()` exposes configured, reachable and last error class without a
+network call; reachable means the last command succeeded, not a continuous
+probe. `Health(ctx)` actively lists project metadata, never values. Unconfigured
+bws remains `ErrNotConfigured`. Classes include `token_unavailable`,
+`command_failed`, `timeout`, `invalid_json`, `ambiguous_project`, `ambiguous_key`,
+and `cache_io`; no backend text, token or value is returned.
 
-### Delivery modes
+## Hub page and notify compatibility
 
-Support both modes in the same deployment, selected by the consuming role and
-secret reference independently of the provider URI scheme:
+`/secrets` and `GET /v1/operator/secrets` require the operator Admin capability
+and disable response caching. The JSON endpoint retains its reference-status
+array. The page additionally shows bws backend health metadata. Per-ref status is
+present/missing/error; present can mean LKG during an outage. Configure all refs
+that should appear in `references`; arbitrary caller-selected lookups are not
+exposed. Channel configuration uses the same Hub registry for value resolution.
 
-- **Hub-brokered (`brokered`):** the Hub's machine account reads only its allowed
-  projects and pushes the authorized subset to enrolled agents over the existing
-  authenticated channel. Enforce per-agent authorization before delivery; Hub
-  project access alone does not authorize every agent. Agents write delivered
-  secrets with mode `0600`. Audit deliveries and failures using reference,
-  recipient, time, and outcome metadata, never secret values or tokens.
-- **Agent-pull (`pull`):** an agent uses its own scoped role token to read allowed
-  projects directly from Bitwarden Secrets Manager. The token belongs to its
-  role's machine account, not a dedicated per-host machine account. Persisted
-  secrets use mode `0600`; record safe retrieval outcome metadata. Use this mode
-  for projects the Hub must not read.
+Admin-only `POST /secrets/test` accepts only configured refs, enforces the same
+origin/CSRF protection as channel mutations, and reports present/missing/error,
+never a value or backend diagnostic. The operator service records intent before
+fetch and completion afterward, with authenticated actor, reference and audit
+time. Audit failure prevents fetching or reporting success. Test failures use
+fixed-text outcomes. Configuration remains local; the page does not edit secrets.
 
-The planned delivery configuration field is `delivery_mode`, with values
-`brokered` or `pull`. It belongs to the consuming role/reference binding, not the
-`bws://project/key` URI. `SecretProvider` remains the value-resolution interface;
-register a provider configured for the consumer's delivery mode at startup. A
-brokered agent resolves from its delivered local cache, while a pull agent
-resolves through its scoped backend. Separate consumer registries can therefore
-use the same reference with different delivery modes. This field is documented
-for Phase 2 only: Phase 1 adds no configuration parsing, routing, or delivery
-behavior.
+`--notify-env` / `CLAWCTL_NOTIFY_ENV` still designate the existing notify file.
+The four legacy Telegram/webhook refs appear alongside configured refs. Notify
+retains file parsing, trimming, permission warnings, validation, command
+precedence and re-reading per delivery. It does not fall back to process env.
 
-### Cache and lifecycle
+## Agent pull and future brokered delivery
 
-Cache last known values for temporary outages in both modes: at the Hub for
-projects it may read, and on agents for secrets they receive or pull. Use `0600`
-for secret/cache files and restrict access to their containing directories. Define
-freshness, expiry, rotation, revocation, cache deletion, and outage behavior before
-enabling the backend, including when expired values must fail closed. Report
-cache freshness and failures without exposing values or backend error details.
-Audit metadata must not contain values or tokens. Token provisioning and cache
-storage must keep plaintext values out of application configuration, logs, and
-status APIs.
+Pull is implemented with the same scoped backend on the consuming host:
 
-Never use `bw serve`; the personal vault CLI server is not the machine secret
-delivery architecture. Neither delivery mode uses it.
+```sh
+clawctl-agent secrets-pull --config /etc/example/secrets.json \
+  --ref bws://Shared/API_KEY --output /var/lib/example-secrets/delivered/api-key
+```
+
+Only refs in that local configuration are allowed. The destination must be
+absolute in a private directory (created `0700` if absent). The command writes
+the raw value atomically with mode `0600`, never to stdout. Retrieval attempts
+and outcomes log local UID, configured ref, UTC log time and success only.
+Schedule repeated pulls with the host's scheduler when rotation is needed; each
+invocation can use the optional disk LKG. No Hub enrollment is required for local
+pull. Use distinct read-only role machine accounts for Hub and agent groups;
+keep restricted project tokens solely on authorized agents.
+
+The existing enrolled-agent channel authenticates a bearer before WebSocket
+upgrade and periodically checks revocation (`agent_terminal_link.go`). However,
+`internal/agentrelay` only permits session-scoped PTY open/input/resize/close
+frames, and the agent dispatches them to terminal sessions. It has no secret
+message type, recipient/ref grant ledger, secure file destination contract or
+acknowledgment protocol. Terminal inputs can be recorded. This is not a suitable
+secret transport, so brokered delivery is deliberately not implemented.
+
+A future broker needs explicit `delivery_mode: brokered|pull` consumer bindings,
+per-agent/ref authorization independent of project access, a versioned secret
+frame outside terminal recording, replay/expiry controls and revocation checks.
+Hub must resolve only allowed refs after committing an audit intent, send over
+the authenticated encrypted channel, and audit recipient, actor, ref, time and
+fixed outcome. Agent must validate destination policy, atomically write `0600`
+in a `0700` directory, and acknowledge delivery without echoing values. Failed or
+uncertain deliveries need explicit retry/idempotency semantics. Until those
+contracts exist, use pull; no delivery_mode config field is accepted here.

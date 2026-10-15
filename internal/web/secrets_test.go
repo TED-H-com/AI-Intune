@@ -5,9 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/teddashh/AI-Intune/internal/store"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -79,4 +83,90 @@ func TestSecretsStatusAuthorizationAndRedaction(t *testing.T) {
 	if strings.Contains(logs.String(), "sentinel-secret-web") {
 		t.Fatal("secret in logs")
 	}
+}
+
+func TestSecretFetchAdminCSRFAndAudit(t *testing.T) {
+	s, st := newServer(t)
+	names, _ := operatorauth.NamesForPrefix("example.com/cap/clawctl")
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	spy := &secretFetchSpy{}
+	s.SetSecretProvider(spy)
+	request := func(ref string, admin bool, site string) *httptest.ResponseRecorder {
+		caps := operatorauth.CapabilityNames{View: names.View}
+		if admin {
+			caps.Admin = names.Admin
+		}
+		req := requestWithCapabilities("POST", "/secrets/test", caps)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if site != "" {
+			req.Header.Set("Sec-Fetch-Site", site)
+		}
+		req.Body = io.NopCloser(strings.NewReader(url.Values{"ref": {ref}}.Encode()))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, tc := range []struct {
+		admin     bool
+		site, ref string
+		code      int
+	}{
+		{false, "same-origin", "bws://project/key", 403},
+		{true, "", "bws://project/key", 403},
+		{true, "cross-site", "bws://project/key", 403},
+		{true, "same-origin", "env://ARBITRARY", 404},
+		{true, "same-origin", "bws://project/key", 200},
+	} {
+		rec := request(tc.ref, tc.admin, tc.site)
+		if rec.Code != tc.code {
+			t.Fatalf("got %d want %d", rec.Code, tc.code)
+		}
+		if strings.Contains(rec.Body.String(), "sentinel-secret-web") {
+			t.Fatal("value leaked")
+		}
+	}
+	audits, e := st.Audit("", 100)
+	if e != nil {
+		t.Fatal(e)
+	}
+	count := 0
+	for _, a := range audits {
+		if a.Action == store.AuditSecretTest {
+			count++
+			if strings.Contains(fmt.Sprint(a), "sentinel-secret-web") {
+				t.Fatal("audit leaked")
+			}
+			if a.Subject != "bws://project/key" || a.At.IsZero() {
+				t.Fatal("audit metadata missing")
+			}
+		}
+	}
+	if spy.calls != 1 {
+		t.Fatal("unexpected provider invocations")
+	}
+	if count != 2 {
+		t.Fatal("intent/outcome not audited")
+	}
+	if _, e := st.DB().Exec("CREATE TRIGGER secret_test_failure BEFORE INSERT ON audit_log WHEN NEW.action='secret-test' BEGIN SELECT RAISE(ABORT,'unavailable'); END"); e != nil {
+		t.Fatal(e)
+	}
+	rec := request("bws://project/key", true, "same-origin")
+	if rec.Code != 500 {
+		t.Fatal("audit failure did not fail closed")
+	}
+	if spy.calls != 1 {
+		t.Fatal("fetched without audit")
+	}
+}
+
+// A failed intent audit must prevent even a provider invocation.
+type secretFetchSpy struct {
+	secretFailureProvider
+	calls int
+}
+
+func (p *secretFetchSpy) Get(ctx context.Context, ref string) (secrets.Secret, error) {
+	p.calls++
+	return p.secretFailureProvider.Get(ctx, ref)
 }

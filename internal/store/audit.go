@@ -30,6 +30,7 @@ type AuditAction string
 const (
 	AuditChannelManage AuditAction = "channel-manage"
 	AuditChannelTest   AuditAction = "channel-test"
+	AuditSecretTest    AuditAction = "secret-test"
 )
 
 const (

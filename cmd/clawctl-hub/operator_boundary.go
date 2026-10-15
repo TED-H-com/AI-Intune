@@ -232,6 +232,7 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /channels":                                                       {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/channels":                                           {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /channels/{operation}":                                          {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /secrets/test":                                                  {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /secrets":                                                        {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/secrets":                                            {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"GET /audit":                                                          {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},

@@ -178,6 +178,7 @@ func (s *Server) SetTerminalLimits(idle, lifetime time.Duration) {
 }
 
 func (s *Server) Routes(mux *http.ServeMux) []string {
+	mux.Handle("POST /secrets/test", http.NewCrossOriginProtection().Handler(http.HandlerFunc(s.secretTest)))
 	mux.HandleFunc("GET /secrets", s.secretsPage)
 	mux.HandleFunc("GET /v1/operator/secrets", s.secretsPage)
 	patterns := []string{
@@ -263,7 +264,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
+	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
 }
 
 type maintenancePageView struct {
@@ -554,9 +555,10 @@ type page struct {
 	Retention retentionNote
 
 	// 動作紀錄
-	Channels *channelsView
-	Secrets  []secretStatus
-	Audit    *auditPageView
+	Channels  *channelsView
+	BWSStatus secrets.BackendStatus
+	Secrets   []secretStatus
+	Audit     *auditPageView
 	// Action 只在「按了但沒做成」的那一頁有值。
 	Action *actionResult
 	// EnrollPreview freezes the exact impact reviewed by the operator and the
