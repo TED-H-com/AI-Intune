@@ -1,15 +1,23 @@
-# Channels phase 1
+# Channels phase 2
 
-The `internal/channels` package provides outbound Telegram and webhook delivery.
+The `internal/channels` package provides outbound Telegram, Discord, and generic
+webhook delivery.
 `Provider` exposes `Name`, `Kind`, `Send(context.Context, Message) error`, and
-`Health(context.Context) (HealthStatus, error)`. Health reports whether credentials
-resolve and configuration is usable; it does not contact the remote service or
-send a message. A ready channel can still fail delivery.
+`Health(context.Context) (HealthStatus, error)`. Telegram and generic webhook
+health report whether credentials resolve and configuration is usable. Discord
+health contacts the remote service without sending a message: bot mode uses
+`GET /users/@me`; webhook mode GETs the resolved webhook URL. A ready channel
+can still fail delivery.
 
 ## Credentials and compatibility
 
 Configuration contains credential references, never credential values:
 
+- Discord bot: `env://DISCORD_BOT_TOKEN` in `TokenRef` and
+  `env://DISCORD_CHANNEL_ID` in `ChatRef` (the existing destination reference field).
+  The resolved destination must be a numeric channel ID.
+- Discord webhook: `env://DISCORD_WEBHOOK_URL` in `URLRef`. Bot and webhook
+  modes are mutually exclusive; generic webhook signing fields are unsupported.
 - Telegram: `env://TELEGRAM_BOT_TOKEN` and `env://TELEGRAM_CHAT_ID`.
 - Webhook: `env://CLAWCTL_NOTIFY_WEBHOOK_URL`, with optional
   `env://CLAWCTL_NOTIFY_WEBHOOK_SECRET`.
@@ -38,10 +46,11 @@ New inventory entries are available for test delivery; automated routing is futu
 work. To change existing automated notifications, update the existing env file.
 
 Provider diagnostics redact resolved values. Credential resolution failures and
-HTTP errors returned by the UI are fixed text. The Channels HTML/JSON projections
-contain only identifiers, kind, health, and bindings; neither credential values nor
-references are returned. Resolved values are short-lived transport inputs and are
-never persisted to channel configuration or audit details.
+HTTP errors returned by the UI are fixed text. The channel HTML/JSON projections
+contain only identifiers, kind, health, and bindings; channel credential values
+and references are hidden. Bot inventory displays metadata and token references,
+never resolved credentials. Resolved values are short-lived transport inputs and
+are never persisted to channel configuration or audit details.
 
 ## Administration and bindings
 
@@ -53,7 +62,10 @@ model. Reference fields are entered anew when replacing a configuration.
 
 All mutations are POST forms protected by the same Hub operator boundary and Go
 CrossOriginProtection as other forms. Cross-site browser requests are forbidden;
-there is no separate synchronizer token requirement. Channel/binding changes and
+there is no separate synchronizer token requirement. Channels mutations additionally
+require an Origin header or Sec-Fetch-Site: same-origin; requests missing both
+are rejected, including non-browser clients. CrossOriginProtection validates the
+origin evidence before the form handler runs. Channel/binding changes and
 audit evidence commit atomically. Test sends persist intent before contacting
 the remote endpoint, fail closed if that audit write fails, and record a fixed-text
 outcome. An intent without a completion after a crash means delivery is uncertain;
@@ -67,11 +79,42 @@ removes its bindings in the same audited transaction. Bindings have no routing,
 inbound command, or authorization effect. Metadata is retained until explicitly
 removed; machine data disclosure includes these records.
 
+## Discord delivery and bot registry
+
+Discord bot delivery POSTs JSON to /channels/{id}/messages with Authorization:
+Bot &lt;resolved token&gt;. Webhook delivery POSTs to the resolved webhook URL.
+Both send content and disable automatic mentions using allowed_mentions.parse=[].
+Messages above 2,000 Unicode code points are rejected. Discord uses the existing
+20-second request timeout, one MiB response limit, and redirect refusal.
+The API base defaults to https://discord.com/api/v10 and can be overridden by
+NewDiscordForAPI for transport tests.
+
+HTTP 429 retries at most twice (three attempts total), using Retry-After seconds
+or an HTTP date, falling back to JSON retry_after seconds. Each wait is bounded
+to five seconds and respects context cancellation. Other HTTP failures are not
+retried. Discord diagnostics use fixed text or HTTP status codes; response
+bodies, transport URLs, webhook token paths, and resolved credentials are never
+returned or logged.
+
+The separate channel_bots inventory stores a unique name, kind (discord/telegram),
+registered host machine ID, agent type (hermes/openclaw/other), token secret
+reference, status (active/disabled/unknown), and optional notes. Existing databases
+receive this table through the idempotent schema initialization used by channel
+inventory. Operators with view can inspect it in HTML and the Channels JSON API.
+Admins can add/update by name or remove entries; mutations require origin
+evidence, are protected by the existing capability boundary, and commit audit
+evidence atomically. Never enter credentials in names or notes. Token references
+are displayed, but are never resolved for registry views. Registry status is
+operator-maintained metadata, independent of channel health and delivery.
+Registry records are included in machine data disclosure and retained until
+explicitly removed. Existing channel bindings retain their original meaning.
+
 ## Future providers and inbound commands
 
-Discord can implement the same outbound interface using registry credential
-references, its own payload/size/rate-limit rules, and secret-safe diagnostics.
-It is not included in phase 1.
+No Discord inbound endpoint, polling worker, or gateway connection is implemented.
+A future Discord gateway WebSocket needs an always-on process. On Fly, it would
+keep the machine awake and prevent normal scale-to-zero; allowing the machine to
+sleep risks missed events. Deployment and event recovery policy remain future work.
 
 `InboundHandler` is an optional interface and documentation hook only; no
 provider implements it and no inbound HTTP endpoint or polling worker exists.

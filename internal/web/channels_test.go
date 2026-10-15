@@ -45,6 +45,7 @@ func TestChannelsPermissionsCSRFAndRedaction(t *testing.T) {
 			caps.Admin = names.Admin
 		}
 		req := requestWithCapabilities(method, path, caps)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		req.Body = http.NoBody
 		if body != "" {
 			req.Body = io.NopCloser(strings.NewReader(body))
@@ -59,6 +60,30 @@ func TestChannelsPermissionsCSRFAndRedaction(t *testing.T) {
 			t.Fatal("secret returned")
 		}
 		return rec
+	}
+	// Neither absent origin evidence nor unauthenticated requests can mutate.
+	for _, authenticated := range []bool{true, false} {
+		req := httptest.NewRequest("POST", "/channels/bot-remove", strings.NewReader("name=example"))
+		if authenticated {
+			req = requestWithCapabilities("POST", "/channels/bot-remove", names)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code < 400 {
+			t.Fatal("accepted missing CSRF/authentication evidence", rec.Code)
+		}
+	}
+	if rec := request("POST", "/channels/bot-save", "name=example-bot&kind=discord&machine_id=machine-example&agent_type=hermes&token_ref=env%3A%2F%2FCHANNEL_WEB_SECRET&status=active&notes=Example", true, false); rec.Code != 303 {
+		t.Fatal("bot save", rec.Code, rec.Body.String())
+	}
+	for _, path := range []string{"/channels", "/v1/operator/channels"} {
+		rec := request("GET", path, "", false, false)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "env://CHANNEL_WEB_SECRET") || !strings.Contains(rec.Body.String(), "example-bot") {
+			t.Fatal("bot projection", rec.Code)
+		}
+	}
+	if rec := request("POST", "/channels/bot-remove", "name=example-bot", true, false); rec.Code != 303 {
+		t.Fatal("bot remove", rec.Code)
 	}
 	if rec := request("POST", "/channels/save", "id=second&kind=webhook&url_ref=env%3A%2F%2FCHANNEL_WEB_URL", true, false); rec.Code != 303 {
 		t.Fatal("admin save", rec.Code)
@@ -75,7 +100,7 @@ func TestChannelsPermissionsCSRFAndRedaction(t *testing.T) {
 			t.Fatal("operator page")
 		}
 	}
-	for _, op := range []string{"test", "bind", "unbind", "remove", "save"} {
+	for _, op := range []string{"test", "bind", "unbind", "remove", "save", "bot-save", "bot-remove"} {
 		body := url.Values{"id": {"example"}, "machine_id": {"machine-example"}}.Encode()
 		if rec := request("POST", "/channels/"+op, body, false, false); rec.Code != 403 {
 			t.Fatalf("operator %s: %d", op, rec.Code)
@@ -133,5 +158,66 @@ func TestChannelsPermissionsCSRFAndRedaction(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), canary) || strings.Contains(logs.String(), "sentinel-secret-web") {
 		t.Fatal("secret logged")
+	}
+}
+
+func TestDiscordChannelUIAndAPINeverExposeWebhook(t *testing.T) {
+	s, st := newServer(t)
+	const canary = "discord-webhook-path-canary"
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		_, _ = io.WriteString(w, canary)
+	}))
+	defer target.Close()
+	t.Setenv("DISCORD_WEB_TEST_URL", target.URL+"/webhooks/123/"+canary)
+	s.SetSecretProvider(secrets.New(nil))
+	if e := st.MutateChannel(context.Background(), "save", channels.Config{ID: "discord-example", Kind: "discord", URLRef: "env://DISCORD_WEB_TEST_URL"}, "", store.AuditEntry{}); e != nil {
+		t.Fatal(e)
+	}
+	names, _ := operatorauth.NamesForPrefix("example.com/cap/clawctl")
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(old)
+	for _, path := range []string{"/channels", "/v1/operator/channels", "/channels/test"} {
+		method := "GET"
+		if path == "/channels/test" {
+			method = "POST"
+		}
+		req := requestWithCapabilities(method, path, names)
+		if method == "POST" {
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Body = io.NopCloser(strings.NewReader("id=discord-example"))
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		expected := 200
+		if method == "POST" {
+			expected = 502
+		}
+		if rec.Code != expected {
+			t.Fatal(path, rec.Code)
+		}
+		for _, secret := range []string{canary, target.URL, "/webhooks/123/", "env://DISCORD_WEB_TEST_URL"} {
+			if strings.Contains(rec.Body.String(), secret) || strings.Contains(logs.String(), secret) {
+				t.Fatal("Discord secret exposed")
+			}
+		}
+	}
+	for _, path := range []string{"/channels", "/v1/operator/channels", "/channels/bot-save", "/channels/bot-remove"} {
+		method := "GET"
+		if strings.Contains(path, "bot-") {
+			method = "POST"
+		}
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code < 400 {
+			t.Fatal("unauthenticated request accepted", path, rec.Code)
+		}
 	}
 }
