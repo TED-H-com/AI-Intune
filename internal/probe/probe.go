@@ -469,7 +469,7 @@ func openClaw(ctx context.Context, home string, tools []model.CLITool) model.Ope
 	// directory is that placeholder, not an OpenClaw install: counting it as
 	// present turns every host without OpenClaw into a Degraded workload.
 	if entries, err := os.ReadDir(root); err == nil && len(entries) == 0 {
-		oc.Reason = "empty ~/.openclaw (installer placeholder; OpenClaw not installed)"
+		oc.Reason = "OpenClaw not installed (empty ~/.openclaw)"
 		return oc
 	}
 	oc.Present = true
