@@ -3,13 +3,13 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 305 個 HTTP operations（28 non-operator＋277 operator；140 條 operator JSON）、
+> 逐一對照 307 個 HTTP operations（28 non-operator＋279 operator；141 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 305-operation tally above (28 non-operator + 277 operator). The inventory/contract excludes these six public account operations and totals 299. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 307-operation tally above (28 non-operator + 279 operator). The inventory/contract excludes these six public account operations and totals 301. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -976,3 +976,9 @@ MCP reads `disk_alerts_list` and `disk_ownership_get` use the same operator read
 Mutations are token-ineligible. Local-account JSON applies require current session MFA; use the UI to step up when it expires.
 Acknowledgement records a reason and never clears an alert. All browser mutations
 retain the shared Host/CrossOriginProtection/locked CSP boundary.
+
+## Secret reference status (Phase 1)
+
+`GET /secrets` (HTML) and `GET /v1/operator/secrets` (JSON) require human
+operator `admin`. Both are read-only, disable caching, and return only configured
+name/reference/status metadata. See [SECRETS.md](SECRETS.md).
