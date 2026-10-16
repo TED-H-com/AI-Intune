@@ -35,6 +35,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/operatorendpoint"
 	"github.com/teddashh/AI-Intune/internal/report"
 	"github.com/teddashh/AI-Intune/internal/restoredrill"
+	"github.com/teddashh/AI-Intune/internal/secrets"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"github.com/teddashh/AI-Intune/internal/tailnet"
@@ -677,6 +678,7 @@ func serve(argv []string) {
 	ui.SetTailnetCache(tailnetCache)
 	ui.SetOperatorService(operatorService)
 	ui.SetHubBase(h.publicURL)
+	ui.SetSecretProvider(secrets.New(secrets.NotifyReferences(h.notifyEnv)))
 	ui.SetTerminalLimits(h.terminalIdleTimeout, h.terminalMaxLifetime)
 	if err := ui.SetRetentionPolicy(h.retention); err != nil {
 		log.Fatalf("invalid web retention policy configuration: %v", err)

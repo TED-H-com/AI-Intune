@@ -33,6 +33,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
+	"github.com/teddashh/AI-Intune/internal/secrets"
 	"github.com/teddashh/AI-Intune/internal/sessionid"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
@@ -49,6 +50,7 @@ type TerminalLinks interface {
 }
 
 type Server struct {
+	secretProvider    secrets.SecretProvider
 	scheduleAdmission func(http.ResponseWriter, *http.Request) bool
 	diskAlertBanner   diskAlertBannerCache
 	// drill 讀還原演練的章；nil = 不看。用 SetDrillStampReader 塞。
@@ -176,6 +178,8 @@ func (s *Server) SetTerminalLimits(idle, lifetime time.Duration) {
 }
 
 func (s *Server) Routes(mux *http.ServeMux) []string {
+	mux.HandleFunc("GET /secrets", s.secretsPage)
+	mux.HandleFunc("GET /v1/operator/secrets", s.secretsPage)
 	patterns := []string{
 		"GET /{$}",
 		"GET /machines",
@@ -259,7 +263,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(patterns, s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
+	return append(append(append(append(patterns, "GET /secrets", "GET /v1/operator/secrets"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
 }
 
 type maintenancePageView struct {
@@ -550,7 +554,8 @@ type page struct {
 	Retention retentionNote
 
 	// 動作紀錄
-	Audit *auditPageView
+	Secrets []secretStatus
+	Audit   *auditPageView
 	// Action 只在「按了但沒做成」的那一頁有值。
 	Action *actionResult
 	// EnrollPreview freezes the exact impact reviewed by the operator and the
