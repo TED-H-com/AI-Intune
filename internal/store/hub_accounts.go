@@ -339,6 +339,9 @@ func (s *Store) ChangePassword(accountID, password, keepToken string) error {
 	if _, err = tx.Exec(`DELETE FROM hub_login_failures WHERE account_id=?`, accountID); err != nil {
 		return err
 	}
+	if _, err = tx.Exec(`DELETE FROM hub_mfa_failures WHERE account_id=?`, accountID); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`UPDATE hub_sessions SET revoked_at=? WHERE account_id=? AND session_hash<>? AND revoked_at IS NULL`, fmtTime(s.nowFn()), accountID, sessionHash(keepToken)); err != nil {
 		return err
 	}
@@ -362,7 +365,8 @@ func (s *Store) LocalAccountLogin(accountID string) (string, error) {
 }
 
 // Password and second-factor failures contribute to one rolling audit signal.
-// This observes distributed guessing without locking the account globally.
+// The signal never locks; verifySecondFactorTx separately limits consecutive
+// second-factor failures per account.
 func (s *Store) auditHubGuessingTx(tx *writeTx, a HubAccount, metadata ...AuditEntry) error {
 	var failures, signals int
 	since := fmtTime(s.nowFn().Add(-time.Hour))
