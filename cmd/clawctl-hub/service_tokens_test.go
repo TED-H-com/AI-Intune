@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1055,5 +1056,40 @@ func TestServiceTokenCustomScriptScopeError(t *testing.T) {
 	tokens, err := st.ListServiceTokens()
 	if err != nil || len(tokens) != 0 {
 		t.Fatal("invalid custom token created")
+	}
+}
+
+func TestHermesRoutineReadBoundary(t *testing.T) {
+	st := boundaryStore(t)
+	actor, err := st.CreateFirstAdmin("admin", "a sufficiently long password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, secret, err := st.CreateServiceToken(store.ServiceToken{Name: "hermes", Scope: "operate", ExpiresAt: time.Now().Add(time.Hour), Allowlist: hermesServiceRoutes}, actor.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	for route := range operatorRoutePolicies {
+		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	}
+	boundary := newOperatorBoundary(mux, nil, st, operatorRoutePolicies, testOperatorAuthority)
+	routes := []string{"GET /v1/operator/machines", "GET /v1/operator/machines/{id}/lifecycle", "GET /v1/operator/machines/{id}/channel", "GET /v1/operator/machines/{id}/assigned-user", "GET /v1/operator/machines/{id}/actions", "GET /v1/operator/machines/{id}/data", "GET /v1/operator/enrollment-report", "GET /v1/operator/enrollment-limit", "GET /v1/operator/profile-report", "GET /v1/operator/schedules", "GET /v1/operator/schedules/{id}"}
+	denied := []string{"POST /machines/{id}/retire", "POST /account/security/totp/disable", "POST /account/service-tokens/create", "PUT /v1/operator/machines/{id}/lifecycle", "GET /v1/operator/machines/{id}/enrollment-token", "GET /v1/operator/machines/{id}/evidence", "GET /v1/operator/machines/{id}/timeline", "POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now"}
+	for i, route := range append(routes, denied...) {
+		method, path, _ := strings.Cut(route, " ")
+		path = strings.NewReplacer("{id}", "m-1", "{operation}", "upsert", "{phase}", "preview").Replace(path)
+		req := newBoundaryRequest(method, path, nil)
+		req.RemoteAddr = "192.0.2." + strconv.Itoa(i+1) + ":1234"
+		req.Header.Set("Authorization", "Bearer "+secret)
+		rec := httptest.NewRecorder()
+		boundary.ServeHTTP(rec, req)
+		if slices.Contains(routes, route) {
+			if rec.Code != 200 {
+				t.Errorf("%s: %d %s", route, rec.Code, rec.Body.String())
+			}
+		} else if rec.Code != 401 && rec.Code != 403 {
+			t.Errorf("%s: %d", route, rec.Code)
+		}
 	}
 }

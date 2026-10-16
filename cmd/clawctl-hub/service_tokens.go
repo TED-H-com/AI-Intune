@@ -75,7 +75,7 @@ func serviceTokenErrorField(message string) string {
 	}
 }
 
-var hermesServiceRoutes = []string{"GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status", "GET /v1/operator/jobs", "GET /v1/operator/jobs/{id}", "GET /v1/operator/jobs/{id}/evidence", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}
+var hermesServiceRoutes = store.HermesServiceRoutes()
 
 func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 	t := store.ServiceToken{Name: r.PostForm.Get("name"), Scope: r.PostForm.Get("scope"), SourceCIDRs: splitServiceList(r.PostForm.Get("source_cidrs"))}

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -66,5 +67,71 @@ func TestServiceTokenExistingDatabaseMigration(t *testing.T) {
 	next, _, err := s.RotateServiceToken(token.ID, "192.0.2.1")
 	if err != nil || next.Name != token.Name || next.RotationChainID != token.ID {
 		t.Fatal("legacy rotation", err)
+	}
+}
+
+func TestHermesPresetMigration(t *testing.T) {
+	fastAccountHashes(t)
+	path := filepath.Join(t.TempDir(), "hermes.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, err := s.CreateFirstAdmin("admin", testAdminPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := hermesLegacyServiceRoutes()
+	slices.Reverse(old)
+	var secrets []string
+	for _, routes := range [][]string{old, {"GET /v1/operator/jobs"}, old} {
+		token, secret, e := s.CreateServiceToken(ServiceToken{Name: "agent", Scope: "operate", ExpiresAt: s.now().Add(time.Hour), Allowlist: routes}, actor.AccountID)
+		if e != nil {
+			t.Fatal(e)
+		}
+		secrets = append(secrets, secret)
+		if len(secrets) == 3 {
+			if e = s.RevokeServiceToken(token.ID, actor.AccountID); e != nil {
+				t.Fatal(e)
+			}
+		}
+	}
+	s.Close()
+	for i := 0; i < 2; i++ {
+		s, err = Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, e := s.AuthenticateServiceToken(secrets[0], "GET /v1/operator/machines", "192.0.2.1", "view")
+		if e != nil || !slices.Equal(token.Allowlist, HermesServiceRoutes()) {
+			t.Fatalf("preset not upgraded: %v", e)
+		}
+		custom, e := s.AuthenticateServiceToken(secrets[1], "GET /v1/operator/jobs", "192.0.2.1", "view")
+		if e != nil || !slices.Equal(custom.Allowlist, []string{"GET /v1/operator/jobs"}) {
+			t.Fatalf("custom changed: %v", e)
+		}
+		tokens, e := s.ListServiceTokens()
+		if e != nil {
+			t.Fatal(e)
+		}
+		for _, v := range tokens {
+			if v.RevokedAt != nil && !slices.Equal(v.Allowlist, old) {
+				t.Fatal("revoked changed")
+			}
+		}
+		audits, e := s.Audit("", 100)
+		if e != nil {
+			t.Fatal(e)
+		}
+		count := 0
+		for _, a := range audits {
+			if a.Action == "service-token-hermes-preset-migrate" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("migration audits: %d", count)
+		}
+		s.Close()
 	}
 }

@@ -684,9 +684,20 @@ Read times describe evaluation, not a cross-table atomic snapshot.
 Bearer `cst_` tokens authorize only `/v1/operator/*` JSON routes using the route capability map, required nonempty exact method/route-pattern allowlist, and optional source CIDRs against the configured client-IP resolver. Scopes are `view`, `operate`, and `operator-admin`. Explicitly eligible read-only view routes and the two read-script routes below accept service tokens. `operator-admin` additionally permits the routine administration routes below; other preview/apply and admin routes deny. Revocation is checked on every request. Audit principal is `service:<name>`. Browser CSRF and human session paths retain their existing checks.
 
 
+The `hermes-default` preset includes jobs, approvals and Hub status reads,
+read-only script runs, machine list, machine lifecycle, channel, assigned user,
+actions and data reads, enrollment report and limit, profile report, and schedule
+list and detail reads. Schedule changes still require `operator-admin`.
+On startup, non-revoked tokens with exactly the previous Hermes route set
+are upgraded once, regardless of route order, with an audit entry. Custom
+allowlists, secrets, scopes and expiry dates are preserved. Machine detail
+remains human-only because it includes evidence text that is not secret-redacted.
+Enrollment-token reveal, machine evidence and timeline routes remain human-only.
+
+
 ### Service tokens and ad hoc catalog scripts
 
-Hermes service tokens with `operate` scope may allowlist exactly
+Hermes service tokens with `operate` scope may allowlist the read-script routes
 `POST /v1/operator/script-runs/preview` (`script_run_preview`) and
 `POST /v1/operator/script-runs` (`script_run_apply`). The manifest uses
 `serviceEligibleReadScriptsOnly`; view-scope tokens cannot include these routes.
@@ -704,7 +715,8 @@ Script request rate limits still apply to service tokens, shared across preview
 and apply by stable `service:<name>` subject. Success and denial audits retain
 that service identity. Existing bounded rate-limit denial auditing still applies.
 
-Schedule list/get, upsert and set-enabled preview/apply
+Schedule list/get accepts explicitly allowlisted `view`, `operate`, and
+`operator-admin` tokens. Schedule upsert and set-enabled preview/apply
 (`POST /v1/operator/schedules/{operation}/{phase}`), and run-now
 (`POST /v1/operator/schedules/{id}/run-now`) accept explicitly allowlisted
 `operator-admin` tokens. `view` and `operate` tokens cannot manage schedules.

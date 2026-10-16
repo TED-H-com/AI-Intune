@@ -14,3 +14,18 @@ func TestOperatorAdminDoesNotGrantHumanActions(t *testing.T) {
 		t.Fatal("future actions must fail closed")
 	}
 }
+
+func TestScheduleReadScopes(t *testing.T) {
+	for _, scope := range []string{"view", "operate", ServiceScopeOperatorAdmin} {
+		for _, route := range []string{"GET /v1/operator/schedules", "GET /v1/operator/schedules/{id}"} {
+			if !ServiceScopeAllows(scope, "view", route) {
+				t.Fatalf("read denied: %s %s", scope, route)
+			}
+		}
+		for _, route := range []string{"POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now"} {
+			if ServiceScopeAllows(scope, "operate", route) != (scope == ServiceScopeOperatorAdmin) {
+				t.Fatalf("mutation scope: %s %s", scope, route)
+			}
+		}
+	}
+}

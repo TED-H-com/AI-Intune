@@ -27,7 +27,7 @@ func TestOperatorAdminScopeCentralAuthorization(t *testing.T) {
 			allowed = append(allowed, route)
 		}
 	}
-	if len(allowed) != 14 {
+	if len(allowed) != 12 {
 		t.Fatalf("operator-admin routes=%d", len(allowed))
 	}
 	forbidden := []string{
