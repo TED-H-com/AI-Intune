@@ -679,7 +679,11 @@ func serve(argv []string) {
 	ui.SetTailnetCache(tailnetCache)
 	ui.SetOperatorService(operatorService)
 	ui.SetHubBase(h.publicURL)
-	ui.SetSecretProvider(secrets.New(secrets.NotifyReferences(h.notifyEnv)))
+	secretRegistry, err := secrets.LoadConfig(os.Getenv("CLAWCTL_SECRETS_CONFIG"), secrets.NotifyReferences(h.notifyEnv))
+	if err != nil {
+		log.Fatal("invalid secrets configuration")
+	}
+	ui.SetSecretProvider(secretRegistry)
 	if err := h.store.InitializeChannels(context.Background(), channels.NotifyConfigs(h.notifyEnv)); err != nil {
 		log.Fatalf("initialize channel inventory: %v", err)
 	}

@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 304 個 production operations 基線
+## 305 個 production operations 基線
 
-此數字按 HTTP method + route 計數：22 個 non-operator operations、282 個 operator
-operations；其中 142 個為 operator JSON、140 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=109`、`operate=33`、`admin=140`。這組數字由 route/API/service/Web/CLI
-合約測試固定；304-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：22 個 non-operator operations、283 個 operator
+operations；其中 142 個為 operator JSON、141 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=109`、`operate=33`、`admin=141`。這組數字由 route/API/service/Web/CLI
+合約測試固定；305-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -91,7 +91,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 
 | 22 | `POST /v1/disk-actions/{job_id}/results` | Machine credential | 否 | Private exact action receipts; immutable replay ledger |
 
-### Operator HTML/BFF 與 JSON（282）
+### Operator HTML/BFF 與 JSON（283）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -402,6 +402,7 @@ domain service 見 `internal/operator/`。
 | 302 | `GET /channels` | HTML | 讀取 | `view`；channel health and metadata bindings |
 | 303 | `GET /v1/operator/channels` | JSON | 讀取 | `view`；safe channel inventory |
 | 304 | `POST /channels/{operation}` | HTML | 寫入 | `admin`；save/remove/test/bind/unbind; audited and same-origin |
+| 305 | `POST /secrets/test` | HTML form | 寫入 | `admin`；configured ref test fetch; audited and same-origin; status only |
 
 
 ## Workload / submenu parity matrix

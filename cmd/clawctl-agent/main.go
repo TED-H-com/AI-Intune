@@ -103,6 +103,8 @@ func main() {
 	// ⚠⚠ 這裡刻意沒有 default: runAgent()。每一條路都要指名 ——
 	// 「掉下去就跑 daemon」正是 unknownArgError 記的那個六小時故障。
 	switch dispatch(os.Args[1:]) {
+	case actSecretsPull:
+		runSecretsPull(os.Args[2:])
 	case actAgent:
 		runAgent()
 	case actEnroll:
@@ -125,10 +127,11 @@ func main() {
 // dispatch 認得的動作。⚠ actUnknown 不是一個「大概是 daemon」的預設值，
 // 它是一個必須讓程式停下來的答案。
 const (
-	actAgent  = "agent"
-	actEnroll = "enroll"
-	actProbe  = "probe"
-	actVerify = "verify"
+	actAgent       = "agent"
+	actEnroll      = "enroll"
+	actProbe       = "probe"
+	actSecretsPull = "secrets-pull"
+	actVerify      = "verify"
 	// actVerifier 是第二雙眼睛那一側，跟 actVerify（等 Hub 確認自己開始接單）
 	// 沒有關係。兩個名字很像，做的事完全不同：一個問「Hub 看到我了嗎」，
 	// 一個去看別台機器現在實際長怎樣。
@@ -148,6 +151,8 @@ func dispatch(args []string) string {
 		return actAgent // 沒有參數才是 daemon —— 那是 systemd 用的那一條
 	}
 	switch args[0] {
+	case "secrets-pull":
+		return actSecretsPull
 	case "enroll":
 		return actEnroll
 	case "probe":
@@ -173,6 +178,7 @@ Usage:
   clawctl-agent verify                      Wait for Hub to confirm this version has begun receiving jobs
   clawctl-agent verifier --hub URL \
       --token-file T --targets F            Run as standalone verifier to verify jobs assigned by Hub
+  clawctl-agent secrets-pull --config F --ref R --output F  Pull a configured secret to a private file
   clawctl-agent version                     Print version
 `
 
