@@ -437,3 +437,33 @@ func (s *Store) RotateServiceToken(id, source string) (ServiceToken, string, err
 	t.OverlapDeadline = nil
 	return t, secret, nil
 }
+
+// HermesServiceRoutes returns a fresh copy of the routine operations preset.
+func HermesServiceRoutes() []string {
+	return append(hermesLegacyServiceRoutes(), []string{
+		"GET /v1/operator/machines",
+		"GET /v1/operator/machines/{id}/lifecycle",
+		"GET /v1/operator/machines/{id}/channel",
+		"GET /v1/operator/machines/{id}/assigned-user",
+		"GET /v1/operator/machines/{id}/actions",
+		"GET /v1/operator/machines/{id}/data",
+		"GET /v1/operator/enrollment-report",
+		"GET /v1/operator/enrollment-limit",
+		"GET /v1/operator/profile-report",
+		"GET /v1/operator/schedules",
+		"GET /v1/operator/schedules/{id}",
+	}...)
+}
+
+func hermesLegacyServiceRoutes() []string {
+	return []string{
+		"GET /v1/operator/jobs-summary",
+		"GET /v1/operator/approvals-summary",
+		"GET /v1/operator/hub-status",
+		"GET /v1/operator/jobs",
+		"GET /v1/operator/jobs/{id}",
+		"GET /v1/operator/jobs/{id}/evidence",
+		"POST /v1/operator/script-runs/preview",
+		"POST /v1/operator/script-runs",
+	}
+}

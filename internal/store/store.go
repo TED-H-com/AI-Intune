@@ -653,6 +653,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate identity hints: %w", err)
 	}
+	if err := migrateHermesServiceRoutes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate Hermes service routes: %w", err)
+	}
 	if err := clearTerminalLeases(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)

@@ -9,7 +9,6 @@ const ServiceScopeOperatorAdmin = "operator-admin"
 func OperatorAdminRoute(route string) bool {
 	switch route {
 	case "POST /v1/operator/enrollment-tokens/preview", "POST /v1/operator/enrollment-tokens",
-		"GET /v1/operator/schedules", "GET /v1/operator/schedules/{id}",
 		"POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now",
 		"POST /v1/operator/machines/{id}/profile-assignment-preview", "POST /v1/operator/machines/{id}/profile-assignments",
 		"POST /v1/operator/deployments/preview", "POST /v1/operator/deployments",
