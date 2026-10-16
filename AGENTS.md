@@ -22,3 +22,8 @@ Do not merge PRs unless the human asked. Do not print secrets.
 - Do not expose placeholders, partial workflows, or temporary navigation. Finish the vertical slice before making it visible.
 - Put legal terms in the dedicated terms surface linked from installation or the final page, never inline with the task flow.
 - Tests must cover concise interface copy and prevent banned implementation language from returning. `forbiddenInterfaceCopy` in `internal/web/interface_copy_test.go` scans templates and production Go strings; extend it instead of loosening it.
+
+## Delivery
+
+- Complete each workflow across Web, CLI, API, persistence, audit, tests, documentation, and deployment before starting the next visible workflow.
+- Remove replaced paths and unused compatibility helpers when canonicalizing a workflow.
