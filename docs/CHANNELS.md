@@ -1,4 +1,4 @@
-# Channels phase 2
+# Channels phase 3
 
 The `internal/channels` package provides outbound Telegram, Discord, and generic
 webhook delivery.
@@ -109,22 +109,105 @@ operator-maintained metadata, independent of channel health and delivery.
 Registry records are included in machine data disclosure and retained until
 explicitly removed. Existing channel bindings retain their original meaning.
 
-## Future providers and inbound commands
+## Inbound chat commands (opt-in)
 
-No Discord inbound endpoint, polling worker, or gateway connection is implemented.
-A future Discord gateway WebSocket needs an always-on process. On Fly, it would
-keep the machine awake and prevent normal scale-to-zero; allowing the machine to
-sleep risks missed events. Deployment and event recovery policy remain future work.
+Inbound is **off by default**. Set `CLAWCTL_CHANNELS_INBOUND_CONFIG` to a local
+JSON file and restart the Hub. Each entry must explicitly set `enabled: true`.
+There is no polling worker or Discord gateway, and no always-on gateway process.
+Example (all identifiers are placeholders):
 
-`InboundHandler` is an optional interface and documentation hook only; no
-provider implements it and no inbound HTTP endpoint or polling worker exists.
-Future inbound commands must authenticate provider signatures/tokens, allowlist
-identities and destinations, resolve authorized machine bindings, and enforce
-the existing Hub permissions. Destructive actions require explicit human approval
-bound to the exact action and target; a chat message alone must never authorize
-them.
+```json
+[
+  {
+    "id": "telegram-operations",
+    "kind": "telegram",
+    "enabled": true,
+    "destination": "CHAT_ID",
+    "self_id": "BOT_USER_ID",
+    "token_ref": "env://TELEGRAM_BOT_TOKEN",
+    "secret_ref": "env://TELEGRAM_WEBHOOK_SECRET",
+    "approval_seconds": 600
+  },
+  {
+    "id": "discord-operations",
+    "kind": "discord",
+    "enabled": true,
+    "destination": "CHANNEL_ID",
+    "self_id": "APPLICATION_BOT_USER_ID",
+    "public_key_ref": "env://DISCORD_PUBLIC_KEY",
+    "approval_seconds": 600
+  }
+]
+```
 
-Loop protection must include stable provider event IDs, durable deduplication
-with bounded retention, origin/correlation metadata, rejection of the bot's own
-messages, bounded hop counts, and rate limits. Outbound notifications must not be
-interpreted as commands, and transport retries must reuse event identity.
+Configure each provider to POST to `/v1/channels/CHANNEL_CONFIG_ID/inbound` on
+its HTTPS Hub URL. Telegram setWebhook must use the resolved webhook secret as
+`secret_token`; its `X-Telegram-Bot-Api-Secret-Token` is compared using constant-time
+hash comparison. Only ordinary messages and callback queries are accepted.
+Telegram replies use the webhook response's `sendMessage` method (including inline
+keyboards); no extra Bot API request is needed. The token reference is validated
+as reference-only configuration; outbound Bot API delivery resolves tokens through
+the existing secret registry. Do not put resolved tokens in this JSON file.
+Discord resolves the hex-encoded Ed25519 application public key through the same
+registry, verifies timestamp + exact request body, enforces a five-minute clock
+window in both directions, and handles signed PING, application commands, and
+button components. Register slash commands externally: `status`, `machines`,
+`jobs`, `alerts`, and `ack-alert` with one required string option `alert_id`.
+Discord read responses are ephemeral; approval cards are visible in the configured
+channel so other allowlisted humans can approve. All Discord responses disable mentions. Unknown users receive no
+reply (HTTP 204), including on Discord; the provider may display its own timeout.
+
+Only the configured destination is accepted. Bot senders, the configured self
+ID, Telegram messages sent via bots or channel identities, stale Telegram messages
+(older than ten minutes), and unsupported event types are ignored. Telegram
+update IDs and Discord interaction IDs are deduplicated in SQLite for 24 hours,
+including across Hub restarts. The cache holds at most 10,000 live keys and fails
+closed at capacity. Telegram's message age check and Discord's signature timestamp
+window prevent old events from becoming valid when those keys expire. Limits are
+10 events per user per minute and 60 per configured channel per minute; buckets
+are process-local, bounded to 4,096 entries, and reset on restart. Request bodies
+are limited to 64 KiB. Use provider delivery retries with the original event ID.
+
+On **Channels**, admins map each provider user ID to an existing Hub account ID.
+These mappings are independent of outbound inventory and machine bindings. Only
+allowlisted humans can issue commands or approve. Roles come from the current Hub
+account, using the same account-to-principal function as local web sessions and
+`Principal.Has` capability checks. The current local account schema supports only
+admins; unknown future roles fail closed. Disabled accounts and removed mappings
+immediately lose chat access. This version maps local Hub identities; it does not
+infer Tailscale identity from chat profile names. Allowlist mutations use existing
+admin and browser-origin checks and commit audit evidence atomically. Allowlist
+metadata is visible only to admins; viewers see enabled status and pending actions.
+
+Read commands call the same `operator.Service` as the web UI: `status` gives fleet
+counts; `machines` and `jobs` return up to ten IDs and totals; `alerts` returns up
+to ten recent disk alert IDs. Responses avoid raw agent evidence and job payloads.
+`ack-alert ALERT_ID` is the sole mutation in this phase. It requires the same admin
+capability and canonical disk-alert preview/apply API as the web UI. Its approval
+card names the exact target and expiry. Any allowlisted human with admin capability
+can Approve or Deny; requesters may approve their own requests. The approval stores
+the exact preview digest and request and is bound to its channel and destination.
+Both requester and approver permissions are rechecked at apply time. Expiry defaults
+to ten minutes and may be configured from one to 600 seconds. Pending approvals
+are capped at 1,000. Deny and Approve both consume the card once in an audited
+transaction before execution. A crash after consumption can leave execution
+uncertain; no automatic retry occurs. Inspect the canonical action audit before
+issuing another request. Expired approval records are pruned when creating new cards.
+
+There is a positive command set plus an explicit dangerous-domain denylist:
+delete/retire, MFA/auth/password changes, token creation, enrollment, secrets,
+terminals, and scripts are unavailable, including through approval buttons.
+Unknown commands cannot invoke arbitrary Hub routes. Chat cannot change roles,
+allowlists, configuration, or credentials. Provider authentication runs outside the
+browser session boundary on one explicitly classified inbound route; it does not
+relax any operator route or browser CSRF rule.
+
+Command receipt, unknown users, bots, rate denials, blocked commands, approval
+requests/decisions and execution outcomes are audited. Successful mutations also
+retain canonical action audit evidence with the approving Hub identity and
+`chat-allowlist` authentication provenance. Audit failure prevents command
+execution or approval creation/consumption. Raw request bodies, provider signatures,
+credential values, backend errors and command text are never included in chat audit
+records or diagnostics. Inbound status projections omit credential references and
+values. State is retained locally until expiry/pruning or explicit mapping removal;
+audit records follow the existing Hub audit retention policy.

@@ -61,10 +61,16 @@ func routeTallyFromPolicies(t *testing.T) routeTally {
 	var agent []string
 	health := 0
 	accounts := 0
+	chat := 0
 	for pattern, policy := range nonOperatorRoutePolicies {
 		switch policy.Class {
 		case nonOperatorAgent:
 			agent = append(agent, pattern)
+		case nonOperatorChat:
+			chat++
+			if pattern != "POST /v1/channels/{id}/inbound" {
+				t.Fatalf("unexpected chat route %q", pattern)
+			}
 		case nonOperatorAccount:
 			accounts++
 			if !isAccountRoute(pattern) {
@@ -80,6 +86,9 @@ func routeTallyFromPolicies(t *testing.T) routeTally {
 		default:
 			t.Fatalf("non-operator route %q class %d 沒有歸類", pattern, policy.Class)
 		}
+	}
+	if chat != 1 {
+		t.Fatalf("chat routes=%d, want 1", chat)
 	}
 	if health != 1 {
 		t.Fatalf("health=%d，公開探針只剩 /healthz", health)
@@ -103,7 +112,7 @@ func routeTallyFromPolicies(t *testing.T) routeTally {
 	if accounts != 6 {
 		t.Fatalf("account routes=%d, want 6", accounts)
 	}
-	if tally.machine+tally.verifier+health+accounts != tally.nonOperator {
+	if tally.machine+tally.verifier+health+accounts+chat != tally.nonOperator {
 		t.Fatalf("machine %d + verifier %d + health %d != non-operator %d",
 			tally.machine, tally.verifier, health, tally.nonOperator)
 	}

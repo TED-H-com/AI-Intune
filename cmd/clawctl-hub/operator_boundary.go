@@ -118,6 +118,7 @@ const (
 	nonOperatorHealth
 	nonOperatorAccount
 	nonOperatorMetrics
+	nonOperatorChat
 )
 
 type nonOperatorRoutePolicy struct {
@@ -130,12 +131,13 @@ type nonOperatorRoutePolicy struct {
 // public account traffic. In particular, /v1/operator/* can never be classified as
 // a machine route.
 var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
-	"GET /setup":      {nonOperatorAccount},
-	"POST /setup":     {nonOperatorAccount},
-	"GET /login":      {nonOperatorAccount},
-	"POST /login":     {nonOperatorAccount},
-	"POST /logout":    {nonOperatorAccount},
-	"POST /login/mfa": {nonOperatorAccount},
+	"POST /v1/channels/{id}/inbound": {nonOperatorChat},
+	"GET /setup":                     {nonOperatorAccount},
+	"POST /setup":                    {nonOperatorAccount},
+	"GET /login":                     {nonOperatorAccount},
+	"POST /login":                    {nonOperatorAccount},
+	"POST /logout":                   {nonOperatorAccount},
+	"POST /login/mfa":                {nonOperatorAccount},
 
 	"POST /v1/enrollments":                    {nonOperatorAgent},
 	"POST /v1/checkins":                       {nonOperatorAgent},
@@ -526,6 +528,7 @@ func newHubHTTPHandler(h *hub, ui *web.Server, authorizer operatorRequestAuthori
 	ui.SetScheduleAdmission(h.admitScheduleMutation)
 	root := http.NewServeMux()
 	nonOperatorRegistered := h.machineAndPublicRoutes(root)
+	nonOperatorRegistered = append(nonOperatorRegistered, ui.InboundRoutes(root)...)
 	nonOperatorRegistered = append(nonOperatorRegistered, registerAccountRoutes(root, h.store, ui, authority, h.clientIP, cloud...)...)
 
 	operatorMux := http.NewServeMux()
@@ -588,6 +591,10 @@ func validateNonOperatorRoutePolicies(registered []string, policies map[string]n
 			if len(segments) < 2 || segments[0] != "v1" ||
 				!validMachinePlaneDiscriminator(segments[1]) {
 				return fmt.Errorf("non-operator route %q machine-plane discriminator must be literal", pattern)
+			}
+		case nonOperatorChat:
+			if pattern != "POST /v1/channels/{id}/inbound" {
+				return fmt.Errorf("invalid inbound route %q", pattern)
 			}
 		case nonOperatorAccount:
 			if !isAccountRoute(pattern) {

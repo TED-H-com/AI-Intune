@@ -684,6 +684,9 @@ func serve(argv []string) {
 		log.Fatal("invalid secrets configuration")
 	}
 	ui.SetSecretProvider(secretRegistry)
+	if err := ui.ConfigureInbound(os.Getenv("CLAWCTL_CHANNELS_INBOUND_CONFIG")); err != nil {
+		log.Fatal("invalid inbound channels configuration")
+	}
 	if err := h.store.InitializeChannels(context.Background(), channels.NotifyConfigs(h.notifyEnv)); err != nil {
 		log.Fatalf("initialize channel inventory: %v", err)
 	}

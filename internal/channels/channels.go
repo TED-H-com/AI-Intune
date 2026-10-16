@@ -47,9 +47,9 @@ type Provider interface {
 	Health(context.Context) (HealthStatus, error)
 }
 
-// InboundHandler is a future opt-in hook. No provider implements inbound
-// delivery in phase 1. Implementations must authenticate, allowlist, deduplicate,
-// enforce approval for destructive commands and prevent message loops.
+// InboundHandler is retained for transport compatibility. Provider-authenticated
+// inbound HTTP commands live in internal/chat, which adapts to the operator API.
+// Dangerous actions are unavailable there; supported mutations require approval.
 type InboundHandler interface {
 	HandleInbound(context.Context, Message) error
 }

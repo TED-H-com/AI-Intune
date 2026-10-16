@@ -31,6 +31,7 @@ const (
 	defaultResolveTimeout         = 3 * time.Second
 	AuthMethodServiceToken        = "service-token"
 	AuthMethodLocalAccountSession = "local-account-session"
+	AuthMethodChatAllowlist       = "chat-allowlist"
 	AuthMethodLocalAPI            = "tailscale-localapi-app-cap"
 	minimumDaemonVersion          = "1.100.0"
 )
@@ -236,7 +237,7 @@ func (p Principal) StableSubject() string {
 	if p.TailnetUserID == "" {
 		return ""
 	}
-	if p.AuthMethod == AuthMethodLocalAccountSession {
+	if p.AuthMethod == AuthMethodLocalAccountSession || p.AuthMethod == AuthMethodChatAllowlist {
 		return "local-user:" + strings.TrimPrefix(p.TailnetUserID, "local:")
 	}
 	return "tailscale-user:" + p.TailnetUserID
