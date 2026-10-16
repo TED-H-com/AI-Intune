@@ -85,6 +85,8 @@ func NewWebhook(c Config, r secrets.SecretProvider) *Webhook {
 }
 func New(c Config, r secrets.SecretProvider) Provider {
 	switch c.Kind {
+	case "discord":
+		return NewDiscord(c, r)
 	case "telegram":
 		return NewTelegram(c, r)
 	case "webhook":
@@ -125,6 +127,14 @@ func (p *outbound) credentials(ctx context.Context) (credentials, error) {
 	case "telegram":
 		refs = []string{p.config.TokenRef, p.config.ChatRef}
 		dst = []*string{&c.token, &c.chatID}
+	case "discord":
+		if p.config.URLRef != "" {
+			refs = []string{p.config.URLRef}
+			dst = []*string{&c.webhookURL}
+		} else {
+			refs = []string{p.config.TokenRef, p.config.ChatRef}
+			dst = []*string{&c.token, &c.chatID}
+		}
 	case "webhook":
 		refs = []string{p.config.URLRef}
 		dst = []*string{&c.webhookURL}
@@ -145,7 +155,7 @@ func (p *outbound) credentials(ctx context.Context) (credentials, error) {
 		}
 		c.webhookSecret = strings.TrimSpace(v.Reveal())
 	}
-	if p.Kind() == "webhook" {
+	if p.Kind() == "webhook" || c.webhookURL != "" {
 		if e := ValidateWebhookURL(c.webhookURL); e != nil {
 			return credentials{}, e
 		}
@@ -304,6 +314,15 @@ func sanitizeNotifyError(err error, secrets []string) error {
 func ValidateConfig(c Config) error {
 	refs := []string{}
 	switch c.Kind {
+	case "discord":
+		if c.SecretRef != "" || (c.URLRef != "" && (c.TokenRef != "" || c.ChatRef != "")) {
+			return errors.New("unexpected credential reference")
+		}
+		if c.URLRef != "" {
+			refs = []string{c.URLRef}
+		} else {
+			refs = []string{c.TokenRef, c.ChatRef}
+		}
 	case "telegram":
 		refs = []string{c.TokenRef, c.ChatRef}
 	case "webhook":
@@ -315,29 +334,37 @@ func ValidateConfig(c Config) error {
 		return errors.New("unsupported channel kind")
 	}
 	for _, ref := range refs {
-		u, e := url.Parse(ref)
-		if e != nil || u.User != nil || u.RawQuery != "" {
-			return errors.New("credential reference required")
-		}
-		switch u.Scheme {
-		case "env":
-			if u.Host == "" || u.Path != "" || u.Fragment != "" {
-				return errors.New("credential reference required")
-			}
-		case "file":
-			if u.Host != "" || !strings.HasPrefix(u.Path, "/") || u.Fragment == "" {
-				return errors.New("credential reference required")
-			}
-		case "bws":
-			if u.Host == "" {
-				return errors.New("credential reference required")
-			}
-		default:
-			return errors.New("credential reference required")
+		if e := ValidateCredentialReference(ref); e != nil {
+			return e
 		}
 	}
 	if c.Kind == "telegram" && (c.URLRef != "" || c.SecretRef != "") || c.Kind == "webhook" && (c.TokenRef != "" || c.ChatRef != "") {
 		return errors.New("unexpected credential reference")
+	}
+	return nil
+}
+
+// ValidateCredentialReference rejects raw values before configuration is persisted.
+func ValidateCredentialReference(ref string) error {
+	u, e := url.Parse(ref)
+	if e != nil || u.User != nil || u.RawQuery != "" {
+		return errors.New("credential reference required")
+	}
+	switch u.Scheme {
+	case "env":
+		if u.Host == "" || u.Path != "" || u.Fragment != "" {
+			return errors.New("credential reference required")
+		}
+	case "file":
+		if u.Host != "" || !strings.HasPrefix(u.Path, "/") || u.Fragment == "" {
+			return errors.New("credential reference required")
+		}
+	case "bws":
+		if u.Host == "" {
+			return errors.New("credential reference required")
+		}
+	default:
+		return errors.New("credential reference required")
 	}
 	return nil
 }

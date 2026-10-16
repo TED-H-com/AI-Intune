@@ -15,6 +15,7 @@ type channelRow struct {
 	Status string `json:"status"`
 }
 type channelsView struct {
+	Bots     []store.ChannelBot     `json:"bots"`
 	Rows     []channelRow           `json:"channels"`
 	Bindings []store.ChannelBinding `json:"bindings"`
 }
@@ -46,6 +47,11 @@ func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bindings unavailable", 500)
 		return
 	}
+	view.Bots, e = s.store.ChannelBots()
+	if e != nil {
+		http.Error(w, "bots unavailable", 500)
+		return
+	}
 	if r.URL.Path == "/v1/operator/channels" {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(view)
@@ -59,6 +65,12 @@ func (s *Server) channelMutation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
+	// Require browser origin evidence as well as CrossOriginProtection.
+	// Requests without either header fail closed.
+	if r.Header.Get("Origin") == "" && r.Header.Get("Sec-Fetch-Site") != "same-origin" {
+		http.Error(w, "origin required", http.StatusForbidden)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	if e := r.ParseForm(); e != nil {
 		http.Error(w, "invalid form", 400)
@@ -68,6 +80,15 @@ func (s *Server) channelMutation(w http.ResponseWriter, r *http.Request) {
 	a := store.AuditEntry{}
 	operator.ApplyActor(&a, operator.ActorFromRequest(r, operator.SourceKindWeb))
 	op := r.PathValue("operation")
+	if op == "bot-save" || op == "bot-remove" {
+		b := store.ChannelBot{Name: r.FormValue("name"), Kind: c.Kind, MachineID: r.FormValue("machine_id"), AgentType: r.FormValue("agent_type"), TokenRef: c.TokenRef, Status: r.FormValue("status"), Notes: r.FormValue("notes")}
+		if e := s.store.MutateChannelBot(r.Context(), op[4:], b, a); e != nil {
+			http.Error(w, "bot update failed; check metadata and references", 400)
+			return
+		}
+		http.Redirect(w, r, "/channels", 303)
+		return
+	}
 	if op == "test" {
 		configs, e := s.store.Channels()
 		if e != nil {

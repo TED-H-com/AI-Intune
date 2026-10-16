@@ -1823,3 +1823,15 @@ CREATE TABLE IF NOT EXISTS channel_initialization (
  id INTEGER PRIMARY KEY CHECK(id = 1)
 );
 CREATE INDEX IF NOT EXISTS idx_channel_bindings_machine ON channel_bindings(machine_id);
+
+-- Bot inventory is independent of outbound destinations and routing.
+CREATE TABLE IF NOT EXISTS channel_bots (
+ name TEXT PRIMARY KEY,
+ kind TEXT NOT NULL CHECK(kind IN ('discord','telegram')),
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ agent_type TEXT NOT NULL CHECK(agent_type IN ('hermes','openclaw','other')),
+ token_ref TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('active','disabled','unknown')),
+ notes TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_channel_bots_machine ON channel_bots(machine_id);

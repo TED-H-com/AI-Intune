@@ -297,11 +297,12 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 		path:     "/tenant/maintenance",
 	},
 	DataCategoryAssignments: {
-		title:  "指派",
-		holds:  "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。Channel bot bindings are metadata retained until an admin removes them; they have no routing behavior.",
-		source: DataSourceOperator,
-		tables: []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings"},
-		path:   "/machines/configuration",
+		title:    "指派",
+		holds:    "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。Channel bindings and bot inventory (name, kind, host, agent type, token reference, status and notes) are retained until explicitly removed. They have no routing behavior.",
+		source:   DataSourceOperator,
+		tables:   []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings", "channel_bots"},
+		freeText: "Bot inventory names, token references and notes; resolved tokens are not stored.",
+		path:     "/machines/configuration",
 	},
 	DataCategoryAudit: {
 		title:       "稽核記錄",
