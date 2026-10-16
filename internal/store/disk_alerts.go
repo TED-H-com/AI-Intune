@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"strconv"
@@ -269,11 +270,19 @@ type DiskAlertAckResult struct {
 }
 
 func (s *Store) DiskAlertAcknowledge(req DiskAlertAckRequest, apply bool, key string, a AuditEntry) (DiskAlertAckResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskAlertAckResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	var out DiskAlertAckResult
 	if err := humanDiskAdmin(a); err != nil {
 		return out, err
 	}
-	if req.ID == "" || len(req.Reason) > 500 || strings.TrimSpace(req.Reason) == "" || scriptcatalog.Redact(req.Reason) != req.Reason || strings.IndexFunc(req.Reason, unicode.IsControl) >= 0 {
+	if req.ID == "" || len([]rune(req.Reason)) > boundedtext.MaxReasonRunes || strings.TrimSpace(req.Reason) == "" || !validAuditReason(req.Reason) || strings.IndexFunc(req.Reason, unicode.IsControl) >= 0 {
 		return out, operatorError("BAD_REQUEST", "safe reason and alert ID required")
 	}
 	now := s.now().UTC()

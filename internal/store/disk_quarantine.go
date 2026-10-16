@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/diskreport"
@@ -268,10 +270,18 @@ type DiskRestoreRequest struct {
 }
 
 func (s *Store) DiskRestorePreview(req DiskRestoreRequest, audit AuditEntry) (out DiskActionPreview, err error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskActionPreview{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if err = humanDiskAdmin(audit); err != nil {
 		return out, err
 	}
-	if len(req.ItemIDs) < 1 || len(req.ItemIDs) > 100 || req.Reason == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
+	if len(req.ItemIDs) < 1 || len(req.ItemIDs) > 100 || req.Reason == "" || len([]rune(req.Reason)) > 500 || !validAuditReason(req.Reason) {
 		return out, operatorError("BAD_REQUEST", "bounded selection and safe reason required")
 	}
 	tx, err := s.beginWrite(context.Background(), "disk_restore_preview")

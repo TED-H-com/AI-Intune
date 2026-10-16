@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
+	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"regexp"
 	"strings"
 	"time"
@@ -279,8 +281,10 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 			return out, e
 		}
 	}
-	if strings.TrimSpace(req.Reason) == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
-		return out, scriptBad("invalid reason")
+	var reasonErr error
+	req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+	if reasonErr != nil {
+		return out, scriptBad(reasonErr.Error())
 	}
 
 	canonical := req
@@ -663,6 +667,9 @@ func scheduleScope(e scriptcatalog.Entry, a AuditEntry) error {
 	}
 	if e.ID != "disk-deep-report-v1" && e.Mode == "read" && (a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "-admin")) {
 		a.AuthCapability = "operate"
+	}
+	if a.AuthMethod == operatorauth.AuthMethodServiceToken && a.AuthCapability == operatorauth.ServiceScopeOperatorAdmin && (e.Mode == "read" || e.Mode == "write") {
+		return nil
 	}
 	return scriptScope(e, a)
 }

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"github.com/teddashh/AI-Intune/internal/totp"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -68,124 +66,42 @@ func TestServiceTokenFormFieldsAndErrors(t *testing.T) {
 	}
 }
 
-func TestServiceTokenSelfAndRotateHTTP(t *testing.T) {
+func TestServiceTokenSelfAndRotationDenied(t *testing.T) {
 	st := boundaryStore(t)
 	actor, err := st.CreateFirstAdmin("admin", usersPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, secret, err := st.CreateServiceToken(store.ServiceToken{Name: "hermes", Scope: "view", ExpiresAt: time.Now().Add(time.Hour), Allowlist: []string{"GET /v1/operator/jobs"}, SourceCIDRs: []string{"192.0.2.0/24"}}, actor.AccountID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux := http.NewServeMux()
-	for _, route := range []string{"GET /v1/operator/service-tokens/self", "POST /v1/operator/service-tokens/rotate"} {
-		mux.Handle(route, http.NotFoundHandler())
-	}
-	boundary := newOperatorBoundary(mux, nil, st, operatorRoutePolicies, testOperatorAuthority)
-	call := func(method, path, credential, ip string) *httptest.ResponseRecorder {
-		req := newBoundaryRequest(method, path, strings.NewReader("{}"))
-		req.RemoteAddr = ip + ":1234"
-		req.Header.Set("Content-Type", "application/json")
-		if credential != "" {
-			req.Header.Set("Authorization", "Bearer "+credential)
+	for _, scope := range []string{"view", "operate", "operator-admin"} {
+		_, secret, err := st.CreateServiceToken(store.ServiceToken{Name: "agent-" + scope, Scope: scope, ExpiresAt: time.Now().Add(time.Hour), Allowlist: []string{"GET /v1/operator/jobs"}}, actor.AccountID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		rec := httptest.NewRecorder()
-		boundary.ServeHTTP(rec, req)
-		return rec
+		mux := http.NewServeMux()
+		mux.Handle("GET /v1/operator/service-tokens/self", http.NotFoundHandler())
+		mux.Handle("POST /v1/operator/service-tokens/rotate", http.NotFoundHandler())
+		boundary := newOperatorBoundary(mux, nil, st, operatorRoutePolicies, testOperatorAuthority)
+		for _, method := range []string{"GET", "POST"} {
+			path := "/v1/operator/service-tokens/self"
+			if method == "POST" {
+				path = "/v1/operator/service-tokens/rotate"
+			}
+			req := newBoundaryRequest(method, path, strings.NewReader("{}"))
+			req.Header.Set("Authorization", "Bearer "+secret)
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			boundary.ServeHTTP(rec, req)
+			if method == "GET" && rec.Code != 200 {
+				t.Fatal("self unavailable", rec.Code)
+			}
+			if method == "POST" && (rec.Code != 403 || !strings.Contains(rec.Body.String(), "SERVICE_TOKEN_ACTION_FORBIDDEN")) {
+				t.Fatal("rotation must require a human", rec.Code)
+			}
+		}
 	}
-	self := call("GET", "/v1/operator/service-tokens/self", secret, "192.0.2.1")
-	if self.Code != 200 || !strings.Contains(self.Body.String(), old.ID) || strings.Contains(self.Body.String(), secret) {
-		t.Fatal("self response", self.Code)
-	}
-	if rec := call("POST", "/v1/operator/service-tokens/rotate", secret, "198.51.100.1"); rec.Code != 401 {
-		t.Fatal("CIDR", rec.Code)
-	}
-	rotated := call("POST", "/v1/operator/service-tokens/rotate", secret, "192.0.2.1")
-	if rotated.Code != 200 || rotated.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("rotate", rotated.Code, rotated.Body.String())
-	}
-	var result struct {
-		Token string `json:"token"`
-	}
-	if err = json.Unmarshal(rotated.Body.Bytes(), &result); err != nil || !store.ValidServiceSecret(result.Token) {
-		t.Fatal("rotation response")
-	}
-	if rec := call("GET", "/v1/operator/service-tokens/self", result.Token, "192.0.2.1"); rec.Code != 200 {
-		t.Fatal("confirmation", rec.Code)
-	}
-	if rec := call("POST", "/v1/operator/service-tokens/rotate", secret, "192.0.2.1"); rec.Code != 409 {
-		t.Fatal("double rotate", rec.Code)
-	}
-	if rec := call("GET", "/v1/operator/service-tokens/self", "", "192.0.2.1"); rec.Code != 401 {
-		t.Fatal("no bearer", rec.Code)
-	}
-	if err = st.RevokeServiceToken(old.ID, actor.AccountID); err != nil {
-		t.Fatal(err)
-	}
-	if rec := call("GET", "/v1/operator/service-tokens/self", result.Token, "192.0.2.1"); rec.Code != 401 {
-		t.Fatal("chain revoke", rec.Code)
-	}
-}
-
-type disconnectedTokenResponse struct{ header http.Header }
-
-func (w *disconnectedTokenResponse) Header() http.Header     { return w.header }
-func (*disconnectedTokenResponse) WriteHeader(int)           {}
-func (*disconnectedTokenResponse) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
-
-func TestServiceTokenLostResponseReissue(t *testing.T) {
-	st := boundaryStore(t)
-	actor, err := st.CreateFirstAdmin("admin", usersPassword)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old, secret, err := st.CreateServiceToken(store.ServiceToken{Name: "lost-response", Scope: "view", ExpiresAt: time.Now().Add(time.Hour), Allowlist: []string{"GET /v1/operator/jobs"}}, actor.AccountID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux := http.NewServeMux()
-	mux.Handle("POST /v1/operator/service-tokens/rotate", http.NotFoundHandler())
-	boundary := newOperatorBoundary(mux, nil, st, operatorRoutePolicies, testOperatorAuthority)
-	request := func() *http.Request {
-		req := newBoundaryRequest("POST", "/v1/operator/service-tokens/rotate", strings.NewReader("{}"))
-		req.Header.Set("Authorization", "Bearer "+secret)
-		req.Header.Set("Content-Type", "application/json")
-		return req
-	}
-	boundary.ServeHTTP(&disconnectedTokenResponse{http.Header{}}, request())
 	tokens, err := st.ListServiceTokens()
-	if err != nil || len(tokens) != 2 {
-		t.Fatal("disconnected commit", err)
-	}
-	rec := httptest.NewRecorder()
-	boundary.ServeHTTP(rec, request())
-	if rec.Code != 200 {
-		t.Fatal("lost response retry", rec.Code)
-	}
-	var result struct {
-		ID    string `json:"id"`
-		Token string `json:"token"`
-	}
-	if err = json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = st.AuthenticateServiceToken(result.Token, "GET /v1/operator/service-tokens/self", "192.0.2.1", "view"); err != nil {
-		t.Fatal("fresh credential", err)
-	}
-	rec = httptest.NewRecorder()
-	boundary.ServeHTTP(rec, request())
-	if rec.Code != 409 {
-		t.Fatal("confirmed predecessor replay", rec.Code)
-	}
-	tokens, err = st.ListServiceTokens()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, token := range tokens {
-		if token.ID != old.ID && token.ID != result.ID && token.RevokedAt == nil {
-			t.Fatal("lost successor remains valid")
-		}
+	if err != nil || len(tokens) != 3 {
+		t.Fatal("denied rotation created a token")
 	}
 }
 

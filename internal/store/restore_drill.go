@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"math"
 	"path/filepath"
@@ -148,6 +149,14 @@ const restoreDrillColumns = `operation_id,idempotency_key,request_digest,backup_
  created_at,updated_at,started_at,finished_at`
 
 func (s *Store) ApplyOperatorRestoreDrill(req OperatorRestoreDrillRequest) (OperatorRestoreDrillResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorRestoreDrillResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) != req.IdempotencyKey || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorRestoreDrillResult{}, operatorError(OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
 	}
@@ -161,7 +170,7 @@ func (s *Store) ApplyOperatorRestoreDrill(req OperatorRestoreDrillRequest) (Oper
 	} else {
 		audit.Subject = "restore drill request"
 	}
-	if validSingleLineText(req.Reason, auditMaxReason, false) {
+	if validAuditReason(req.Reason) {
 		audit.Reason = req.Reason
 	}
 
@@ -184,7 +193,7 @@ func (s *Store) ApplyOperatorRestoreDrill(req OperatorRestoreDrillRequest) (Oper
 	}
 	code := ""
 	switch {
-	case !validSingleLineText(req.Reason, auditMaxReason, false),
+	case !validAuditReason(req.Reason),
 		!validArtifactFetchDigest(req.PreviewDigest),
 		!validRestoreDrillPrepared(req.Prepared):
 		code = OperatorCodeRestoreDrillInvalid
@@ -248,6 +257,14 @@ func (s *Store) ApplyOperatorRestoreDrill(req OperatorRestoreDrillRequest) (Oper
 
 // ⚠ preview 失敗時也必須先問帳本；cache miss 一列都不准寫，否則會消耗那把 key。
 func (s *Store) ReplayOperatorRestoreDrill(req OperatorRestoreDrillRequest) (OperatorRestoreDrillResult, bool, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorRestoreDrillResult{}, false, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) != req.IdempotencyKey || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorRestoreDrillResult{}, false, nil
 	}
@@ -257,7 +274,7 @@ func (s *Store) ReplayOperatorRestoreDrill(req OperatorRestoreDrillRequest) (Ope
 	audit := req.Audit
 	audit.Action, audit.IdempotencyKey, audit.RequestDigest = AuditRestoreDrill, req.IdempotencyKey, req.RequestDigest
 	audit.Subject = "restore drill request"
-	if validSingleLineText(req.Reason, auditMaxReason, false) {
+	if validAuditReason(req.Reason) {
 		audit.Reason = req.Reason
 	}
 
@@ -437,7 +454,7 @@ func validateRestoreDrillOriginalAudit(tx dbTx, req OperatorRestoreDrillRequest,
 	ok bool, detail string,
 ) (bool, error) {
 	reason := ""
-	if validSingleLineText(req.Reason, auditMaxReason, false) {
+	if validAuditReason(req.Reason) {
 		reason = req.Reason
 	}
 	var count int

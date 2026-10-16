@@ -177,10 +177,9 @@ routes；operator manifest 的 exact capability tally 是 `view=107`、`operate=
 較高 capability 的隱含繼承湊數。
 299-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
-Disk policy and approval-decision JSON applies reject local-account sessions
-before idempotency replay: no action-bound JSON reauthentication proof exists.
-Only human admins freshly authorized through the Tailscale LocalAPI boundary may
-apply through JSON; local-account users use the Hub UI password/TOTP apply flow.
+Disk policy and approval-decision JSON applies accept boundary-authorized human
+Tailscale admins or local admins with a current session MFA proof, checked before
+idempotency replay. Expired local sessions use the Hub UI step-up flow.
 
 operator route manifest 與實際註冊清單在 Hub 啟動時做雙向比對。繞過 operator
 boundary 的 22 條 route 也有另一份完整 manifest；兩份不能
@@ -639,9 +638,9 @@ protects the last active admin. User mutations are audit logged without password
 
 ## Scoped service-token boundary
 
-`operatorRoutePolicies.ServiceTokenEligible` is an explicit opt-in, defaulting to the human-only zero class. Read-script preview/apply use the distinct `serviceEligibleReadScriptsOnly` class described below. Other eligible routes are read-only `GET /v1/operator/*` routes with the view capability (GET patterns also serve HEAD). Other mutations and human preview/apply routes—including deployment/rollout continuations, retries, failed-batch skips, diagnostics, and verifier assignments—remain human-only, even for an operate token with those routes in a legacy allowlist. Future automation routes must be deliberately classified and tested.
+`operatorRoutePolicies.ServiceTokenEligible` is an explicit opt-in, defaulting to the human-only zero class. Read-script preview/apply use the distinct `serviceEligibleReadScriptsOnly` class described below. Other eligible routes are read-only `GET /v1/operator/*` routes with the view capability (GET patterns also serve HEAD). Routine enrollment, schedule, profile assignment and deployment routes use `serviceEligibleOperatorAdmin`. Failed-batch skips, diagnostics, verifier assignments and other unclassified mutations remain human-only. Deployment continuation and retry accept `operator-admin`, but not `operate`, even with a legacy allowlist. Future automation routes must be deliberately classified and tested.
 
-Management requires a human admin session and MFA. Creation requires at least one exact registered method/route-pattern entry, each explicitly eligible; malformed or empty lists are rejected at creation and authentication. Route eligibility is checked on every bearer request independently of its allowlist. Tokens retain view/operate scopes, expiry and immediate revocation checks.
+Management requires a human admin session and MFA. Creation requires at least one exact registered method/route-pattern entry, each explicitly eligible; malformed or empty lists are rejected at creation and authentication. Route eligibility is checked on every bearer request independently of its allowlist. Tokens support `view`, `operate`, and `operator-admin` scopes, expiry and immediate revocation checks.
 
 The boundary receives the Hub's configured `clientip.Resolver`: CIDRs, failure limiter keys, principal source and audit source use the resolved client address. `Fly-Client-IP` or `X-Forwarded-For` is trusted only when the connection peer matches `CLAWCTL_TRUSTED_PROXIES`, with `CLAWCTL_CLIENT_IP_HEADER` selecting the configured header. Untrusted peers cannot supply their own client identity; IPv6 limiter keys retain the shared /64 grouping.
 
@@ -668,12 +667,13 @@ Script request rate limits still apply to service tokens, shared across preview
 and apply by stable `service:<name>` subject. Success and denial audits retain
 that service identity. Existing bounded rate-limit denial auditing still applies.
 
-Schedule configuration is human-only: upsert and set-enabled preview/apply
-(`POST /v1/operator/schedules/{operation}/{phase}`) and run-now
-(`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
-Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
-Schedule list/get eligibility remains unchanged (currently human-only).
-Rotation adds two service-token-only JSON routes; both use the view admission capability and a dedicated self-only eligibility class.
+Schedule list/get, upsert and set-enabled preview/apply
+(`POST /v1/operator/schedules/{operation}/{phase}`), and run-now
+(`POST /v1/operator/schedules/{id}/run-now`) accept explicitly allowlisted
+`operator-admin` tokens. `view` and `operate` tokens cannot manage schedules.
+Catalog approval, revision, preview digest, idempotency and rate-limit checks
+still apply to delegated actions.
+GET self remains service-token-only. POST rotate is retained as a compatibility route but all service-token scopes are forbidden from using it.
 
 ## Service token rotation
 
@@ -681,35 +681,18 @@ The admin service-token page offers labeled inputs, 30/60/90-day expiries,
 manifest-derived route checkboxes, optional source CIDRs, and the Hermes default
 preset. Names use 1–64 letters, digits, hyphens or underscores. Scope `view`
 permits read routes; `operate` additionally permits READ-only catalog scripts.
+`operator-admin` additionally permits the explicitly classified routine admin routes.
 Creation and chain revocation require the local admin session, password and
 authenticator code. Non-secret form fields are validated before reauthentication;
 factor failures and internal post-factor failures share the same generic 400 response. Plaintext appears
 only in the creation response; all token responses use `Cache-Control: no-store`.
 
-`GET /v1/operator/service-tokens/self` and
-`POST /v1/operator/service-tokens/rotate` accept only a valid Bearer service token,
-including its source CIDR checks, independently of its route allowlist. Human
-sessions cannot use these routes. Rotation preserves scope, routes, CIDRs and
-name, with the original issue lifetime capped at 90 days. The old token overlaps
-for 10 minutes. During that original window, an unused successor may be revoked
-and replaced by re-rotating the predecessor, audited as `service-token-reissue`.
-No successor plaintext is persisted. Once the successor authenticates, predecessor
-rotation returns 409. The newest member cannot rotate until its predecessor's
-overlap ends. Rotation immediately revokes all older members except its immediate
-predecessor. Revoking any member revokes the entire chain. Rotation and re-issue
-share three successes/hour per chain and normalized client-IP limiter key
-(IPv6 /64), with persisted budgets. Audit records identify `service:<name>`
-and the old/new IDs without credentials.
-
-An optional maximum chain lifetime (none, 180 or 365 days) bounds rotation.
-New expiry is clamped to that deadline; once reached, rotation fails with 403
-(the normal expiry check may first reject the expired token with 401).
-The CLI checks its own expiry and replaces its mode-0600 non-symlink token file
-atomically, with file and directory fsync, then authenticates the installed token
-through GET self before reporting success. Failed rename/file fsync preserves a
-0600 recovery file and reports its path; failed directory fsync reports the
-installed destination. Retry during overlap or install the recovery file promptly.
-See [Hermes timer](../ops/hermes/README.md).
+`GET /v1/operator/service-tokens/self` accepts the current bearer token with
+source CIDR checks and returns metadata. The legacy POST rotate route is now
+forbidden for all service scopes (`SERVICE_TOKEN_ACTION_FORBIDDEN`), including
+self-rotation. Rotation-chain fields remain for stored-token compatibility.
+Humans replace tokens through the MFA-protected creation page, install the new
+credential, then revoke the old chain. Remove unattended rotation timers.
 
 
 P2-04 signed disk grants use the machine plane, not operator credentials:
@@ -724,16 +707,73 @@ and the reauthenticated UI. There is no agent delegation or delegated delete/res
 ### P2-04 human quarantine contract
 
 Exact manifests and consumed human approvals bind pinned quarantine/delete/restore
-jobs. Human mutations require admin and fresh reauth; they are not token eligible.
+jobs. Human mutations require admin and current session MFA or LocalAPI authorization; they are not token eligible.
 MCP uses redacted projections; delegation remains deferred. Daily expiry
 (`10 6 * * *` UTC) selects only due items from consumed original quarantine approvals
 under the current policy. The assigned machine alone uploads private action receipts
 and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
 for routes, human UI, recovery, readiness and metrics.
 P2-05: ownership handoff/rollback and alert acknowledgement preview/apply are exact
-human-admin routes, never service-token eligible. Applies require fresh boundary
-LocalAPI authorization for JSON; local-account admins use the password/TOTP UI.
+human-admin routes, never service-token eligible. Applies require boundary
+LocalAPI authorization or a current local session MFA proof; expired local
+sessions use the step-up UI.
 Authorization precedes receipt replay. All new browser mutations use the existing
 cross-origin boundary. `disk_alerts_list` is a redacted view read eligible for exact
 view-token allowlists; `disk_ownership_get` remains human-view only. No token can
-change timer ownership, acknowledge alerts, or enable a cleanup schedule.
+change timer ownership or acknowledge alerts. `operator-admin` can configure
+eligible cleanup schedules, subject to catalog and policy checks.
+
+## Routine administration and fresh MFA
+
+For local-account sessions with MFA enforcement enabled, login MFA (including a
+recovery-code login) or successful authenticator enrollment records a durable
+session MFA timestamp. Existing sessions without a timestamp need step-up on
+their next admin action. Routine unsafe admin actions and schedule mutations use
+a **12-hour** window by default. Set `CLAWCTL_ADMIN_MFA_WINDOW` to a positive Go
+duration such as `8h` or `24h`; invalid, zero and negative values fail startup.
+This window does not extend session idle/absolute expiry or revive revoked sessions.
+
+The central dangerous-action classification in
+`internal/operatorauth/service_scope.go` reserves fresh MFA for:
+
+- Deleting machines or tenants.
+- Changing authentication or MFA settings (including passwords and recovery codes).
+- Minting, rotating or revoking service tokens.
+- Creating or editing users (including enable/disable).
+
+Dangerous actions use a five-minute window. Account security, token management
+and user handlers retain their stronger per-action password/authenticator checks;
+MFA enrollment verifies the new authenticator. Recovery codes cannot authorize
+those admin changes. Tailscale LocalAPI grants keep their existing identity
+contract; they do not assert recent human MFA. The explicit MFA-enforcement
+opt-out retains its warning and existing password checks.
+
+When a routine form's window expires, the step-up prompt explains why and posts
+back to the original action. It preserves reason, preview digest, revision,
+confirmation and idempotency inputs, while excluding credential fields. Failed
+step-up retains those inputs for retry. Credentials are never echoed. JSON
+requests outside the window return 403 `MFA_STEP_UP_REQUIRED`; use the Hub UI to
+reauthenticate. Routine disk JSON applies can use a current session MFA proof.
+
+`operator-admin` service tokens may create enrollment tickets, manage/run schedules,
+assign profiles, and create/continue/retry deployments, subject to explicit route
+allowlists and all normal mutation checks. They never acquire human identity or
+access to the dangerous actions above. Lower scopes cannot invoke these admin
+routes. Future admin routes require explicit opt-in.
+
+## Audit reason rules
+
+The shared validator exports `boundedtext.MaxReasonRunes = 500`. Reasons are
+trimmed, must be valid UTF-8 and nonempty, and are counted in Unicode code points
+rather than bytes. English, 中文, other Unicode letters, digits, hostnames such
+as `sampleagent1.example.com`, commas and ordinary punctuation are accepted. Control
+characters and line separators are rejected. Credential detection rejects clear
+password/token/secret assignments, bearer tokens, PEM blocks, known token
+prefixes and long diverse key-like runs. Do not include any credential in reasons.
+
+Errors identify the failed rule, for example `reason is empty`,
+`reason is 612 characters; maximum is 500`, or
+`reason contains what looks like a credential (bearer token); remove it`.
+The UI displays the server error and a live `max 500 characters` counter;
+reason text survives retries and MFA step-up. Fleet-specific configuration and
+operational values belong in the **Private overlay**, not this public repository.

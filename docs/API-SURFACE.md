@@ -678,7 +678,7 @@ Read times describe evaluation, not a cross-table atomic snapshot.
 
 `GET /account/service-tokens` lists metadata; POST `/account/service-tokens/create` and `/revoke` require a human admin session, enrolled MFA, current password and authenticator code. Creation shows the plaintext once; listing never includes a secret or hash. Only SHA-256 is stored. Expiry is required and limited to 90 days.
 
-Bearer `cst_` tokens authorize only `/v1/operator/*` JSON routes using the route capability map, required nonempty exact method/route-pattern allowlist, and optional source CIDRs against the configured client-IP resolver. `view` and `operate` are the only scopes; explicitly eligible read-only view routes and the two read-script routes described below accept service tokens. Other preview/apply and admin routes deny. Revocation is checked on every request. Audit principal is `service:<name>`. Browser CSRF and human session paths retain their existing checks.
+Bearer `cst_` tokens authorize only `/v1/operator/*` JSON routes using the route capability map, required nonempty exact method/route-pattern allowlist, and optional source CIDRs against the configured client-IP resolver. Scopes are `view`, `operate`, and `operator-admin`. Explicitly eligible read-only view routes and the two read-script routes below accept service tokens. `operator-admin` additionally permits the routine administration routes below; other preview/apply and admin routes deny. Revocation is checked on every request. Audit principal is `service:<name>`. Browser CSRF and human session paths retain their existing checks.
 
 
 ### Service tokens and ad hoc catalog scripts
@@ -701,30 +701,40 @@ Script request rate limits still apply to service tokens, shared across preview
 and apply by stable `service:<name>` subject. Success and denial audits retain
 that service identity. Existing bounded rate-limit denial auditing still applies.
 
-Schedule configuration is human-only: upsert and set-enabled preview/apply
-(`POST /v1/operator/schedules/{operation}/{phase}`) and run-now
-(`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
-Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
-Schedule list/get eligibility remains unchanged (currently human-only).
-Rotation adds two service-token-only JSON routes; both use the view admission capability and a dedicated self-only eligibility class.
+Schedule list/get, upsert and set-enabled preview/apply
+(`POST /v1/operator/schedules/{operation}/{phase}`), and run-now
+(`POST /v1/operator/schedules/{id}/run-now`) accept explicitly allowlisted
+`operator-admin` tokens. `view` and `operate` tokens cannot manage schedules.
+Catalog approval, revision, preview digest, idempotency and rate-limit checks
+still apply to delegated actions.
+GET self remains service-token-only. POST rotate is retained as a compatibility route but all service-token scopes are forbidden from using it.
 
 ### Service token self and rotation
 
 | Method | Route | Authentication | Response |
 | --- | --- | --- | --- |
 | GET | `/v1/operator/service-tokens/self` | Current service token only, CIDRs enforced | `id/name/scope/expires_at/max_expiry` (null max means unlimited) |
-| POST | `/v1/operator/service-tokens/rotate` | Newest token or recovering predecessor, CIDRs enforced | `id/token/expires_at/max_expiry`; plaintext once |
+| POST | `/v1/operator/service-tokens/rotate` | Forbidden for all service scopes | 403 `SERVICE_TOKEN_ACTION_FORBIDDEN` |
 
-Neither self route needs an allowlist entry. No human session is accepted.
-During the original overlap, the predecessor may re-issue an unused successor;
-that successor is revoked and a fresh credential is returned, never replayed from
-stored plaintext. A used successor makes predecessor rotation return 409. The
-newest token also returns 409 until its predecessor's overlap ends. All older
-chain members except the immediate predecessor are revoked on rotation.
-Rotation and re-issue share a persisted three/hour chain or normalized-IP budget
-(IPv6 /64), returning 429 on exhaustion, 403 at the maximum chain
-deadline, and 401 for expired/revoked/invalid credentials. Old credentials stop
-authenticating after 10 minutes. Admin revoke applies to the whole chain.
+GET self needs no allowlist entry. POST rotate is a compatibility route and
+returns 403 `SERVICE_TOKEN_ACTION_FORBIDDEN` for every service-token scope.
+Humans create replacement credentials through the MFA-protected account page.
+
+`operator-admin` adds explicitly allowlisted enrollment-ticket create
+preview/apply, schedule list/get/upsert/set-enabled/run-now, profile assignment
+preview/apply, and deployment create/continue/retry preview/apply. It includes
+eligible view/read-script access. Lower scopes receive 403
+`SERVICE_TOKEN_SCOPE_REQUIRED` for these admin routes. All scopes are forbidden
+from deleting machines/tenants, changing MFA/authentication, managing users, and
+minting/rotating service tokens (`SERVICE_TOKEN_ACTION_FORBIDDEN`). Unclassified
+routes remain human-only. Preview, revision, approval and idempotency checks still apply.
+
+Local human admin sessions use the default 12-hour routine MFA window
+(`CLAWCTL_ADMIN_MFA_WINDOW`); dangerous actions use five minutes or the account
+handler's stronger per-action checks. JSON actions outside the window return
+403 `MFA_STEP_UP_REQUIRED`. See [Operator auth](OPERATOR-AUTH.md) for the dangerous
+action list and shared 500-character Unicode audit reason rules. Fleet-specific
+configuration belongs in the Private overlay.
 
 
 ## Phase 2 disk foundation (P2-01)
@@ -814,10 +824,10 @@ configuration. Fixture screenshots and HTML are generated with
 `ops/screenshots/phase2-disk.sh` into `docs/screenshots/phase2/p2-01/`.
 
 
-Disk JSON policy and approval-decision applies accept only freshly boundary-verified
-human Tailscale admins. Local-account sessions have no action-bound JSON reauthentication
-proof and are rejected before idempotency lookup, including retries; use the Hub UI
-password/TOTP apply flow. Previews remain available to authorized human admins.
+Disk JSON policy and approval-decision applies accept boundary-verified human
+Tailscale admins or local admins with a current session MFA proof. Authorization
+precedes idempotency lookup, including retries. Expired sessions use the Hub UI
+step-up flow. Previews remain available to authorized human admins.
 
 A policy preview explicitly lists `removed_protect_paths`. Removing configured
 protections requires the exact `acknowledge_removed_paths` array on apply, included
@@ -884,8 +894,8 @@ bounded mount usage, current policy thresholds, last safe-tier evidence, observa
 preview, skips and ownership. Additional mounts come from adapter observations;
 per-mount measurement times distinguish their age from the latest root check-in.
 The read is human-view and service-token ineligible because mount paths are included.
-MCP status uses mount/protection digests, fixed categories and note digests; private paths remain on the human API/UI. JSON script and schedule applies by admins require fresh LocalAPI authorization before decoding or replay; local sessions use reauthenticated UI applies.
-No new token-eligible writes or delegated cleanup approvals are implemented.
+MCP status uses mount/protection digests, fixed categories and note digests; private paths remain on the human API/UI. JSON script and schedule applies require boundary authorization before replay; local admins use the session MFA window and step up through the UI when it expires. Explicitly allowlisted operator-admin tokens may manage schedules.
+Delegated cleanup approvals remain forbidden; operator-admin eligibility is limited to the routine routes listed above.
 
 Daily templates use UTC, `catch_up=false`, one machine per schedule and explicit
 operator hour/minute offsets; public defaults contain no fleet names or dates.
@@ -937,7 +947,7 @@ shared bounded-text scrubber; raw private paths remain identity bindings.
 ### P2-04 human quarantine contract
 
 Exact manifests and consumed human approvals bind pinned quarantine/delete/restore
-jobs. Human mutations require admin and fresh reauth; they are not token eligible.
+jobs. Human mutations require admin and current session MFA or LocalAPI authorization; they are not token eligible.
 MCP uses redacted projections; delegation remains deferred. Daily expiry
 (`10 6 * * *` UTC) selects only due items from consumed original quarantine approvals
 under the current policy. The assigned machine alone uploads private action receipts
@@ -954,15 +964,15 @@ view=103 / operate=28 / admin=137.
 | GET | `/v1/operator/disk-ops/alerts` | View, exact-allowlisted view token eligible; redacted episodes |
 | GET | `/v1/operator/disk-ops/ownership/{machine_id}/{scope}` | Human view; typed timer facts and fixed commands |
 | POST | `/v1/operator/disk-ops/ownership/preview` | Human admin; handoff or rollback preconditions |
-| POST | `/v1/operator/disk-ops/ownership` | Human admin, fresh JSON reauthorization, digest, expiry, revision, idempotency |
+| POST | `/v1/operator/disk-ops/ownership` | Human admin, current session MFA or LocalAPI authorization, digest, expiry, revision, idempotency |
 | POST | `/v1/operator/disk-ops/alerts/ack/preview` | Human admin; reason-bound review |
-| POST | `/v1/operator/disk-ops/alerts/ack` | Human admin, fresh JSON reauthorization, digest, expiry, idempotency |
+| POST | `/v1/operator/disk-ops/alerts/ack` | Human admin, current session MFA or LocalAPI authorization, digest, expiry, idempotency |
 | GET | `/tenant/disk-alerts` | Human view; open/cleared history |
 | POST | `/tenant/disk-alerts/ack/preview` | Human admin review |
-| POST | `/tenant/disk-alerts/ack` | Human admin, password/TOTP or fresh LocalAPI authorization |
-| POST | `/machines/{id}/disk/ownership` | Human admin review/apply, fresh apply reauthentication |
+| POST | `/tenant/disk-alerts/ack` | Human admin, session MFA or LocalAPI authorization |
+| POST | `/machines/{id}/disk/ownership` | Human admin review/apply, session MFA or LocalAPI authorization |
 
 MCP reads `disk_alerts_list` and `disk_ownership_get` use the same operator reads.
-Mutations are token-ineligible. Local-account JSON applies are refused; use the UI.
+Mutations are token-ineligible. Local-account JSON applies require current session MFA; use the UI to step up when it expires.
 Acknowledgement records a reason and never clears an alert. All browser mutations
 retain the shared Host/CrossOriginProtection/locked CSP boundary.

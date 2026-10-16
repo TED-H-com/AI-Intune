@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"math"
 	"strings"
@@ -866,6 +867,14 @@ type OperatorMachineProfileAssignmentPrepare func() (OperatorMachineProfileAssig
 func (s *Store) ApplyOperatorMachineProfileAssignment(req OperatorMachineProfileAssignmentRequest,
 	prepare OperatorMachineProfileAssignmentPrepare,
 ) (OperatorMachineProfileAssignmentResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorMachineProfileAssignmentResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorMachineProfileAssignmentResult{}, operatorError(OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
 	}
@@ -926,7 +935,7 @@ func (s *Store) ApplyOperatorMachineProfileAssignment(req OperatorMachineProfile
 		}
 		return OperatorMachineProfileAssignmentResult{}, fmt.Errorf("store: prepare profile assignment: %w", prepareErr)
 	}
-	if strings.TrimSpace(req.Reason) == "" || len(req.Reason) > auditMaxReason {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired)
 	}
 	if !validArtifactFetchDigest(req.PreviewDigest) {
@@ -1411,7 +1420,7 @@ func validateOperatorProfileAssignmentAudit(tx dbTx, req OperatorMachineProfileA
 ) (bool, error) {
 	query := `SELECT COUNT(*) FROM audit_log WHERE action=? AND machine_id=? AND COALESCE(reason,'')=?
 	 AND idempotency_key=? AND request_digest=? AND outcome=? AND COALESCE(detail,'')=?`
-	args := []any{string(AuditMachineProfileAssign), req.MachineID, truncAudit(req.Reason, auditMaxReason),
+	args := []any{string(AuditMachineProfileAssign), req.MachineID, truncReason(req.Reason),
 		req.IdempotencyKey, req.RequestDigest, outcomeOf(ok), truncAudit(detail, auditMaxReason)}
 	if at != "" {
 		query += ` AND at=?`

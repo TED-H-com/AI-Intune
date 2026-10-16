@@ -350,12 +350,12 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"PUT /v1/operator/machines/{id}/display-name", "/v1/operator/machines/machine-1/display-name", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/machines/{id}/notes-preview", "/v1/operator/machines/machine-1/notes-preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"PUT /v1/operator/machines/{id}/notes", "/v1/operator/machines/machine-1/notes", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/deployments/preview", "/v1/operator/deployments/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/deployments", "/v1/operator/deployments", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/deployments/{id}/continuation-preview", "/v1/operator/deployments/deployment-1/continuation-preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/deployments/{id}/continuations", "/v1/operator/deployments/deployment-1/continuations", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/deployments/{id}/retry-preview", "/v1/operator/deployments/deployment-1/retry-preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/deployments/{id}/retries", "/v1/operator/deployments/deployment-1/retries", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/deployments/preview", "/v1/operator/deployments/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/deployments", "/v1/operator/deployments", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/deployments/{id}/continuation-preview", "/v1/operator/deployments/deployment-1/continuation-preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/deployments/{id}/continuations", "/v1/operator/deployments/deployment-1/continuations", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/deployments/{id}/retry-preview", "/v1/operator/deployments/deployment-1/retry-preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/deployments/{id}/retries", "/v1/operator/deployments/deployment-1/retries", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
 		{"POST /v1/operator/deployments/{id}/abandonment-preview", "/v1/operator/deployments/deployment-1/abandonment-preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/deployments/{id}/abandonments", "/v1/operator/deployments/deployment-1/abandonments", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/machines/{id}/channel", "/v1/operator/machines/machine-1/channel", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
@@ -367,8 +367,8 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"POST /v1/operator/catalog-manifests", "/v1/operator/catalog-manifests", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/machine-profiles", "/v1/operator/machine-profiles", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"POST /v1/operator/machine-profiles", "/v1/operator/machine-profiles", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/machines/{id}/profile-assignment-preview", "/v1/operator/machines/machine-1/profile-assignment-preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/machines/{id}/profile-assignments", "/v1/operator/machines/machine-1/profile-assignments", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/machines/{id}/profile-assignment-preview", "/v1/operator/machines/machine-1/profile-assignment-preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/machines/{id}/profile-assignments", "/v1/operator/machines/machine-1/profile-assignments", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
 		{"POST /v1/operator/catalog-manifests/standard-preview", "/v1/operator/catalog-manifests/standard-preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/machine-profiles/preview", "/v1/operator/machine-profiles/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/tailnet", "/v1/operator/tailnet", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
@@ -434,8 +434,8 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"POST /tenant/maintenance/restore-drills", "/tenant/maintenance/restore-drills", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"PUT /v1/operator/machines/{id}/channel", "/v1/operator/machines/machine-1/channel", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"PUT /v1/operator/machines/{id}/assigned-user", "/v1/operator/machines/machine-1/assigned-user", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/enrollment-tokens/preview", "/v1/operator/enrollment-tokens/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/enrollment-tokens", "/v1/operator/enrollment-tokens", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/enrollment-tokens/preview", "/v1/operator/enrollment-tokens/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/enrollment-tokens", "/v1/operator/enrollment-tokens", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
 		{"POST /v1/operator/machines/{id}/enrollment-token/revocation-preview", "/v1/operator/machines/machine-1/enrollment-token/revocation-preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/machines/{id}/enrollment-token/revocations", "/v1/operator/machines/machine-1/enrollment-token/revocations", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/verifiers/preview", "/v1/operator/verifiers/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
@@ -526,10 +526,10 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"POST /account/users/enable", "/account/users/enable", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /account/users/email", "/account/users/email", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /account/users/rename", "/account/users/rename", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
-		{"GET /v1/operator/schedules", "/v1/operator/schedules", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"GET /v1/operator/schedules/{id}", "/v1/operator/schedules/s-1", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/schedules/{operation}/{phase}", "/v1/operator/schedules/upsert/preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
-		{"POST /v1/operator/schedules/{id}/run-now", "/v1/operator/schedules/s-1/run-now", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"GET /v1/operator/schedules", "/v1/operator/schedules", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"GET /v1/operator/schedules/{id}", "/v1/operator/schedules/s-1", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/schedules/{operation}/{phase}", "/v1/operator/schedules/upsert/preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
+		{"POST /v1/operator/schedules/{id}/run-now", "/v1/operator/schedules/s-1/run-now", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleOperatorAdmin}},
 		{"GET /v1/operator/script-catalog", "/v1/operator/script-catalog", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/script-runs/preview", "/v1/operator/script-runs/preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleReadScriptsOnly}},
 		{"POST /v1/operator/script-runs", "/v1/operator/script-runs", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleReadScriptsOnly}},
@@ -1826,7 +1826,7 @@ func TestOperatorBoundarySecurityHeadersAndDestinationParsing(t *testing.T) {
 			t.Errorf("missing security header %s", name)
 		}
 	}
-	if got, want := rec.Header().Get("Content-Security-Policy"), "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"; got != want {
+	if got, want := rec.Header().Get("Content-Security-Policy"), lockedOperatorContentSecurityPolicy; got != want {
 		t.Fatalf("locked CSP=%q", got)
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
@@ -1888,7 +1888,7 @@ func TestOmittedSecurityProfileFailsClosedWithLockedCSP(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Security-Policy"); got != lockedOperatorContentSecurityPolicy || strings.Contains(got, "script-src") {
+	if got := rec.Header().Get("Content-Security-Policy"); got != lockedOperatorContentSecurityPolicy {
 		t.Fatalf("omitted profile CSP=%q", got)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
@@ -1919,7 +1919,7 @@ func TestCrossOriginDenialCannotUseTerminalSecurityProfile(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	got := rec.Header().Get("Content-Security-Policy")
-	if got != lockedOperatorContentSecurityPolicy || strings.Contains(got, "script-src") || strings.Contains(got, terminalassets.PageJSHash) {
+	if got != lockedOperatorContentSecurityPolicy || strings.Contains(got, terminalassets.PageJSHash) {
 		t.Fatalf("CSRF denial CSP=%q", got)
 	}
 

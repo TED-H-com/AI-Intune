@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -69,6 +70,14 @@ func manifestID() (string, error) {
 // DiskActionPreview snapshots exact report bindings and creates the pending
 // human decision atomically. Previewing does not authorize any machine mutation.
 func (s *Store) DiskActionPreview(req DiskActionRequest, audit AuditEntry) (out DiskActionPreview, err error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskActionPreview{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	defer func() {
 		if err != nil {
 			audit.Action = AuditOpsApproval
@@ -83,7 +92,7 @@ func (s *Store) DiskActionPreview(req DiskActionRequest, audit AuditEntry) (out 
 	if err = humanDiskAdmin(audit); err != nil {
 		return out, err
 	}
-	if req.Action != "quarantine" && req.Action != "delete" && req.Action != "reject" || len(req.ItemIDs) < 1 || len(req.ItemIDs) > 100 || !validJobReadStoredIdentifier(req.ReportID, 128) || !validLowerSHA256Digest(req.ReportDigest) || strings.TrimSpace(req.Reason) != req.Reason || req.Reason == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason || strings.ContainsAny(req.Reason, "\r\n\x00") {
+	if req.Action != "quarantine" && req.Action != "delete" && req.Action != "reject" || len(req.ItemIDs) < 1 || len(req.ItemIDs) > 100 || !validJobReadStoredIdentifier(req.ReportID, 128) || !validLowerSHA256Digest(req.ReportDigest) || strings.TrimSpace(req.Reason) != req.Reason || req.Reason == "" || len([]rune(req.Reason)) > boundedtext.MaxReasonRunes || !validAuditReason(req.Reason) || strings.ContainsAny(req.Reason, "\r\n\x00") {
 		return out, operatorError("BAD_REQUEST", "bounded selection, action, report digest and safe reason required")
 	}
 	ids := append([]string(nil), req.ItemIDs...)

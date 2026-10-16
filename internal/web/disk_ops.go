@@ -206,6 +206,9 @@ func (s *Server) previewDiskPolicy(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "disk_policy_review.html", page{Title: "Review disk policy", Nav: "tenant-disk-policies", DiskPolicyReview: &diskPolicyReviewPage{Preview: preview, Changes: operator.DiskPolicyChanges(preview.PreviousBody, preview.Policy.Body), Body: string(preview.Policy.Body), Reason: req.Reason, IdempotencyKey: key, WritesEnabled: s.operator.DiskOpsWritesEnabled()}})
 }
 func (s *Server) reauthenticateDiskApply(w http.ResponseWriter, r *http.Request, back string) bool {
+	if p, ok := operatorauth.PrincipalFromContext(r.Context()); ok && p.ActionMFAAuthorized {
+		return true
+	}
 	err := s.operator.ReauthenticateDiskAdmin(operator.ActorFromRequest(r, operator.SourceKindWeb), r.PostForm.Get("password"), r.PostForm.Get("code"), !accessFromRequest(r).MFAEnforcementDisabled)
 	// Never return credentials in an error or preserve them in another form.
 	r.PostForm.Del("password")

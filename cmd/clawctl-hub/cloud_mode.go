@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/operatorendpoint"
@@ -32,6 +33,7 @@ func parseAuthMode(raw string) (authMode, error) {
 // cloudBoundaryConfig contains only startup-validated origins, never proxy headers.
 type cloudBoundaryConfig struct {
 	requireMFA       bool
+	adminMFAWindow   time.Duration
 	setupCode        *setupCodeHash
 	mode             authMode
 	public           operatorendpoint.PublicURL
@@ -82,7 +84,14 @@ func cloudConfiguration(mode authMode, listen string) (cloudBoundaryConfig, erro
 	if err != nil {
 		return cloudBoundaryConfig{}, err
 	}
-	config := cloudBoundaryConfig{public: public, mode: mode, requireMFA: required}
+	window := operatorauth.DefaultAdminMFAWindow
+	if raw, set := os.LookupEnv("CLAWCTL_ADMIN_MFA_WINDOW"); set {
+		window, err = time.ParseDuration(raw)
+		if err != nil || window <= 0 {
+			return cloudBoundaryConfig{}, fmt.Errorf("CLAWCTL_ADMIN_MFA_WINDOW must be a positive duration (for example 12h)")
+		}
+	}
+	config := cloudBoundaryConfig{public: public, mode: mode, requireMFA: required, adminMFAWindow: window}
 	if mode == authModeBoth {
 		if endpoint, err := operatorendpoint.ParseListen(listen); err == nil {
 			config.tailnetAuthority = endpoint.Authority()

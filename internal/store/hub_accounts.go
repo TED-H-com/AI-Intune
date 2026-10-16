@@ -28,16 +28,17 @@ var ErrSessionAuth = errors.New("invalid or expired session")
 var ErrAdminExists = errors.New("admin already exists")
 
 type HubAccount struct {
-	AccountID      string
-	Username       string
-	Email          string
-	Role           string
-	CreatedAt      string
-	Disabled       bool
-	MFAEnrolled    bool
-	authGeneration int64  // snapshots durable authentication state at password verification
-	passwordHash   string // also guards session issuance against a concurrent password reset
-	mfaSecret      string // snapshots the factor at password verification; enrollment invalidates it
+	SessionMFAVerifiedAt time.Time
+	AccountID            string
+	Username             string
+	Email                string
+	Role                 string
+	CreatedAt            string
+	Disabled             bool
+	MFAEnrolled          bool
+	authGeneration       int64  // snapshots durable authentication state at password verification
+	passwordHash         string // also guards session issuance against a concurrent password reset
+	mfaSecret            string // snapshots the factor at password verification; enrollment invalidates it
 }
 
 func passwordHash(password string) (string, error) {
@@ -229,13 +230,18 @@ func sessionHash(token string) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-func (s *Store) CreateSession(a HubAccount, sourceAddr, userAgent string) (string, error) {
+// verifiedMFA may be true only after successful second-factor verification.
+func (s *Store) CreateSession(a HubAccount, sourceAddr, userAgent string, verifiedMFA ...bool) (string, error) {
 	token, err := newToken()
 	if err != nil {
 		return "", err
 	}
 	now := s.nowFn()
-	res, err := s.execWrite(context.Background(), "create_hub_session", `INSERT INTO hub_sessions(session_hash,account_id,created_at,last_seen_at,idle_expires_at,absolute_expires_at,source_addr,user_agent) SELECT ?,account_id,?,?,?,?,?,? FROM hub_accounts WHERE account_id=? AND password_hash=? AND auth_generation=? AND disabled_at IS NULL AND COALESCE((SELECT totp_secret FROM hub_account_mfa WHERE account_id=hub_accounts.account_id AND enabled_at IS NOT NULL),'')=?`, sessionHash(token), fmtTime(now), fmtTime(now), fmtTime(now.Add(12*time.Hour)), fmtTime(now.Add(7*24*time.Hour)), sourceAddr, truncAudit(userAgent, 200), a.AccountID, a.passwordHash, a.authGeneration, a.mfaSecret)
+	mfaAt := ""
+	if len(verifiedMFA) == 1 && verifiedMFA[0] && a.mfaSecret != "" {
+		mfaAt = fmtTime(now)
+	}
+	res, err := s.execWrite(context.Background(), "create_hub_session", `INSERT INTO hub_sessions(session_hash,account_id,created_at,last_seen_at,idle_expires_at,absolute_expires_at,source_addr,user_agent,mfa_verified_at) SELECT ?,account_id,?,?,?,?,?,?,? FROM hub_accounts WHERE account_id=? AND password_hash=? AND auth_generation=? AND disabled_at IS NULL AND COALESCE((SELECT totp_secret FROM hub_account_mfa WHERE account_id=hub_accounts.account_id AND enabled_at IS NOT NULL),'')=?`, sessionHash(token), fmtTime(now), fmtTime(now), fmtTime(now.Add(12*time.Hour)), fmtTime(now.Add(7*24*time.Hour)), sourceAddr, truncAudit(userAgent, 200), mfaAt, a.AccountID, a.passwordHash, a.authGeneration, a.mfaSecret)
 	if err != nil {
 		return "", err
 	}
@@ -252,13 +258,19 @@ func (s *Store) LookupSession(token string) (HubAccount, error) {
 		return a, ErrSessionAuth
 	}
 	now := s.nowFn()
-	var seen, idle, absolute string
-	err := s.rdb.QueryRow(`SELECT a.account_id,a.username,a.role,s.last_seen_at,s.idle_expires_at,s.absolute_expires_at FROM hub_sessions s JOIN hub_accounts a ON a.account_id=s.account_id WHERE session_hash=? AND revoked_at IS NULL AND disabled_at IS NULL`, sessionHash(token)).Scan(&a.AccountID, &a.Username, &a.Role, &seen, &idle, &absolute)
+	var seen, idle, absolute, mfaAt string
+	err := s.rdb.QueryRow(`SELECT a.account_id,a.username,a.role,s.last_seen_at,s.idle_expires_at,s.absolute_expires_at,s.mfa_verified_at FROM hub_sessions s JOIN hub_accounts a ON a.account_id=s.account_id WHERE session_hash=? AND revoked_at IS NULL AND disabled_at IS NULL`, sessionHash(token)).Scan(&a.AccountID, &a.Username, &a.Role, &seen, &idle, &absolute, &mfaAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrSessionAuth
 	}
 	if err != nil {
 		return a, err
+	}
+	if mfaAt != "" {
+		a.SessionMFAVerifiedAt, err = time.Parse(time.RFC3339Nano, mfaAt)
+		if err != nil {
+			return HubAccount{}, ErrSessionAuth
+		}
 	}
 	last, e1 := time.Parse(time.RFC3339, seen)
 	ie, e2 := time.Parse(time.RFC3339, idle)

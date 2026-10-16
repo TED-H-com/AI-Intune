@@ -268,7 +268,7 @@ INSERT INTO audit_log
 	   boundary_decision, source_kind, outcome, detail)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		fmtTime(e.At.UTC()), string(e.Action), nullStr(e.MachineID), truncAudit(e.Subject, auditMaxReason),
-		nullStr(truncAudit(e.Reason, auditMaxReason)),
+		nullStr(truncReason(e.Reason)),
 		nullStr(auditIdempotencyKey(e.IdempotencyKey)), nullStr(e.RequestDigest),
 		e.SourceAddr, nullStr(e.WhoNode), nullStr(e.WhoUser), nullStr(e.WhoUnavailable),
 		nullStr(truncAudit(e.UserAgent, 200)),

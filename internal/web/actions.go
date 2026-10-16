@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"log"
 	"net/http"
 	"strconv"
@@ -157,9 +158,9 @@ func (s *Server) actionRoutes(mux *http.ServeMux) []string {
 func (s *Server) previewMachineNotes(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	reason := r.FormValue("reason")
-	if strings.TrimSpace(reason) == "" || reason != strings.TrimSpace(reason) || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, id, "沒有建立名冊備註預覽",
-			"理由不可省略、前後不可有空白，且最多 500 bytes。", "/machines/"+id)
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	preview, err := s.operator.PreviewMachineNotes(operator.MachineNotesPreviewRequest{
@@ -213,9 +214,9 @@ func (s *Server) applyMachineNotes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) previewMachineRename(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	reason := r.FormValue("reason")
-	if strings.TrimSpace(reason) == "" || reason != strings.TrimSpace(reason) || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, id, "沒有建立重新命名預覽",
-			"理由不可省略、前後不可有空白，且最多 500 bytes。", "/machines/"+id)
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	preview, err := s.operator.PreviewMachineRename(operator.MachineRenamePreviewRequest{
@@ -269,9 +270,9 @@ func (s *Server) applyMachineRename(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) previewRestoreDrill(w http.ResponseWriter, r *http.Request) {
 	reason := r.FormValue("reason")
-	if reason == "" || strings.TrimSpace(reason) != reason || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, "還原演練", "未建立演練預覽",
-			"理由不可省略、前後不可有空白，且最多 500 字。", "/tenant/maintenance")
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	preview, err := s.operator.PreviewRestoreDrill(r.Context(), time.Now().UTC())
@@ -316,9 +317,9 @@ func (s *Server) applyRestoreDrill(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) previewRetentionPrune(w http.ResponseWriter, r *http.Request) {
 	reason := r.FormValue("reason")
-	if reason == "" || strings.TrimSpace(reason) != reason || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, "資料保留政策",
-			"未建立清理預覽", "理由不可省略、前後不可有空白，且最多 500 字。", "/tenant/maintenance")
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	now := time.Now().UTC().Truncate(time.Second)

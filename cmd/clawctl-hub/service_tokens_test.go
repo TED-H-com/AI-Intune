@@ -77,7 +77,7 @@ func TestServiceTokenBoundary(t *testing.T) {
 	for _, c := range []struct {
 		method, path, peer, origin string
 		status                     int
-	}{{"GET", "/v1/operator/machines", "192.0.2.1:1234", "", 204}, {"GET", "/v1/operator/jobs", "192.0.2.1:1234", "", 401}, {"GET", "/v1/operator/machines", "198.51.100.1:1234", "", 401}, {"POST", "/v1/operator/admin", "192.0.2.1:1234", "", 401}, {"POST", "/v1/operator/test", "192.0.2.1:1234", "https://other.example.com", 403}, {"GET", "/account/service-tokens", "192.0.2.1:1234", "", 403}} {
+	}{{"GET", "/v1/operator/machines", "192.0.2.1:1234", "", 204}, {"GET", "/v1/operator/jobs", "192.0.2.1:1234", "", 401}, {"GET", "/v1/operator/machines", "198.51.100.1:1234", "", 401}, {"POST", "/v1/operator/admin", "192.0.2.1:1234", "", 401}, {"POST", "/v1/operator/test", "192.0.2.1:1234", "https://other.example.com", 403}, {"GET", "/account/service-tokens", "192.0.2.1:1234", "", 401}} {
 		if got := request(c.method, c.path, c.peer, c.origin); got != c.status {
 			t.Fatalf("%s %s: %d", c.method, c.path, got)
 		}
@@ -85,8 +85,8 @@ func TestServiceTokenBoundary(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("unauthorized handler calls: %d", calls)
 	}
-	if len(human.snapshotCalls()) != 1 {
-		t.Fatal("HTML did not use human auth")
+	if len(human.snapshotCalls()) != 0 {
+		t.Fatal("service token must not fall back to ambient human auth")
 	}
 	audits, err := st.Audit("", 100)
 	if err != nil {
@@ -230,7 +230,7 @@ func TestServiceTokenManagementPlaintextOnce(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+secret)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
-		if rec.Code != 303 {
+		if rec.Code != 401 {
 			t.Fatalf("bearer HTML %s: %d", path, rec.Code)
 		}
 	}
@@ -286,6 +286,12 @@ func TestServiceTokenManifestEligibility(t *testing.T) {
 			continue
 		}
 		count++
+		if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin {
+			if !operatorauth.OperatorAdminRoute(route) || !operatorPolicyAdmissible(route, policy) {
+				t.Errorf("invalid operator admin route: %s", route)
+			}
+			continue
+		}
 		if policy.ServiceTokenEligible == serviceEligibleSelf {
 			continue
 		}
@@ -979,6 +985,12 @@ func TestServiceTokenManagementScriptAllowlistScope(t *testing.T) {
 func TestServiceTokenForbiddenManifestPatterns(t *testing.T) {
 	forbidden := []string{"enrollment-token", "installer-key", "password", "totp", "session", "/credential", "/key", "/token", "/mfa", "/evidence", "GET /v1/operator/machines/{id}", "/audit-events", "/tickets", "/maintenance/restore-drills", "/artifact-fetches", "/timeline", "/daily-report", "/tailnet", "/disk-clean/summaries"}
 	for route, policy := range operatorRoutePolicies {
+		if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin {
+			if !operatorauth.OperatorAdminRoute(route) || !operatorPolicyAdmissible(route, policy) {
+				t.Errorf("invalid operator admin route: %s", route)
+			}
+			continue
+		}
 		if policy.ServiceTokenEligible == serviceEligibleSelf {
 			continue
 		}

@@ -91,6 +91,9 @@ func (s *Store) ConfirmTOTPForSession(id, code, keepToken string, metadata ...Au
 	if _, err = tx.Exec(`UPDATE hub_sessions SET revoked_at=? WHERE account_id=? AND session_hash<>? AND revoked_at IS NULL`, fmtTime(s.nowFn()), id, sessionHash(keepToken)); err != nil {
 		return nil, err
 	}
+	if _, err = tx.Exec(`UPDATE hub_sessions SET mfa_verified_at=? WHERE session_hash=? AND account_id=? AND revoked_at IS NULL`, fmtTime(s.nowFn()), sessionHash(keepToken), id); err != nil {
+		return nil, err
+	}
 	if err = s.recordAuditTx(tx, accountAudit(AuditMFAEnabled, HubAccount{AccountID: id, Username: username}, true, metadata...)); err != nil {
 		return nil, err
 	}

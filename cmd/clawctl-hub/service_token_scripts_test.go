@@ -26,7 +26,7 @@ func TestServiceTokenReadScriptsBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes := []string{"POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs", "POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now"}
+	routes := []string{"POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}
 	_, secret, err := f.store.CreateServiceToken(store.ServiceToken{Name: "hermes", Scope: "operate", ExpiresAt: time.Now().Add(time.Hour), Allowlist: routes}, admin.AccountID)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestServiceTokenReadScriptsBoundary(t *testing.T) {
 		}
 	}
 	for _, path := range []string{"/v1/operator/schedules/upsert/preview", "/v1/operator/schedules/upsert/apply", "/v1/operator/schedules/set-enabled/preview", "/v1/operator/schedules/set-enabled/apply", "/v1/operator/schedules/s-1/run-now"} {
-		if w := call(path, body); w.Code != 401 {
+		if w := call(path, body); w.Code != 403 {
 			t.Fatalf("schedule %s: %d", path, w.Code)
 		}
 	}

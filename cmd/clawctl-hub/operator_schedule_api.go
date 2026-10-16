@@ -79,6 +79,9 @@ func (h *hub) handleScheduleManage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actor.AuthCapability = p.GrantedCapabilities.Admin
+		if p.ServiceScope == operatorauth.ServiceScopeOperatorAdmin {
+			actor.AuthCapability = operatorauth.ServiceScopeOperatorAdmin
+		}
 	}
 	result, e := operator.New(h.store).ScheduleManage(body, op, apply, r.Header.Get("Idempotency-Key"), actor)
 	if e != nil {
@@ -131,6 +134,9 @@ func (h *hub) handleScheduleRunNow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actor.AuthCapability = p.GrantedCapabilities.Admin
+		if p.ServiceScope == operatorauth.ServiceScopeOperatorAdmin {
+			actor.AuthCapability = operatorauth.ServiceScopeOperatorAdmin
+		}
 	}
 	result, e := operator.New(h.store).ScheduleRunNow(v.ID, r.Header.Get("Idempotency-Key"), actor)
 	if e != nil {

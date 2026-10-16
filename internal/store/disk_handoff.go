@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"strings"
 	"time"
@@ -116,6 +117,14 @@ type DiskOwnershipResult struct {
 }
 
 func (s *Store) DiskOwnershipManage(req DiskOwnershipRequest, apply bool, key string, a AuditEntry) (DiskOwnershipResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskOwnershipResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	var out DiskOwnershipResult
 	if err := humanDiskAdmin(a); err != nil {
 		return out, err
@@ -129,7 +138,7 @@ func (s *Store) DiskOwnershipManage(req DiskOwnershipRequest, apply bool, key st
 		}
 		return r
 	}, req.Reason))
-	if len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
+	if len([]rune(req.Reason)) > 500 || !validAuditReason(req.Reason) {
 		return out, operatorError("BAD_REQUEST", "safe bounded reason required")
 	}
 	if req.Reason == "" {
