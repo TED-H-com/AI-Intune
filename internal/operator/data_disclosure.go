@@ -298,9 +298,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryAssignments: {
 		title:  "指派",
-		holds:  "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。",
+		holds:  "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。Channel bot bindings are metadata retained until an admin removes them; they have no routing behavior.",
 		source: DataSourceOperator,
-		tables: []string{"machine_profile_assignments", "ticket_static_assignment"},
+		tables: []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings"},
 		path:   "/machines/configuration",
 	},
 	DataCategoryAudit: {

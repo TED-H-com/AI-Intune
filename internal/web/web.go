@@ -263,7 +263,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(append(patterns, "GET /secrets", "GET /v1/operator/secrets"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
+	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
 }
 
 type maintenancePageView struct {
@@ -554,8 +554,9 @@ type page struct {
 	Retention retentionNote
 
 	// 動作紀錄
-	Secrets []secretStatus
-	Audit   *auditPageView
+	Channels *channelsView
+	Secrets  []secretStatus
+	Audit    *auditPageView
 	// Action 只在「按了但沒做成」的那一頁有值。
 	Action *actionResult
 	// EnrollPreview freezes the exact impact reviewed by the operator and the
