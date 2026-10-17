@@ -1018,3 +1018,21 @@ for immediate grant semantics, rotation boundaries and audit diffs.
 ## Fly self-deployment safety (ops only)
 
 `ops/fly/deploy.sh` verifies fresh snapshots of all `clawctl_data` volumes before deployment and retries transient builder failures before fallback. This host operation adds no Hub web, API, MCP, or store contract. Human operators use the script; see [Fly deployment](DEPLOY-FLY.md) for the explicit snapshot bypass and recovery limits.
+
+## Disk growth evidence
+
+`GET /v1/operator/disk-ops/status/{machine_id}` includes a `growth` array,
+ordered by descending GB/hour (first entry is the top growing mount). Each entry
+contains `mount`, `gb_per_hour`, `window_minutes`, `coverage_minutes`, `samples`,
+`known`, `sustained`, `measured_at`, and optional `time_to_full_hours`.
+Unknown or stale evidence must not be interpreted as healthy. GB is decimal
+(1,000,000,000 bytes); time-to-full assumes the measured positive rate continues.
+The existing `disk_ops_status` MCP tool exposes the same numeric evidence with
+`mount_digest` replacing mount paths, preserving its human-view authorization.
+
+Human UI: `/tenant/disk-policies` configures optional `growth` policy fields
+`gb_per_hour` (1–1,000,000) and `window_minutes` (10–1440), using existing
+preview/apply and reauthentication. `/tenant/disk-alerts`, machine detail, and
+`/machines/{id}/disk` display growth evidence and existing acknowledgement links.
+The existing policy APIs accept the same optional object. Omission preserves old
+canonical policy digests and inherits Hub defaults.

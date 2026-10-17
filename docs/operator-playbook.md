@@ -231,3 +231,34 @@ See [operator SSH](runbooks/OPERATOR-BOX-SSH.md).
 
 **Planned Hub feature:** Reachability/access-path evidence and readiness guidance
 that distinguishes jump-only bootstrap, agent transport and interactive sessions.
+
+### Investigate sustained disk growth
+
+A generic incident: a runaway writer consumes 12 GB/hour while disk utilization
+is still below its percentage warning. Growth alerts detect this independently
+of percent thresholds. Open **Disk alerts**, follow the machine link, and review
+the top growing mount, window coverage, sample count, and estimated time to full.
+Inspect the responsible workload before using reviewed cleanup actions; acknowledge
+with a reason after assigning investigation. Acknowledgement does not clear an alert.
+
+On **Disk policies**, create/edit `disk-default` for a fleet fallback or set a
+growth override on a machine's scheduled user disk policy. Preview and apply the
+revision with normal human reauthentication (disk policy writes must be enabled).
+Policies without an override inherit `disk-default`, then Hub defaults of 10 GB/h
+over 30 minutes. Startup overrides: `--disk-growth-gb-per-hour` /
+`CLAWCTL_DISK_GROWTH_GB_PER_HOUR`, `--disk-growth-window-minutes` /
+`CLAWCTL_DISK_GROWTH_WINDOW_MINUTES`; explicit flags take precedence over env.
+
+At least three distinct observations must span 80% of the sliding window, with no
+interval longer than half the window. Every interval must exceed the threshold;
+cleanup interrupts sustained growth. Resizes, sparse coverage, future timestamps,
+and measurements older than 15 minutes are unknown. Root samples are persisted
+from agent check-ins; declared data mounts use authenticated safe-tier observations
+collected by the disk reconciliation loop. Schedule sufficiently frequent previews
+for data-mount coverage. Samples expire after 25 hours of Hub receipt time; restart retains history. The
+latest per-mount growth evidence remains stored until replaced and is disclosed
+in machine data holdings; it becomes unknown after 15 minutes.
+Time-to-full is available only for positive growth and assumes a constant rate.
+Two fresh non-sustained readings at least five minutes apart clear an episode;
+unknown readings break that clearing sequence. Existing critical notification
+channels, six-hour repeats, and acknowledgement preview/apply apply unchanged.

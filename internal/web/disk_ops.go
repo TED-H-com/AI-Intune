@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net/http"
 	"strconv"
@@ -159,7 +160,7 @@ func (s *Server) diskPolicies(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "disk_policies.html", page{Title: "Disk policies", Nav: "tenant-disk-policies", DiskPolicies: view})
 }
 
-var diskPolicyEditFields = []string{"id", "expected_revision", "user_tmp_min_days", "var_tmp_min_days", "docker_min_hours", "journald_max_mib", "cargo_min_days", "warn_percent", "critical_percent", "deep_report_above_percent", "max_items", "max_entries", "max_seconds", "protect_paths", "reason"}
+var diskPolicyEditFields = []string{"id", "expected_revision", "user_tmp_min_days", "var_tmp_min_days", "docker_min_hours", "journald_max_mib", "cargo_min_days", "warn_percent", "critical_percent", "deep_report_above_percent", "max_items", "max_entries", "max_seconds", "protect_paths", "reason", "growth_gb_per_hour", "growth_window_minutes", "data_mounts", "canary_days"}
 
 func diskPolicyFromForm(r *http.Request) (store.DiskPolicyRequest, error) {
 	p := store.DefaultDiskPolicy()
@@ -171,10 +172,36 @@ func diskPolicyFromForm(r *http.Request) (store.DiskPolicyRequest, error) {
 		}
 		*values[i] = v
 	}
+	if raw := strings.TrimSpace(r.PostForm.Get("data_mounts")); raw != "" {
+		for _, line := range strings.Split(raw, "\n") {
+			p.DataMounts = append(p.DataMounts, strings.TrimSpace(line))
+		}
+	}
+	if raw := r.PostForm.Get("canary_days"); raw != "" {
+		days, e := strconv.Atoi(raw)
+		if e != nil {
+			return store.DiskPolicyRequest{}, e
+		}
+		p.CanaryDays = days
+	}
+	if r.PostForm.Get("growth_gb_per_hour") == "" && r.PostForm.Get("growth_window_minutes") != "" {
+		return store.DiskPolicyRequest{}, fmt.Errorf("both growth fields are required for an override")
+	}
 	if raw := strings.TrimSpace(r.PostForm.Get("protect_paths")); raw != "" {
 		for _, line := range strings.Split(raw, "\n") {
 			p.ProtectPaths = append(p.ProtectPaths, strings.TrimSpace(line))
 		}
+	}
+	if r.PostForm.Get("growth_gb_per_hour") != "" {
+		rate, e := strconv.Atoi(r.PostForm.Get("growth_gb_per_hour"))
+		if e != nil {
+			return store.DiskPolicyRequest{}, e
+		}
+		window, e := strconv.Atoi(r.PostForm.Get("growth_window_minutes"))
+		if e != nil {
+			return store.DiskPolicyRequest{}, e
+		}
+		p.Growth = &store.DiskGrowthPolicy{GBPerHour: rate, WindowMinutes: window}
 	}
 	rev, err := strconv.ParseInt(r.PostForm.Get("expected_revision"), 10, 64)
 	if err != nil {

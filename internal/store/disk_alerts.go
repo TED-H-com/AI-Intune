@@ -115,6 +115,9 @@ func (s *Store) DiskAlertReading(machine, key, severity string, value *int, thre
 }
 
 func (s *Store) ReconcileDiskAlerts(now time.Time) error {
+	if _, err := s.execWrite(context.Background(), "disk_growth_retention", `DELETE FROM disk_growth_samples WHERE received_at<?`, fmtTime(now.Add(-25*time.Hour))); err != nil {
+		return err
+	}
 	if err := s.PruneDiskCanaryDays(now); err != nil {
 		return err
 	}
@@ -142,6 +145,9 @@ func (s *Store) ReconcileDiskAlerts(now time.Time) error {
 	for _, id := range ids {
 		status, e := s.DiskOpsStatus(id)
 		if e != nil {
+			return e
+		}
+		if e = s.reconcileDiskGrowth(id, status, now); e != nil {
 			return e
 		}
 		if e = s.diskEvidenceWarnings(id, now); e != nil {

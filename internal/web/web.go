@@ -392,6 +392,7 @@ type page struct {
 	DiskAction            *diskActionView
 	DiskQuarantine        *diskQuarantineView
 	DiskReport            *diskReportView
+	DiskGrowth            []store.DiskGrowth
 	DiskBanner            *store.DiskAlertBannerCounts
 	DiskAlerts            *diskAlertsPage
 	DiskMachine           *diskMachinePage
@@ -1335,7 +1336,13 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		value := machine.Checkins.Items[count-1]
 		latestMachineCheckin = &value
 	}
+	growth, err := s.operator.DiskGrowthRead(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "disk growth", err)
+		return
+	}
 	s.render(w, r, "machine.html", page{
+		DiskGrowth:              growth,
 		Title:                   machine.Item.DisplayName,
 		Nav:                     "machines-detail",
 		Now:                     now.Local().Format("2006-01-02 15:04"),

@@ -53,6 +53,8 @@ var machineDataTables = []MachineDataTable{
 	{Table: "disk_timer_ingestion", TimeCol: "received_at"},
 	{Table: "disk_alert_delivery_reservations", TimeCol: "reserved_at"},
 	{Table: "disk_alerts", TimeCol: "opened_at"},
+	{Table: "disk_growth_samples", TimeCol: "received_at"},
+	{Table: "disk_growth_evidence", TimeCol: "updated_at"},
 	{Table: "disk_canary_days", TimeCol: "day"},
 	{Table: "usage_accounts", TimeCol: ""},
 	{Table: "usage_files", TimeCol: ""},
