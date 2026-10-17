@@ -173,11 +173,11 @@ example.com/cap/clawctl-admin
 
 另外一條 non-operator route 是 opt-in signed chat webhook `POST /v1/channels/{id}/inbound`，有獨立 provider authentication；見 [CHANNELS.md](CHANNELS.md)。
 
-目前 code route manifest 固定為 307 operations：24 條 non-operator，加上 283 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=109`、`operate=33`、`admin=141`，
-其中 `/v1/operator/*` JSON routes 共 142 條、HTML/BFF/CSV/download 共 141 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 308 operations：24 條 non-operator，加上 284 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=109`、`operate=33`、`admin=142`，
+其中 `/v1/operator/*` JSON routes 共 142 條、HTML/BFF/CSV/download 共 142 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-307-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+308-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies accept boundary-authorized human
 Tailscale admins or local admins with a current session MFA proof, checked before
@@ -791,3 +791,21 @@ Errors identify the failed rule, for example `reason is empty`,
 The UI displays the server error and a live `max 500 characters` counter;
 reason text survives retries and MFA step-up. Fleet-specific configuration and
 operational values belong in the **Private overlay**, not this public repository.
+
+### Editing service-token routes
+
+Human admins can expand **Edit allowed routes** for a live token at
+`/account/service-tokens`. Check only the required routes and save with the
+current password and a fresh, unused authenticator code. The same cross-origin
+protection used by create/revoke applies. Bearer tokens cannot edit grants.
+Only eligible routes from the existing route manifest are offered and accepted;
+scope cannot be raised. Empty or duplicate grants are rejected.
+
+Changes take effect immediately for that credential; its secret, CIDRs, scope,
+and expiry stay unchanged. Rotated, revoked and expired credentials cannot be
+edited. Rotation inherits the grants current at rotation time. Existing other
+credentials in a chain retain their grants, including during overlap; revoke the
+chain and create a replacement when every credential must lose authority.
+The transactional `service-token-routes-edit` audit records each added/removed
+route as an old-to-new grant diff, followed by a completion entry. Individual
+entries avoid truncating large diffs; no token plaintext or factor is recorded.

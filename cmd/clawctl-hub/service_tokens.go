@@ -21,7 +21,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
-var serviceTokenPatterns = []string{"GET /v1/operator/service-tokens/self", "POST /v1/operator/service-tokens/rotate", "GET /account/service-tokens", "POST /account/service-tokens/create", "POST /account/service-tokens/revoke"}
+var serviceTokenPatterns = []string{"GET /v1/operator/service-tokens/self", "POST /v1/operator/service-tokens/rotate", "GET /account/service-tokens", "POST /account/service-tokens/create", "POST /account/service-tokens/revoke", "POST /account/service-tokens/routes"}
 
 type serviceFormRoute struct {
 	Pattern, Label, Description string
@@ -29,6 +29,7 @@ type serviceFormRoute struct {
 }
 type serviceFormData struct {
 	Tokens                                                []store.ServiceToken
+	TokenRoutes                                           map[string][]serviceFormRoute
 	Message, ErrorField, Secret, CreatedID, CreatedExpiry string
 	Name, Scope, Expiry, CIDRs, MaxLifetime               string
 	Routes                                                []serviceFormRoute
@@ -48,7 +49,7 @@ var serviceTokenForm = template.Must(template.New("service-tokens").Parse(`<!doc
 {{if eq .ErrorField "password"}}<p class="error" id="password-error">{{.Message}}</p>{{end}}<label for="password">Current password</label><input id="password" {{if eq .ErrorField "password"}}aria-invalid="true" aria-errormessage="password-error"{{end}} type="password" name="password" required autocomplete="current-password">
 {{if or (eq .ErrorField "code") (eq .ErrorField "password")}}<p class="error" id="code-error">{{.Message}}</p>{{end}}<label for="code">Authenticator code</label><input id="code" {{if or (eq .ErrorField "code") (eq .ErrorField "password")}}aria-invalid="true" aria-errormessage="code-error"{{end}} name="code" required inputmode="numeric" autocomplete="one-time-code">
 <button>Create selected routes</button><button name="preset" value="hermes-default">Create Hermes token (operate)</button><small>Hermes default: supervision summaries, job list/details, read-script evidence and script-runs preview/apply. Hermes always uses operate scope; selected routes use the scope above.</small></form>
-<h2>Existing tokens</h2><table><tr><th>ID / name</th><th>Scope</th><th>Status</th><th>Allowed routes / CIDRs</th><th>Expires</th><th>Revoke chain</th></tr>{{range .Tokens}}<tr><td>{{.ID}}<br>{{.Name}}</td><td>{{.Scope}}</td><td>{{.Status}}</td><td>{{range .Allowlist}}{{.}}<br>{{end}}{{range .SourceCIDRs}}{{.}}<br>{{end}}</td><td>{{.ExpiresAt}}</td><td><form method="post" action="/account/service-tokens/revoke"><input type="hidden" name="id" value="{{.ID}}"><label>Password <input type="password" name="password" required autocomplete="current-password"></label><label>Authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Revoke entire chain</button></form></td></tr>{{end}}</table></body></html>`))
+<h2>Existing tokens</h2><table><tr><th>ID / name</th><th>Scope</th><th>Status</th><th>Allowed routes / CIDRs</th><th>Expires</th><th>Revoke chain</th></tr>{{range .Tokens}}<tr><td>{{.ID}}<br>{{.Name}}</td><td>{{.Scope}}</td><td>{{.Status}}</td><td>{{range .Allowlist}}{{.}}<br>{{end}}{{range .SourceCIDRs}}{{.}}<br>{{end}}</td><td>{{.ExpiresAt}}</td><td>{{if eq .Status "active"}}<details><summary>Edit allowed routes</summary><p>Changes take effect immediately for this credential. Scope and expiry stay fixed. Other credentials in the rotation chain are unchanged.</p><form method="post" action="/account/service-tokens/routes"><input type="hidden" name="id" value="{{.ID}}"><fieldset><legend>Allowed routes for {{.Name}}</legend>{{range index $.TokenRoutes .ID}}<label><input type="checkbox" name="routes" value="{{.Pattern}}" {{if .Selected}}checked{{end}}> {{.Label}} <code>{{.Pattern}}</code></label>{{end}}</fieldset><label>Current password <input type="password" name="password" required autocomplete="current-password"></label><label>Fresh authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Save allowed routes</button></form></details>{{end}}<form method="post" action="/account/service-tokens/revoke"><input type="hidden" name="id" value="{{.ID}}"><label>Password <input type="password" name="password" required autocomplete="current-password"></label><label>Authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Revoke entire chain</button></form></td></tr>{{end}}</table></body></html>`))
 
 // Creation renders directly, without forms or the list, so the one-time secret is unmistakable.
 var serviceTokenSuccess = template.Must(template.New("service-token-created").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Copy your token now</title><style>body{font:18px system-ui;max-width:850px;margin:3rem auto;padding:1rem}input,button{font:inherit}input{width:100%;box-sizing:border-box}strong{display:block;padding:1rem;border:3px solid #b00020;background:#fff0f0}</style></head><body><h1>Copy your token now</h1><p>Name: {{.Name}}</p><p>Token ID: {{.CreatedID}}</p><p>Scope: {{.Scope}}</p><p>Expires: {{.CreatedExpiry}}</p><strong>This is the only time it will be shown. Store it now (e.g. in the Hermes host file ~/.config/hermes/service-token, mode 0600).</strong><p><label for="issued-token">Service token (select and copy)</label><input id="issued-token" readonly value="{{.Secret}}" autocomplete="off" spellcheck="false"></p><button id="copy-token" type="button">Copy token</button><script>` + serviceTokenCopyScript + `</script><p><a href="/account/service-tokens">I have saved it — back to service tokens</a></p></body></html>`))
@@ -228,6 +229,18 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 					data.CreatedID = created.ID
 					data.CreatedExpiry = created.ExpiresAt.UTC().Format(time.RFC3339)
 
+				} else if strings.HasSuffix(r.URL.Path, "/routes") {
+					routes := r.PostForm["routes"]
+					if validServiceTokenEditRoutes(routes) {
+						err = st.UpdateServiceTokenRoutes(r.PostForm.Get("id"), routes, actor)
+					} else {
+						err = store.ErrServiceToken
+					}
+					if err != nil {
+						message = "Route edit rejected: check selected routes, scope and token status."
+					} else {
+						message = "Allowed routes updated immediately."
+					}
 				} else {
 					err = st.RevokeServiceToken(r.PostForm.Get("id"), actor)
 				}
@@ -294,6 +307,25 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			data.Routes = append(data.Routes, serviceFormRoute{route, label, description, selected})
 		}
 		sort.Slice(data.Routes, func(i, j int) bool { return data.Routes[i].Pattern < data.Routes[j].Pattern })
+		data.TokenRoutes = map[string][]serviceFormRoute{}
+		for _, token := range tokens {
+			for _, route := range data.Routes {
+				policy := operatorRoutePolicies[route.Pattern]
+				if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin && token.Scope != operatorauth.ServiceScopeOperatorAdmin {
+					continue
+				}
+				if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly && token.Scope == "view" {
+					continue
+				}
+				route.Selected = false
+				for _, grant := range token.Allowlist {
+					if grant == route.Pattern {
+						route.Selected = true
+					}
+				}
+				data.TokenRoutes[token.ID] = append(data.TokenRoutes[token.ID], route)
+			}
+		}
 		_ = serviceTokenForm.Execute(w, data)
 	}
 	for _, pattern := range serviceTokenPatterns {
@@ -314,6 +346,8 @@ func serviceTokenManagementMetadata(w http.ResponseWriter, r *http.Request, p op
 	switch r.URL.Path {
 	case "/account/service-tokens/create":
 		entry.Action, field = "service-token-create-denied", "name"
+	case "/account/service-tokens/routes":
+		entry.Action, field = "service-token-routes-edit-denied", "id"
 	case "/account/service-tokens/revoke":
 		entry.Action, field = "service-token-revoke-denied", "id"
 	}
@@ -497,4 +531,19 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	b.csrfNext.ServeHTTP(response, operatorauth.WithPrincipal(r, principal))
+}
+
+func validServiceTokenEditRoutes(routes []string) bool {
+	if len(routes) == 0 || len(routes) > 128 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, route := range routes {
+		p, ok := operatorRoutePolicies[route]
+		if !ok || !p.ServiceTokenEligible.eligible() || p.ServiceTokenEligible == serviceEligibleSelf || seen[route] {
+			return false
+		}
+		seen[route] = true
+	}
+	return true
 }
