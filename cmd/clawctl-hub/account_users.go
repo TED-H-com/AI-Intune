@@ -121,7 +121,7 @@ func recordUserBoundaryFailure(st *store.Store, r *http.Request, detail string, 
 	if !ok || p.AuthMethod != operatorauth.AuthMethodLocalAccountSession {
 		return
 	}
-	if r.URL.Path == "/account/service-tokens/create" || r.URL.Path == "/account/service-tokens/revoke" {
+	if r.URL.Path == "/account/service-tokens/create" || r.URL.Path == "/account/service-tokens/revoke" || r.URL.Path == "/account/service-tokens/routes" {
 		var resolver clientip.Resolver
 		if len(resolvers) > 0 {
 			resolver = resolvers[0]
