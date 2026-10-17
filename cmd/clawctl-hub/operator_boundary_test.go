@@ -127,12 +127,12 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		t.Fatalf("non-operator registered=%d policies=%d, want 30/30",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 295 || len(operatorRoutePolicies) != 295 {
-		t.Fatalf("operator registered=%d policies=%d, want 295/295",
+	if len(operatorRegistered) != 296 || len(operatorRoutePolicies) != 296 {
+		t.Fatalf("operator registered=%d policies=%d, want 296/296",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 325 {
-		t.Fatalf("all registered routes=%d, 預期 325", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 326 {
+		t.Fatalf("all registered routes=%d, 預期 326", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -142,14 +142,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 114 || counts[operatorauth.Operate] != 33 || counts[operatorauth.Admin] != 148 {
-		t.Fatalf("permission counts=%v, want view=114 operate=33 admin=148", counts)
+	if counts[operatorauth.View] != 115 || counts[operatorauth.Operate] != 33 || counts[operatorauth.Admin] != 148 {
+		t.Fatalf("permission counts=%v, want view=115 operate=33 admin=148", counts)
 	}
-	if representations[operatorJSON] != 149 || representations[operatorHTML] != 145 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=149 HTML=145 plain=1", representations)
+	if representations[operatorJSON] != 150 || representations[operatorHTML] != 145 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=150 HTML=145 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 294 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=294 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 295 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=295 terminal=1", profiles)
 	}
 }
 
@@ -338,6 +338,7 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"POST /v1/operator/enrollment-limit", "/v1/operator/enrollment-limit", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/machines", "/v1/operator/machines", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/machines/{id}", "/v1/operator/machines/machine-1", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"GET /v1/operator/machines/{id}/oom-kills", "/v1/operator/machines/example/oom-kills", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/machines/{id}/evidence", "/v1/operator/machines/machine-1/evidence", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/jobs", "/v1/operator/jobs", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/jobs/{id}", "/v1/operator/jobs/job-1", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},

@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 325 個 HTTP operations（30 non-operator＋295 operator；149 條 operator JSON）、
+> 逐一對照 326 個 HTTP operations（30 non-operator＋296 operator；150 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 325-operation tally above (30 non-operator + 295 operator). The inventory/contract excludes these six public account operations and totals 319. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 326-operation tally above (30 non-operator + 296 operator). The inventory/contract excludes these six public account operations and totals 320. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -23,7 +23,7 @@ These six operations are included in the 325-operation tally above (30 non-opera
 
 | Method | Operator download route | Authority / behavior |
 |---|---|---|
-| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 295 operator tally. |
+| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 296 operator tally. |
 
 In local mode operator routes use a local admin session, including `/metrics`; in `both`, sessions precede eligible WhoIs fallback. Forwarded identity headers and machine/verifier bearers never authorize operators. The Tailscale-specific explanations below describe the advanced mode. See [Autopilot](AUTOPILOT.md) for setup, expiry, lockout and recovery.
 
@@ -971,8 +971,8 @@ for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
 Adds ten operator operations (six JSON, four HTML). The combined manifest totals
-325 including public accounts, 319 excluding them; 295 operator (149 JSON,
-146 HTML/plain), exact grants view=114 / operate=33 / admin=148.
+326 including public accounts, 320 excluding them; 296 operator (150 JSON,
+146 HTML/plain), exact grants view=115 / operate=33 / admin=148.
 
 | Method | Route | Admission |
 | --- | --- | --- |
@@ -1151,3 +1151,38 @@ The configured notifier and notification ledger receive condition-specific alert
 with daily successful-delivery deduplication and existing failure backoff. New
 thresholds/conditions notify independently. Notification bodies contain generic
 flags and a link to `/tenant/certificates`, excluding owner/notes/endpoint text.
+
+## OOM kill attribution
+
+UI: Machines → machine detail → **Recent OOM kills**, linked from the page heading
+and attention next steps. Recent evidence also produces a memory fleet finding.
+
+`GET /v1/operator/machines/{id}/oom-kills` (View capability; exact service-token
+route grant required) returns `{schema_version: 1, evaluated_at, items: []}` with at most 64 events
+from the last hour, newest first. No query parameters; missing machines return
+404. Responses are no-store. Each item contains UTC time, source
+(oomd, kernel, memcg), optional unit (systemd unit/container scope basename),
+process, pressure_avg10 (percentage), and count (memcg delta).
+Absent attribution is unknown. Counter times are observation times, not kill
+times. Kernel and counter evidence may overlap and must not be summed.
+
+Agent observation schema 1 adds optional oom_kills (maximum 64), retaining
+compatibility with agents that omit it. Hub retains these in append-only
+observed_state under kind/subject oom, governed by existing observation
+retention. Reads inspect at most 128 batches received in the last two hours,
+deduplicate overlapping identical events, and expire attention after one hour.
+Agent times outside the last day or more than five minutes ahead are rejected;
+the ordinary clock-skew signal still applies.
+
+Kernel journal evidence falls back to a bounded ISO-timestamped dmesg read when
+the journal supplies no kernel victim. Only extracted identity basenames
+(128-character restricted alphabet), typed
+timestamps/counters and numeric pressure are uploaded. No raw OOM log, command
+line, environment, full cgroup path, host address or arbitrary error is uploaded
+by this collector. Unit/process identities are operator-controlled metadata:
+do not put credentials in names. This is not general secret redaction for
+other observation fields.
+
+MCP/operator-agent tool: `machine_oom_kills` with required `machine_id` and no
+other arguments; read-only, forwarding to the same HTTP endpoint. The operator
+client validates the bounded typed response before returning it to the tool.

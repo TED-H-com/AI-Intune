@@ -182,6 +182,7 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"DELETE /v1/operator/certificates/{id}":     {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/certificates/{id}/probe": {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 
+	"GET /v1/operator/machines/{id}/oom-kills":         {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/service-tokens/self":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
 	"POST /v1/operator/service-tokens/rotate":          {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
 	"GET /account/service-tokens":                      {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
