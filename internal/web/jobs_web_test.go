@@ -166,7 +166,7 @@ func TestGlobalJobsPageRejectsInvalidQueriesInsteadOfIgnoringThem(t *testing.T) 
 		"/jobs?",
 		"/jobs?stat=succeeded",
 		"/jobs?machine_id=a&machine_id=b",
-		"/jobs?machine_id=",
+		"/jobs?machine_id=%20",
 		"/jobs?state=claimed&state=claimed",
 		"/jobs?state=flying",
 		"/jobs?resource_id=openclaw",
@@ -361,5 +361,23 @@ func TestTheAssignmentStateColumnSaysTheseExactWords(t *testing.T) {
 				t.Errorf("assignmentStateClass(%q)=%q, want %q", test.state, got, test.wantClass)
 			}
 		})
+	}
+}
+
+func TestGlobalJobsPageAcceptsBlankOptionalFilters(t *testing.T) {
+	s, _ := newServer(t)
+	for _, path := range []string{
+		"/jobs?machine_id=&deployment_id=&resource_kind=&resource_id=&limit=50",
+		"/jobs?machine_id=&deployment_id=&resource_kind=diagnostic&resource_id=&limit=50",
+		"/jobs?machine_id=",
+	} {
+		mux := http.NewServeMux()
+		s.Routes(mux)
+		rec := httptest.NewRecorder()
+		req := verifiedWebRequest(httptest.NewRequest(http.MethodGet, path, nil), "example.com/cap/clawctl-view")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status %d, want 200", path, rec.Code)
+		}
 	}
 }

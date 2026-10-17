@@ -90,7 +90,7 @@ func parseWebJobListRequest(r *http.Request) (operator.JobListRequest, jobsPage,
 		if !present {
 			return "", nil
 		}
-		if len(entries) != 1 || entries[0] == "" || entries[0] != strings.TrimSpace(entries[0]) ||
+		if len(entries) != 1 || entries[0] != strings.TrimSpace(entries[0]) ||
 			len(entries[0]) > maxBytes {
 			return "", fmt.Errorf("工作單查詢參數 %q 必須恰有一個非空且長度合法的值。", name)
 		}
