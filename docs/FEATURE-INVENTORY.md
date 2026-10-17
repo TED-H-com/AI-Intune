@@ -806,3 +806,7 @@ Six JSON and four HTML operations are listed in
 [API-SURFACE](API-SURFACE.md#timer-handoff-and-disk-alerts-p2-05).
 Root helper is unavailable in the current adapter, so root remains local-owned.
 Screenshots use generic fixture data under `docs/screenshots/phase2/p2-05/`.
+
+## Fly self-deployment safety (ops only)
+
+`ops/fly/deploy.sh` verifies fresh snapshots of all `clawctl_data` volumes before deployment and retries transient builder failures before fallback. This host operation adds no Hub web, API, MCP, or store contract. Human operators use the script; see [Fly deployment](DEPLOY-FLY.md) for the explicit snapshot bypass and recovery limits.
