@@ -40,6 +40,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 
 ARG CLAWCTL_VERSION=dev
+ARG CLAWCTL_COMMIT=unknown
+ARG CLAWCTL_BUILD_TIME=unknown
 ENV CGO_ENABLED=0
 # Bundles are packed by ops/build-agent-bundles.sh (same archive layout the
 # Hub checks). SHA256SUMS matches ops/publish-agent-bundles.sh for the
@@ -74,7 +76,7 @@ if [ "${#version}" -gt 128 ]; then
 fi
 
 mkdir -p /out /src/build
-ldflags="-s -w -X main.version=${version}"
+ldflags="-s -w -X main.version=${version} -X main.commit=${CLAWCTL_COMMIT} -X main.buildTime=${CLAWCTL_BUILD_TIME}"
 
 goos="${TARGETOS:-$(go env GOOS)}"
 goarch="${TARGETARCH:-$(go env GOARCH)}"
@@ -112,6 +114,8 @@ EOF
 # cannot fix a root-owned volume itself.
 FROM busybox:1.36.1 AS hub-init
 ARG CLAWCTL_VERSION=dev
+ARG CLAWCTL_COMMIT=unknown
+ARG CLAWCTL_BUILD_TIME=unknown
 ENV CLAWCTL_VERSION=${CLAWCTL_VERSION}
 COPY --from=build /out/agent-bootstrap /opt/clawctl-seed/agent-bootstrap
 COPY ops/docker/hub-data-init.sh /usr/local/bin/hub-data-init.sh
@@ -160,6 +164,8 @@ FROM litestream/litestream:0.5.17 AS litestream-bins
 
 FROM debian:bookworm-slim AS hub-fly
 ARG CLAWCTL_VERSION=dev
+ARG CLAWCTL_COMMIT=unknown
+ARG CLAWCTL_BUILD_TIME=unknown
 ENV CLAWCTL_VERSION=${CLAWCTL_VERSION} \
     CLAWCTL_DB=/var/lib/clawctl/clawctl.sqlite \
     CLAWCTL_REPORT_STAMP=/var/lib/clawctl/last-report.stamp \

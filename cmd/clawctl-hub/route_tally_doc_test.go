@@ -78,8 +78,8 @@ func routeTallyFromPolicies(t *testing.T) routeTally {
 			}
 		case nonOperatorHealth:
 			health++
-			if pattern != "GET /healthz" {
-				t.Fatalf("health policy %q 不是 GET /healthz", pattern)
+			if pattern != "GET /healthz" && pattern != "GET /version" {
+				t.Fatalf("public metadata/liveness policy %q is invalid", pattern)
 			}
 		case nonOperatorMetrics:
 			t.Fatalf("non-operator route %q 仍公開 /metrics；它要 operator view", pattern)
@@ -90,8 +90,8 @@ func routeTallyFromPolicies(t *testing.T) routeTally {
 	if chat != 1 {
 		t.Fatalf("chat routes=%d, want 1", chat)
 	}
-	if health != 1 {
-		t.Fatalf("health=%d，公開探針只剩 /healthz", health)
+	if health != 2 {
+		t.Fatalf("public metadata/liveness=%d, want /healthz and /version", health)
 	}
 
 	verifier := verifierRoutesNamedByOperatorAuth(t)

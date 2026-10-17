@@ -46,6 +46,8 @@ func (h *hub) machineAndPublicRoutes(mux *http.ServeMux) []string {
 	patterns := h.agentRoutes(mux)
 	patterns = append(patterns, "GET /healthz")
 	mux.HandleFunc(patterns[len(patterns)-1], h.handleHealthz)
+	mux.HandleFunc("GET /version", handleVersion)
+	patterns = append(patterns, "GET /version")
 	return patterns
 }
 

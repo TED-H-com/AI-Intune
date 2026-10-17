@@ -161,6 +161,7 @@ var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
 	"GET /v1/artifacts/{sha256}":              {nonOperatorAgent},
 	"HEAD /v1/artifacts/{sha256}":             {nonOperatorAgent},
 	"GET /healthz":                            {nonOperatorHealth},
+	"GET /version":                            {nonOperatorHealth},
 }
 
 // operatorRoutePolicies is an explicit manifest, not a path-prefix rule.
@@ -601,7 +602,7 @@ func validateNonOperatorRoutePolicies(registered []string, policies map[string]n
 				return fmt.Errorf("invalid account route %q", pattern)
 			}
 		case nonOperatorHealth:
-			if pattern != "GET /healthz" {
+			if pattern != "GET /healthz" && pattern != "GET /version" {
 				return fmt.Errorf("non-operator health route %q is invalid", pattern)
 			}
 		case nonOperatorMetrics:

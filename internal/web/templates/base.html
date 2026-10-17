@@ -377,6 +377,7 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 {{end}}
 
 {{define "foot"}}
+{{if .BuildVersion}}<footer class="small dim">Hub {{.BuildVersion}} · commit <code>{{.BuildCommit}}</code> · <a href="/version">Build information</a></footer>{{end}}
       </div>
     </main>
   </div>
