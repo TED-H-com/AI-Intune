@@ -11,27 +11,11 @@ as another person. Record the human decision and a scrubbed outcome in the incid
 
 **Symptom:** A release is ready, or a remote builder fails during deployment.
 
-**Hub today:** Deployment pages manage agent workloads. They do not attest that a
-fresh backup of the Hub's own volume exists. Scheduled Litestream snapshots are
-separate from a provider volume snapshot. The Fly wrapper already falls back
-from Depot to a classic remote builder and then, when supported, a local builder.
+**Hub today:** Deployment pages manage agent workloads. Hub self-deployment remains an ops script; no UI/API snapshot receipt is added. `ops/fly/deploy.sh` gates deployment on a new, completed, recent Fly snapshot of every `clawctl_data` volume and prints its ID. The timeout defaults to 180 seconds per volume (`FLY_SNAPSHOT_TIMEOUT`); failure blocks deployment. Scheduled Litestream snapshots are a separate recovery mechanism.
 
-**Manual steps:** Before an approved Hub deploy, identify the exact app, region,
-and mounted data volume from private inventory. Use the provider's volume
-snapshot command to create a snapshot; wait for completion and verify the
-snapshot's volume ID, creation time, retention and recoverability. Record its
-identifier and age in private change evidence. Stop if the snapshot cannot be
-verified; the current wrapper does not enforce this gate. Review the database
-backup/restore procedure as well: a volume snapshot is not proof of database
-consistency or coverage of external objects. Pin the source commit, review the
-image and configuration, and obtain deploy approval. Run the existing deploy
-wrapper once; inspect its builder-stage outcome before retrying. Do not repeatedly
-launch deployments or leave classic builder apps behind. Verify version and
-health after rollout; rehearse restore separately before relying on rollback.
-See [Fly deployment](DEPLOY-FLY.md) and [restore drill](runbooks/RESTORE-DRILL.md).
+**Operator steps:** Confirm app and region from private inventory and obtain deploy approval. Preview with `--dry-run`, then run the wrapper once. Record verified volume/snapshot IDs in private change evidence. `--skip-snapshot` or `FLY_SKIP_SNAPSHOT=1` bypasses the gate with a loud warning; review an alternative recovery plan before using it. Snapshots do not prove database consistency or cover external objects. Review retention and rehearse restore separately.
 
-**Planned Hub feature:** A fresh-volume-snapshot gate and deployment receipt with
-snapshot provenance, builder attempts, deployed commit and restore coverage.
+Each builder retries transient transport failures three times with bounded backoff before auto falls back Depot → remote → local. Permanent errors stop immediately; new classic builders are cleaned up before fallback. If cleanup fails, inspect the named builder before proceeding. Verify version and health after rollout. See [Fly deployment](DEPLOY-FLY.md) and [restore drill](runbooks/RESTORE-DRILL.md).
 
 ## Verify the deployed version
 

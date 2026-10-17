@@ -1014,3 +1014,7 @@ bearer API. Fields: token `id`, repeated manifest `routes`, current `password`,
 and fresh TOTP `code`. It uses the same CSRF/origin protection as other sensitive
 account actions. See [Operator authentication](OPERATOR-AUTH.md#editing-service-token-routes)
 for immediate grant semantics, rotation boundaries and audit diffs.
+
+## Fly self-deployment safety (ops only)
+
+`ops/fly/deploy.sh` verifies fresh snapshots of all `clawctl_data` volumes before deployment and retries transient builder failures before fallback. This host operation adds no Hub web, API, MCP, or store contract. Human operators use the script; see [Fly deployment](DEPLOY-FLY.md) for the explicit snapshot bypass and recovery limits.
