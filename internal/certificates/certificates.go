@@ -102,22 +102,29 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// Probe collects the peer chain even when verification fails, then verifies it
-// explicitly with system roots (or supplied roots in isolated tests). No HTTP,
+// Probe verifies the TLS handshake with system roots (or supplied roots in tests),
+// retaining the peer chain when certificate verification fails. No HTTP,
 // redirects, credentials, or application payloads are sent.
 func Probe(ctx context.Context, c Config, roots *x509.CertPool) Result {
 	r := Result{AttemptedAt: time.Now().UTC()}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	host, _, _ := net.SplitHostPort(c.Endpoint)
-	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: &tls.Config{ServerName: host, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}} // verification is explicit below
+	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: &tls.Config{ServerName: host, RootCAs: roots, MinVersion: tls.VersionTLS12}}
 	conn, err := d.DialContext(ctx, "tcp", c.Endpoint)
+	var peers []*x509.Certificate
 	if err != nil {
-		r.ProbeError = "TLS connection or handshake failed"
-		return r
+		var verificationErr *tls.CertificateVerificationError
+		if !errors.As(err, &verificationErr) {
+			r.ProbeError = "TLS connection or handshake failed"
+			return r
+		}
+		peers = verificationErr.UnverifiedCertificates
+		r.VerificationError = verificationErr.Error()
+	} else {
+		defer conn.Close()
+		peers = conn.(*tls.Conn).ConnectionState().PeerCertificates
 	}
-	defer conn.Close()
-	peers := conn.(*tls.Conn).ConnectionState().PeerCertificates
 	if len(peers) == 0 {
 		r.ProbeError = "peer returned no certificate"
 		return r
@@ -129,13 +136,6 @@ func Probe(ctx context.Context, c Config, roots *x509.CertPool) Result {
 	r.SANs = append([]string{}, leaf.DNSNames...)
 	for _, ip := range leaf.IPAddresses {
 		r.SANs = append(r.SANs, ip.String())
-	}
-	intermediates := x509.NewCertPool()
-	for _, cert := range peers[1:] {
-		intermediates.AddCert(cert)
-	}
-	if _, err = leaf.Verify(x509.VerifyOptions{DNSName: host, Roots: roots, Intermediates: intermediates}); err != nil {
-		r.VerificationError = err.Error()
 	}
 	for _, h := range c.Expected {
 		if leaf.VerifyHostname(h) != nil {

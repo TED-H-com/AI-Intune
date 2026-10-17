@@ -19,11 +19,12 @@ import (
 
 func TestProbeGeneratedCertificates(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		expired bool
-		trusted bool
-		gap     bool
-	}{{"valid", false, true, false}, {"untrusted", false, false, false}, {"expired", true, true, false}, {"wildcard gap", false, true, true}} {
+		name     string
+		expired  bool
+		trusted  bool
+		gap      bool
+		wrongSAN bool
+	}{{"valid", false, true, false, false}, {"untrusted", false, false, false, false}, {"expired", true, true, false, false}, {"wildcard gap", false, true, true, false}, {"wrong SAN", false, true, false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			now := time.Now()
@@ -32,6 +33,9 @@ func TestProbeGeneratedCertificates(t *testing.T) {
 				end = now.Add(-time.Hour)
 			}
 			template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "example.test"}, DNSNames: []string{"example.test", "*.example.test"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, NotBefore: now.Add(-24 * time.Hour), NotAfter: end, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
+			if tc.wrongSAN {
+				template.IPAddresses = []net.IP{net.ParseIP("192.0.2.1")}
+			}
 			der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 			if err != nil {
 				t.Fatal(err)
@@ -54,10 +58,10 @@ func TestProbeGeneratedCertificates(t *testing.T) {
 				t.Fatal(err)
 			}
 			result := Probe(context.Background(), c, roots)
-			if result.ObservedAt.IsZero() || result.NotAfter.IsZero() || len(result.SANs) != 3 || result.ProbeError != "" {
+			if result.ObservedAt.IsZero() || !result.NotAfter.Equal(cert.NotAfter) || result.Issuer != cert.Issuer.String() || len(result.SANs) != 3 || result.ProbeError != "" {
 				t.Fatalf("missing observation: %+v", result)
 			}
-			if (result.VerificationError != "") != (tc.expired || !tc.trusted) {
+			if (result.VerificationError != "") != (tc.expired || !tc.trusted || tc.wrongSAN) {
 				t.Fatalf("verification: %s", result.VerificationError)
 			}
 			if tc.gap && len(result.Gaps) != 2 || !tc.gap && len(result.Gaps) != 0 {
