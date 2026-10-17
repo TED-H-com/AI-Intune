@@ -51,6 +51,8 @@ type TerminalLinks interface {
 }
 
 type Server struct {
+	buildVersion, buildCommit string
+
 	inbound           *chat.Engine
 	secretProvider    secrets.SecretProvider
 	scheduleAdmission func(http.ResponseWriter, *http.Request) bool
@@ -384,6 +386,8 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	BuildVersion, BuildCommit string
+
 	Schedules             *schedulePage
 	DiskAction            *diskActionView
 	DiskQuarantine        *diskQuarantineView
@@ -1548,6 +1552,7 @@ func stripReceivedAt(received []time.Time, interval time.Duration) []Block {
 // ---------------------------------------------------------------- helpers
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data page) {
+	data.BuildVersion, data.BuildCommit = s.buildVersion, s.buildCommit
 	locale := navigationLocaleFromRequest(r)
 	data.Locale = navigationLocaleFor(r, data.Title)
 	if data.DiskMachine != nil {
@@ -2350,4 +2355,8 @@ func humanBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func (s *Server) SetBuildInfo(version, commit string) {
+	s.buildVersion, s.buildCommit = version, commit
 }

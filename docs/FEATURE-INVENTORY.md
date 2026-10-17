@@ -47,17 +47,17 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 306 個 production operations 基線
+## 307 個 production operations 基線
 
-此數字按 HTTP method + route 計數：23 個 non-operator operations、283 個 operator
+此數字按 HTTP method + route 計數：24 個 non-operator operations、283 個 operator
 operations；其中 142 個為 operator JSON、141 個為 HTML/BFF/CSV/download。Operator 另按 exact
 capability 分成 `view=109`、`operate=33`、`admin=141`。這組數字由 route/API/service/Web/CLI
-合約測試固定；306-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+合約測試固定；307-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
 
-### Machine 與 verifier transport、telemetry（23）
+### Machine 與 verifier transport、telemetry（24）
 
 | # | Method / route | Native source | 人工 action | Operator 呈現方向 |
 |---:|---|---|---|---|
@@ -92,6 +92,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 22 | `POST /v1/disk-actions/{job_id}/results` | Machine credential | 否 | Private exact action receipts; immutable replay ledger |
 
 | 23 | `POST /v1/channels/{id}/inbound` | Signed provider webhook | Chat commands | Disabled by default; Telegram secret / Discord signature, allowlist, canonical permissions and one-time approvals; see CHANNELS.md |
+| 307 | `GET /version` | JSON | Public | Build version, commit and build time only |
 
 ### Operator HTML/BFF 與 JSON（283）
 

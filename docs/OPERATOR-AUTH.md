@@ -173,19 +173,19 @@ example.com/cap/clawctl-admin
 
 另外一條 non-operator route 是 opt-in signed chat webhook `POST /v1/channels/{id}/inbound`，有獨立 provider authentication；見 [CHANNELS.md](CHANNELS.md)。
 
-目前 code route manifest 固定為 306 operations：23 條 non-operator，加上 283 條 operator
+目前 code route manifest 固定為 307 operations：24 條 non-operator，加上 283 條 operator
 routes；operator manifest 的 exact capability tally 是 `view=109`、`operate=33`、`admin=141`，
 其中 `/v1/operator/*` JSON routes 共 142 條、HTML/BFF/CSV/download 共 141 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-306-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+307-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies accept boundary-authorized human
 Tailscale admins or local admins with a current session MFA proof, checked before
 idempotency replay. Expired local sessions use the Hub UI step-up flow.
 
 operator route manifest 與實際註冊清單在 Hub 啟動時做雙向比對。繞過 operator
-boundary 的 23 條 route 也有另一份完整 manifest；兩份不能
-重疊。那 23 條是 19 條 machine transport、2 條 verifier transport、`/healthz` 與一條 signed chat webhook；其中
+boundary 的 24 條 route 也有另一份完整 manifest；兩份不能
+重疊。那 24 條是 19 條 machine transport、2 條 verifier transport、`/healthz`、`/version` 與一條 signed chat webhook；其中
 `POST /v1/verifications`（write schema v2）與 `GET /v1/verification-assignments` 走的是 verifier bearer 而不是 machine
 bearer，manifest 仍把它們歸在 non-operator，因為它們同樣不經 operator boundary。
 Machine plane 的 `/v1/` 第二段必須是 literal 且不能是 `operator`，所以

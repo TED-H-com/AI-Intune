@@ -45,6 +45,8 @@ import (
 )
 
 var version = "dev"
+var commit = "unknown"
+var buildTime = "unknown"
 
 type hub struct {
 	diskUploadLimiter   diskReportUploadLimiter
@@ -672,6 +674,7 @@ func serve(argv []string) {
 	if err != nil {
 		log.Fatalf("failed to load templates: %v", err)
 	}
+	ui.SetBuildInfo(version, commit)
 	ui.SetDrillStampReader(func() (time.Time, bool) { return readDrillStamp(h.drillStamp) })
 	ui.SetTerminalLinks(h.agentLinks)
 	installOperatorTerminalSessionCloser(h)

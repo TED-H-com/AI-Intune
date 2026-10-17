@@ -174,7 +174,7 @@ fi
 if [[ -n "$secrets_file" ]]; then
   "$fly" secrets import --stage -a "$app" < "$secrets_file" > "$work/import" 2>&1 || fail "secrets import failed"
 fi
-args=(deploy . --config "$work/fly.toml" --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg "CLAWCTL_VERSION=$(git rev-parse --short HEAD)" --ha=false --yes)
+args=(deploy . --config "$work/fly.toml" --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg "CLAWCTL_VERSION=$(git rev-parse --short HEAD)" --build-arg "CLAWCTL_COMMIT=$(git rev-parse HEAD)" --build-arg "CLAWCTL_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --ha=false --yes)
 # Always inventory and clean up classic builders, even when the build fails.
 remote_deploy() {
   "$fly" apps list --json > "$work/before" || fail "cannot inventory classic builders before deployment"
