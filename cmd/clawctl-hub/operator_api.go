@@ -170,6 +170,8 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 		"POST /v1/operator/deployments/{id}/skip-failed-batches",
 	}
 	patterns = append(patterns, "GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status")
+	patterns = append(patterns, "GET /v1/operator/loops")
+	mux.HandleFunc("GET /v1/operator/loops", h.handleOperatorLoops)
 	mux.HandleFunc("GET /v1/operator/jobs-summary", h.handleOperatorJobsSummary)
 	mux.HandleFunc("GET /v1/operator/approvals-summary", h.handleOperatorApprovalsSummary)
 	mux.HandleFunc("GET /v1/operator/hub-status", h.handleOperatorHubStatus)

@@ -52,13 +52,24 @@ type EnrollResponse struct {
 
 // ---------------------------------------------------------------- check-in
 
+// CallActivity is optional process-local cumulative evidence. Signatures must be
+// lowercase SHA-256 digests; never send raw tool arguments or credentials.
+// Progress increases only for a completed task/checkpoint, never for heartbeats.
+type CallActivity struct {
+	ProcessSignature string `json:"process_signature"`
+	CallSignature    string `json:"call_signature"`
+	TotalCalls       int64  `json:"total_calls"`
+	Progress         int64  `json:"progress"`
+}
+
 // Checkin 是每 2 分鐘一次的心跳。它必須很小、很快、而且跟 observation 分開 ——
 // observation 連續失敗時心跳仍要能送達，否則 Hub 分不出「機器死了」與
 // 「只是狀態檔過期」。
 type Checkin struct {
-	SchemaVersion int       `json:"schema_version"`
-	SentAt        time.Time `json:"sent_at"`
-	AgentVersion  string    `json:"agent_version"`
+	CallActivity  []CallActivity `json:"call_activity,omitempty"`
+	SchemaVersion int            `json:"schema_version"`
+	SentAt        time.Time      `json:"sent_at"`
+	AgentVersion  string         `json:"agent_version"`
 
 	// BootID 是**機器**的開機 ID（/proc/sys/kernel/random/boot_id），
 	// 只有機器重開機才會變。

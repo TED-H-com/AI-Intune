@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 314 個 HTTP operations（30 non-operator＋284 operator；142 條 operator JSON）、
+> 逐一對照 317 個 HTTP operations（30 non-operator＋287 operator；143 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 314-operation tally above (30 non-operator + 284 operator). The inventory/contract excludes these six public account operations and totals 308. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 317-operation tally above (30 non-operator + 287 operator). The inventory/contract excludes these six public account operations and totals 311. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -23,7 +23,7 @@ These six operations are included in the 314-operation tally above (30 non-opera
 
 | Method | Operator download route | Authority / behavior |
 |---|---|---|
-| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 219 operator tally. |
+| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 287 operator tally. |
 
 In local mode operator routes use a local admin session, including `/metrics`; in `both`, sessions precede eligible WhoIs fallback. Forwarded identity headers and machine/verifier bearers never authorize operators. The Tailscale-specific explanations below describe the advanced mode. See [Autopilot](AUTOPILOT.md) for setup, expiry, lockout and recovery.
 
@@ -970,9 +970,9 @@ and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-0
 for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
-Adds ten operator operations (six JSON, four HTML): totals 287 including public
-accounts, 281 excluding them; 261 operator (135 JSON, 130 HTML/plain), exact grants
-view=103 / operate=28 / admin=137.
+Adds ten operator operations (six JSON, four HTML). The combined manifest totals
+317 including public accounts, 311 excluding them; 287 operator (143 JSON,
+144 HTML/plain), exact grants view=111 / operate=33 / admin=143.
 
 | Method | Route | Admission |
 | --- | --- | --- |
@@ -1036,3 +1036,55 @@ preview/apply and reauthentication. `/tenant/disk-alerts`, machine detail, and
 `/machines/{id}/disk` display growth evidence and existing acknowledgement links.
 The existing policy APIs accept the same optional object. Omission preserves old
 canonical policy digests and inherits Hub defaults.
+
+## Loop episodes (UI first)
+
+Human entry: **Attention / Loops** (`GET /attention/loops`), also linked from
+machine detail with an inline episode panel. Human administrators can save a
+threshold/window and acknowledge or resolve an episode with `POST /attention/loops`.
+The operator boundary enforces admin scope and same-origin protection for writes;
+service tokens cannot use these human actions.
+
+`GET /v1/operator/loops?machine_id=<optional-id>` requires `view` and supports
+explicit service-token route grants. MCP tool: `loops_list` with optional
+`machine_id`; official client: `Client.Loops`. Returns `schema_version: 1`,
+`policy` (`threshold`, `window_seconds`), `items`, `limit: 200`, and
+`coverage: "agent_reported_call_activity_only"`. Episodes are sorted open first,
+then newest first, with opaque process/call signatures, machine ID, start/last
+report/last progress timestamps, window call count, calls/minute, acknowledgement
+and resolution timestamps. Unknown progress is null. This is bounded evidence,
+not an all-clear or a task-success assertion. Responses are `Cache-Control: no-store`.
+Unknown/duplicate query parameters are rejected. No raw tool names or arguments
+are stored or returned by this feature.
+
+Optional agent check-in extension (old agents may omit it): `call_activity`, up
+to 64 unique process/call pairs. Each entry has `process_signature` and
+`call_signature` (64 lowercase hex characters), `total_calls` (cumulative integer,
+0–1,000,000,000,000), and `progress` (nonnegative monotonic checkpoint counter).
+Use a fresh process signature after counter reset or process restart. Hash a
+process-instance identifier and hash a canonical operation plus identical
+arguments locally; use a keyed digest for sensitive/guessable inputs. Never send
+raw arguments or secrets. Progress must represent an actual checkpoint/completion,
+not a successful retry or heartbeat. The bundled agent reports its heartbeat
+call counter and increments progress only after an observation upload succeeds.
+Other tool integrations must populate this optional field; usage aggregate tool
+names/counts and generic job event text cannot establish identical-call progress.
+
+The first report establishes a baseline. Subsequent counter increases are
+attributed to Hub receive time; retransmitted/regressed counters add nothing.
+The detector sums deltas in `(now-window, now]` per machine/process/call pair.
+Default: **more than 50 calls in 600 seconds**, configurable to 2–100,000 calls
+and 60–3,600 seconds. A gap at least as long as the window establishes a fresh
+baseline, avoiding historical offline bursts. Reports with progress discard that
+pair's window and resolve its open episode. Rate is window calls × 60/window
+seconds. Start time is the oldest counted report at episode creation; it remains
+stable while counts/rate track subsequent reports. Actual call timestamps within
+a batch are unknown. Silence or falling below threshold does not resolve an
+incident; acknowledgement does not reset it. Manual resolution resets its window,
+and continued calls can open a new episode. Policy edits apply on the next report.
+
+Evidence is transactionally recorded with the check-in. Samples coalesce per
+second and expire outside the active window on activity ingestion. Baselines
+expire after 24 hours of inactivity; at most 64 tracked pairs per machine are
+accepted until old baselines expire. Additional pairs are ignored. These bounds
+and opt-in tool coverage mean missing episodes are never proof of health.

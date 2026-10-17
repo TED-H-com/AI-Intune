@@ -119,19 +119,30 @@ space episodes, approved previews and verified recovered bytes.
 
 **Symptom:** Frequent successful check-ins or repeated tool calls occur without task progress.
 
-**Hub today:** Check-in history, job events, usage bounds and crash-loop findings
-exist. Request limits bound some reads; they do not detect semantic no-progress
-loops, and repeated heartbeats do not establish task completion.
+**Hub today:** Open **Attention / Loops** from the main navigation, or review the
+Loop episodes panel on a machine. The default detector opens an episode above 50
+identical calls in 10 minutes without reported progress. Human admins can change
+the call threshold and window on that page. The bundled agent reports heartbeat
+calls with successful observation uploads as progress; other tools must provide
+optional `call_activity` evidence. Legacy agents and uninstrumented tools remain
+unknown. An empty page does not prove that tasks are healthy.
 
-**Manual steps:** Compare operation counts and repeated call signatures over a
-bounded window with job transitions, task completion and agent restart times.
-Check whether retries are waiting on the same dependency. Preserve counts and
-redacted signatures, not full arguments. Ask the responsible operator to stop or
-bound the offending task after impact review; do not stop ordinary monitoring
-merely because it is frequent. Verify progress resumes after repair.
+**Manual steps:** Review machine, process/call signature, start, last report,
+last progress, window count and rate. Compare with job transitions and task
+checkpoints. Rate is averaged over the full configured window; a batch's actual
+call timing is unknown. Inspect whether repeated calls are waiting on the same
+dependency. Preserve counts and opaque signatures, never full arguments. Ask the
+responsible operator to bound or stop the affected task after impact review;
+frequent ordinary monitoring alone is not a reason to stop it.
 
-**Planned Hub feature:** Per-principal/machine no-progress episodes with rates,
-start time, repeated signatures, acknowledgement and notifications.
+Use **Acknowledge** to mark review while retaining the open episode. Use
+**Resolve** after reviewing recovery; this resets the counting window, and
+continued no-progress calls can open another episode. Explicit reported progress
+also resolves an episode. Missing reports never resolve it. Confirm fresh progress
+after repair, rather than treating successful heartbeats as task completion.
+Read-only automation can use `GET /v1/operator/loops` or MCP `loops_list` with
+optional machine filtering. This feature does not send notifications or control
+processes.
 
 ## Memory pressure and OOM kills
 

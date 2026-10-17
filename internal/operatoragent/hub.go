@@ -15,6 +15,7 @@ import (
 // Hub is the subset of operatorclient.Client these tools call.
 // *operatorclient.Client implements it. A test double must too.
 type Hub interface {
+	Loops(context.Context, string) (store.LoopsRead, error)
 	JobsSummary(context.Context, operator.SupervisionFilter) (operator.JobsSummary, error)
 	ApprovalsSummary(context.Context, string) (operator.ApprovalsSummary, error)
 	HubStatus(context.Context) (operator.HubStatus, error)

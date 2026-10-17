@@ -102,6 +102,18 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		}
 		result, err := s.Hub.ApprovalsSummary(ctx, args.Window)
 		return result, hubErr(err)
+	case "loops_list":
+		var args struct {
+			MachineID string `json:"machine_id"`
+		}
+		if err := decodeSupervisionArgs(raw, &args); err != nil {
+			return nil, err
+		}
+		if len(args.MachineID) > 256 {
+			return nil, &CallError{Code: "invalid_arguments", Message: "invalid machine filter"}
+		}
+		result, err := s.Hub.Loops(ctx, args.MachineID)
+		return result, hubErr(err)
 	case "hub_status":
 		if err := decodeSupervisionArgs(raw, &struct{}{}); err != nil {
 			return nil, err

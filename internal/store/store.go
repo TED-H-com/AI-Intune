@@ -1694,6 +1694,9 @@ func withoutRawOccupancy(oc model.OpenClaw) model.OpenClaw {
 // 真的量測值。重試把它改成「現在」會讓時鐘偏移的量測失真，而那是我們用來判斷
 // 「這台回報的時間可不可信」的唯一依據。
 func (s *Store) RecordCheckin(machineID string, c model.Checkin, receivedAt time.Time) error {
+	if err := ValidateLoopActivity(c.CallActivity); err != nil {
+		return err
+	}
 	// ⚠ 規格明講：ClockSkew = sent_at - received_at。正值 = 機器時鐘比 Hub 快。
 	skew := int64(c.SentAt.Sub(receivedAt) / time.Second)
 	var obsAge any
@@ -1773,6 +1776,9 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO disk_growth_samples VALUES(?,?,?,?,?,?)`, machineID, "/", fmtTime(c.SentAt), c.DiskTotalBytes, c.DiskFreeBytes, fmtTime(receivedAt)); err != nil {
 			return err
 		}
+	}
+	if err := s.recordLoopActivityTx(tx, machineID, c.CallActivity, receivedAt); err != nil {
+		return err
 	}
 	if err := s.recordDiskTimersTx(tx, machineID, c, receivedAt); err != nil {
 		return err

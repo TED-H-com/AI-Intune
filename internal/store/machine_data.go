@@ -34,6 +34,9 @@ var machineDataTables = []MachineDataTable{
 	{Table: "agent_sessions", TimeCol: "opened_at"},
 	{Table: "machine_identity_hints", TimeCol: "last_seen_at"},
 	{Table: "machine_checkins", TimeCol: "received_at"},
+	{Table: "loop_streams", TimeCol: "last_seen_at"},
+	{Table: "loop_samples", TimeCol: "received_at"},
+	{Table: "loop_episodes", TimeCol: "last_seen_at"},
 	// capability 沒有自己的 Hub 時刻；它跟 exact check-in 同生同滅，保留期由 FK cascade 繼承。
 	{Table: "machine_job_capabilities", TimeCol: ""},
 	{Table: "observed_state", TimeCol: "received_at"},
