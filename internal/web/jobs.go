@@ -79,9 +79,14 @@ func parseWebJobListRequest(r *http.Request) (operator.JobListRequest, jobsPage,
 		"machine_id": true, "state": true, "deployment_id": true,
 		"resource_kind": true, "resource_id": true, "limit": true, "cursor": true, "section": true,
 	}
-	for key := range values {
+	for key, entries := range values {
 		if !allowed[key] {
 			return operator.JobListRequest{}, jobsPage{}, fmt.Errorf("不支援工作單查詢參數 %q。", key)
+		}
+		// Optional form controls may submit a single empty value. Preserve
+		// duplicate and malformed nonempty values for strict validation below.
+		if len(entries) == 1 && entries[0] == "" {
+			delete(values, key)
 		}
 	}
 
@@ -90,7 +95,7 @@ func parseWebJobListRequest(r *http.Request) (operator.JobListRequest, jobsPage,
 		if !present {
 			return "", nil
 		}
-		if len(entries) != 1 || entries[0] != strings.TrimSpace(entries[0]) ||
+		if len(entries) != 1 || entries[0] == "" || entries[0] != strings.TrimSpace(entries[0]) ||
 			len(entries[0]) > maxBytes {
 			return "", fmt.Errorf("工作單查詢參數 %q 必須恰有一個非空且長度合法的值。", name)
 		}

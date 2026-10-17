@@ -171,6 +171,9 @@ func TestGlobalJobsPageRejectsInvalidQueriesInsteadOfIgnoringThem(t *testing.T) 
 		"/jobs?state=flying",
 		"/jobs?resource_id=openclaw",
 		"/jobs?limit=0",
+		"/jobs?limit=bad",
+		"/jobs?limit=&limit=",
+		"/jobs?machine_id=&machine_id=",
 		"/jobs?limit=1&limit=2",
 		"/jobs?limit=101",
 		"/jobs?cursor=not-a-cursor",
@@ -370,6 +373,7 @@ func TestGlobalJobsPageAcceptsBlankOptionalFilters(t *testing.T) {
 		"/jobs?machine_id=&deployment_id=&resource_kind=&resource_id=&limit=50",
 		"/jobs?machine_id=&deployment_id=&resource_kind=diagnostic&resource_id=&limit=50",
 		"/jobs?machine_id=",
+		"/jobs?machine_id=&deployment_id=&resource_kind=&resource_id=&state=&cursor=&limit=",
 	} {
 		mux := http.NewServeMux()
 		s.Routes(mux)
