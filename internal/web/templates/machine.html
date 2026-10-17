@@ -19,6 +19,8 @@
 <p>State is based on the evidence currently available; a heartbeat alone does not prove workload recovery. Avoid restarting services or deleting files without reviewing impact and approval requirements.</p></div>
 {{end}}
 
+{{template "loop_episodes" .}}
+
 {{if $md.Judgement.Findings.Total}}
 <h2>{{if $m.RetiredAt}}保留觀測的診斷{{else}}發現{{end}}</h2>
 <div class="panel">

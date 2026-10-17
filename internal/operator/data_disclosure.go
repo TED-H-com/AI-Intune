@@ -126,6 +126,7 @@ const (
 	DataCategoryState                DataCategoryKey = "state"
 	DataCategoryWorkload             DataCategoryKey = "workload"
 	DataCategoryCanary               DataCategoryKey = "canary"
+	DataCategoryLoops                DataCategoryKey = "loops"
 	DataCategoryJobs                 DataCategoryKey = "jobs"
 	DataCategoryDiskClean            DataCategoryKey = "disk_clean"
 	DataCategoryAssignments          DataCategoryKey = "assignments"
@@ -180,7 +181,7 @@ var dataCategoryOrder = []DataCategoryKey{
 	DataCategoryCheckins, DataCategoryObservations, DataCategoryTickets,
 	DataCategoryCredentials, DataCategoryVerifications,
 	DataCategoryState, DataCategoryWorkload, DataCategoryCanary,
-	DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments,
+	DataCategoryLoops, DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments,
 	DataCategoryUsageRecords, DataCategoryUsageRecommendations, DataCategoryAudit,
 }
 
@@ -280,6 +281,13 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 		tables:   []string{"canary_silent_failures"},
 		freeText: "判定理由（Hub 自己寫的句子）。",
 		path:     "/deployments",
+	},
+	DataCategoryLoops: {
+		title:  "No-progress loop evidence",
+		holds:  "Opaque process and call hashes, cumulative call/progress counters, bounded sliding-window samples, and derived loop episodes with acknowledgement and resolution times. Active samples expire outside the configured window and inactive stream baselines expire after 24 hours during activity ingestion; episode history is retained.",
+		source: DataSourceHub,
+		tables: []string{"loop_streams", "loop_samples", "loop_episodes"},
+		path:   "/attention/loops",
 	},
 	DataCategoryJobs: {
 		title:  "工作單",

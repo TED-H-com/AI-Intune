@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -478,6 +479,8 @@ func runAgent() {
 	obsAge := &atomic.Int64{} // 上次成功觀測距今幾秒，-1 = 從未
 	obsAge.Store(-1)
 	var lastObs atomic.Pointer[time.Time]
+	var observationProgress atomic.Int64
+	processSignature := fmt.Sprintf("%x", sha256.Sum256([]byte(time.Now().UTC().Format(time.RFC3339Nano))))
 	// policy 是 Hub 下發的期望與其 opaque token；兩者必須原子地一起換。
 	var policy atomic.Pointer[workloadPolicyBundle]
 
@@ -505,6 +508,7 @@ func runAgent() {
 		notifyReady()
 		var skewTrack clockSkewTracker
 		timerTransitions := map[string]model.DiskTimerTransition{}
+		var heartbeatCalls int64
 		for {
 			lastTurn.Store(time.Now().UnixNano())
 			hb, err := probe.Heartbeat(ctx, seq.Add(1))
@@ -515,6 +519,8 @@ func runAgent() {
 				age := int64(time.Since(*t).Seconds())
 				hb.ObservationAgeSeconds = &age
 			}
+			heartbeatCalls++
+			hb.CallActivity = []model.CallActivity{heartbeatActivity(processSignature, heartbeatCalls, observationProgress.Load())}
 			hb.SchemaVersion = model.SchemaVersion
 			hb.AgentVersion = version
 			jobsEnabled := cfg.JobsEnabled
@@ -600,6 +606,7 @@ func runAgent() {
 		if postErr == nil {
 			now := time.Now()
 			lastObs.Store(&now)
+			observationProgress.Add(1)
 		}
 		wait := jitter(applied.Load().observation)
 		var floor time.Duration
@@ -1025,4 +1032,10 @@ func feedWatchdog(ctx context.Context, every, stall time.Duration, lastTurn *ato
 			}
 		}
 	}
+}
+
+// A successful observation upload is heartbeat progress. A successful heartbeat
+// is only another call and cannot mark its own progress.
+func heartbeatActivity(process string, calls, progress int64) model.CallActivity {
+	return model.CallActivity{ProcessSignature: process, CallSignature: fmt.Sprintf("%x", sha256.Sum256([]byte("hub.checkin.v1"))), TotalCalls: calls, Progress: progress}
 }

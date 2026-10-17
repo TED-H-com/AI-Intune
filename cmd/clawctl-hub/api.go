@@ -182,6 +182,10 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 	if !decode(w, r, &c) {
 		return
 	}
+	if err := store.ValidateLoopActivity(c.CallActivity); err != nil {
+		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "invalid call activity")
+		return
+	}
 	// ⚠ received_at 由 Hub 決定，不接受 Agent 給的時間。
 	// 生死判斷一律用這個 —— 機器時鐘快兩天不能讓它看起來永遠新鮮。
 	received := time.Now().UTC()

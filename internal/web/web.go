@@ -268,7 +268,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), s.scheduleRoutes(mux)...)
+	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(s.scheduleRoutes(mux), s.loopRoutes(mux)...)...)
 }
 
 type maintenancePageView struct {
@@ -394,6 +394,7 @@ type page struct {
 	DiskReport            *diskReportView
 	DiskGrowth            []store.DiskGrowth
 	DiskBanner            *store.DiskAlertBannerCounts
+	Loops                 *loopsPage
 	DiskAlerts            *diskAlertsPage
 	DiskMachine           *diskMachinePage
 	DiskPolicies          *diskPoliciesPage
@@ -1341,8 +1342,14 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "disk growth", err)
 		return
 	}
+	loopItems, err := s.store.LoopEpisodes(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Unable to load loop episodes", err)
+		return
+	}
 	s.render(w, r, "machine.html", page{
 		DiskGrowth:              growth,
+		Loops:                   &loopsPage{Items: loopItems, Machine: machine.Item.MachineID},
 		Title:                   machine.Item.DisplayName,
 		Nav:                     "machines-detail",
 		Now:                     now.Local().Format("2006-01-02 15:04"),

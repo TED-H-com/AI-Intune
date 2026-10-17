@@ -1850,3 +1850,12 @@ CREATE TABLE IF NOT EXISTS chat_approvals (
  requester TEXT NOT NULL, target TEXT NOT NULL, body TEXT NOT NULL, expires INTEGER NOT NULL,
  consumed INTEGER NOT NULL DEFAULT 0
 );
+
+-- Loop evidence contains opaque hashes and numeric counters, never tool arguments.
+CREATE TABLE IF NOT EXISTS loop_policy(id INTEGER PRIMARY KEY CHECK(id=1),threshold INTEGER NOT NULL,window_seconds INTEGER NOT NULL);
+INSERT OR IGNORE INTO loop_policy VALUES(1,50,600);
+CREATE TABLE IF NOT EXISTS loop_streams(machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id) ON DELETE CASCADE,process TEXT NOT NULL,signature TEXT NOT NULL,total INTEGER NOT NULL,progress INTEGER NOT NULL,last_seen_at TEXT NOT NULL,last_progress TEXT,PRIMARY KEY(machine_id,process,signature));
+CREATE TABLE IF NOT EXISTS loop_samples(machine_id TEXT NOT NULL,process TEXT NOT NULL,signature TEXT NOT NULL,received_at TEXT NOT NULL,calls INTEGER NOT NULL,PRIMARY KEY(machine_id,process,signature,received_at));
+CREATE INDEX IF NOT EXISTS loop_samples_time ON loop_samples(received_at);
+CREATE TABLE IF NOT EXISTS loop_episodes(id INTEGER PRIMARY KEY AUTOINCREMENT,machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id) ON DELETE CASCADE,process TEXT NOT NULL,signature TEXT NOT NULL,started_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,last_progress TEXT,calls INTEGER NOT NULL,rate REAL NOT NULL,acknowledged_at TEXT,resolved_at TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS loop_episode_open ON loop_episodes(machine_id,process,signature) WHERE resolved_at IS NULL;

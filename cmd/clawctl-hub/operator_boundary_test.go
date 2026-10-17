@@ -127,12 +127,12 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		t.Fatalf("non-operator registered=%d policies=%d, want 30/30",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 284 || len(operatorRoutePolicies) != 284 {
-		t.Fatalf("operator registered=%d policies=%d, want 284/284",
+	if len(operatorRegistered) != 287 || len(operatorRoutePolicies) != 287 {
+		t.Fatalf("operator registered=%d policies=%d, want 287/287",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 314 {
-		t.Fatalf("all registered routes=%d, 預期 314", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 317 {
+		t.Fatalf("all registered routes=%d, 預期 317", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -142,14 +142,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 109 || counts[operatorauth.Operate] != 33 || counts[operatorauth.Admin] != 142 {
-		t.Fatalf("permission counts=%v, want view=109 operate=33 admin=142", counts)
+	if counts[operatorauth.View] != 111 || counts[operatorauth.Operate] != 33 || counts[operatorauth.Admin] != 143 {
+		t.Fatalf("permission counts=%v, want view=111 operate=33 admin=143", counts)
 	}
-	if representations[operatorJSON] != 142 || representations[operatorHTML] != 141 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=142 HTML=141 plain=1", representations)
+	if representations[operatorJSON] != 143 || representations[operatorHTML] != 143 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=143 HTML=143 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 283 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=283 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 286 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=286 terminal=1", profiles)
 	}
 }
 
@@ -541,6 +541,9 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"GET /v1/operator/script-catalog", "/v1/operator/script-catalog", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/script-runs/preview", "/v1/operator/script-runs/preview", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleReadScriptsOnly}},
 		{"POST /v1/operator/script-runs", "/v1/operator/script-runs", operatorRoutePolicy{operatorauth.Operate, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleReadScriptsOnly}},
+		{"GET /attention/loops", "/attention/loops", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /attention/loops", "/attention/loops", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"GET /v1/operator/loops", "/v1/operator/loops", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/jobs-summary", "/v1/operator/jobs-summary", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/approvals-summary", "/v1/operator/approvals-summary", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/hub-status", "/v1/operator/hub-status", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
