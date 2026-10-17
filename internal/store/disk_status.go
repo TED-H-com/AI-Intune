@@ -10,11 +10,12 @@ import (
 )
 
 type DiskMountUsage struct {
-	Mount          string `json:"mount"`
-	TotalBytes     int64  `json:"total_bytes"`
-	AvailableBytes int64  `json:"available_bytes"`
-	Percent        int    `json:"percent"`
-	MeasuredAt     string `json:"measured_at,omitempty"`
+	Growth         *DiskGrowth `json:"growth,omitempty"`
+	Mount          string      `json:"mount"`
+	TotalBytes     int64       `json:"total_bytes"`
+	AvailableBytes int64       `json:"available_bytes"`
+	Percent        int         `json:"percent"`
+	MeasuredAt     string      `json:"measured_at,omitempty"`
 }
 type DiskSafeEnvelope struct {
 	ReceivedAt time.Time           `json:"-"`
@@ -30,6 +31,7 @@ type DiskSafeEnvelope struct {
 	} `json:"operation"`
 }
 type DiskOpsStatus struct {
+	Growth           []DiskGrowth          `json:"growth"`
 	IgnoredMounts    int                   `json:"ignored_mounts"`
 	MachineID        string                `json:"machine_id"`
 	Mounts           []DiskMountUsage      `json:"mounts"`
@@ -200,6 +202,17 @@ func (s *Store) DiskOpsStatus(id string) (DiskOpsStatus, error) {
 	out.Alerts, err = s.DiskAlertsList(id)
 	if err != nil {
 		return out, err
+	}
+	out.Growth, err = s.DiskGrowthRead(id)
+	if err != nil {
+		return out, err
+	}
+	for i := range out.Mounts {
+		for j := range out.Growth {
+			if out.Mounts[i].Mount == out.Growth[j].Mount {
+				out.Mounts[i].Growth = &out.Growth[j]
+			}
+		}
 	}
 	out.Actions, err = s.DiskActionMetrics(id, s.now().UTC())
 	return out, err

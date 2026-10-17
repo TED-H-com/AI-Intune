@@ -293,3 +293,22 @@ func TestDiskScriptAndScheduleJSONFreshGateBeforeDecodeAndReplay(t *testing.T) {
 		assertDiskJSONLocalDenied(t, f.mux, path, "retry-key", `invalid JSON`)
 	}
 }
+
+func TestDiskGrowthStatusAPI(t *testing.T) {
+	f := newJobsFixture(t, "example-device")
+	h := &hub{store: f.store, artifactsDir: f.artifactsDir}
+	h.operatorRoutes(f.mux)
+	r := verifiedOperatorRequest(httptest.NewRequest("GET", "/v1/operator/disk-ops/status/"+f.machine.id, nil), operatorauth.View)
+	w := httptest.NewRecorder()
+	f.mux.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d %s", w.Code, w.Body.String())
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body["growth"]) != "[]" {
+		t.Fatalf("expected empty growth array: %s", body["growth"])
+	}
+}

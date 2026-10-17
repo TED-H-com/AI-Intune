@@ -290,9 +290,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryDiskClean: {
 		title:    "磁碟清理",
-		holds:    "清理摘要、指派、批准、私密報告、精確 manifest、隔離與還原、到期工作、計時器證據、權責、canary 及告警。報告和壓力紀錄 30 天、未完成上傳 24 小時；計時器歷史最多 10 筆及 14 天並保留最新證據、已清除告警及 canary 90 天、通知預算 48 小時。",
+		holds:    "清理摘要、指派、批准、私密報告、精確 manifest、隔離與還原、到期工作、計時器證據、權責、canary 及告警。報告和壓力紀錄 30 天、未完成上傳 24 小時；計時器歷史最多 10 筆及 14 天並保留最新證據、已清除告警及 canary 90 天、通知預算 48 小時。 Growth samples: 25h by Hub receipt; latest mount rates retained until replaced, unknown after 15m.",
 		source:   DataSourceHub,
-		tables:   []string{"disk_reports", "disk_deep_trigger_slots", "ops_approvals", "ops_manifests", "disk_quarantine", "disk_action_receipts", "disk_action_items", "disk_expiry_jobs", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state", "disk_timer_observations", "disk_timer_ingestion", "disk_ownership", "disk_alerts", "disk_alert_delivery_reservations", "disk_canary_days"},
+		tables:   []string{"disk_reports", "disk_deep_trigger_slots", "ops_approvals", "ops_manifests", "disk_quarantine", "disk_action_receipts", "disk_action_items", "disk_expiry_jobs", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state", "disk_timer_observations", "disk_timer_ingestion", "disk_ownership", "disk_alerts", "disk_alert_delivery_reservations", "disk_canary_days", "disk_growth_samples", "disk_growth_evidence"},
 		freeText: "摘要裡的主機名稱、使用者、attention、分類備註、報告路徑與告警確認理由。",
 		path:     "/tenant/maintenance",
 	},

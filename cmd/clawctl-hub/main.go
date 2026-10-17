@@ -461,6 +461,8 @@ func serve(argv []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	diskManifestSigningKey := fs.String("disk-manifest-signing-key", "", "private RSA PEM key for exact disk action grants; local helper public key must be independently pinned")
 	usageToolCallLimitStr := fs.String("usage-tool-call-limit", os.Getenv("CLAWCTL_USAGE_TOOL_CALL_LIMIT"), "maximum tool-call map entries per usage upload (default 1000)")
+	growthRate := fs.String("disk-growth-gb-per-hour", os.Getenv("CLAWCTL_DISK_GROWTH_GB_PER_HOUR"), "disk growth threshold in GB/hour (default 10)")
+	growthWindow := fs.String("disk-growth-window-minutes", os.Getenv("CLAWCTL_DISK_GROWTH_WINDOW_MINUTES"), "disk growth window minutes (default 30)")
 	diskOpsV2Writes := fs.Bool("disk-ops-v2-writes", false, "enable human-admin disk policy changes and safe cleanup jobs; targets require disk_ops_v2")
 	authModeFlag := fs.String("auth-mode", os.Getenv("CLAWCTL_AUTH_MODE"), "operator auth mode: tailscale (default), local, or both")
 	addr := fs.String("listen", "127.0.0.1:8770", "listen address (literal Tailscale IP:port; reads $CLAWCTL_LISTEN when unset). Flag default 127.0.0.1:8770 is a fail-closed placeholder that Hub rejects. No production default port; 8787 is only a convention example in docs; grant dst, CLAWCTL_PUBLIC_URL, agent --hub, and tunnel origin must use the same port as this address")
@@ -621,6 +623,24 @@ func serve(argv []string) {
 		log.Printf("object storage: %s", objectBlobSummary)
 	}
 	if err := st.ConfigureUsageToolCallLimit(usageToolCallLimit); err != nil {
+		log.Fatal(err)
+	}
+	growthDefaults := store.DiskGrowthPolicy{GBPerHour: 10, WindowMinutes: 30}
+	if *growthRate != "" {
+		parsed, err := strconv.Atoi(*growthRate)
+		if err != nil {
+			log.Fatal("invalid disk growth threshold")
+		}
+		growthDefaults.GBPerHour = parsed
+	}
+	if *growthWindow != "" {
+		parsed, err := strconv.Atoi(*growthWindow)
+		if err != nil {
+			log.Fatal("invalid disk growth window")
+		}
+		growthDefaults.WindowMinutes = parsed
+	}
+	if err := st.ConfigureDiskGrowth(growthDefaults); err != nil {
 		log.Fatal(err)
 	}
 	st.ConfigureDiskOpsV2Writes(*diskOpsV2Writes)

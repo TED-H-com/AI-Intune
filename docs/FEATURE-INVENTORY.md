@@ -810,3 +810,12 @@ Screenshots use generic fixture data under `docs/screenshots/phase2/p2-05/`.
 ## Fly self-deployment safety (ops only)
 
 `ops/fly/deploy.sh` verifies fresh snapshots of all `clawctl_data` volumes before deployment and retries transient builder failures before fallback. This host operation adds no Hub web, API, MCP, or store contract. Human operators use the script; see [Fly deployment](DEPLOY-FLY.md) for the explicit snapshot bypass and recovery limits.
+
+## Sustained disk growth alerts
+
+Humans configure growth thresholds on Disk policies and review critical growth
+episodes on Disk alerts; machine detail and Disk pages show the top growing
+mount, GB/hour, coverage, samples, and estimated hours to full. Empty states link
+to configuration or explain the next agent observation. Acknowledgement,
+notifications, retries, and recovery use existing disk alert flows. The operator
+status API and path-digested MCP disk status expose the same evidence.

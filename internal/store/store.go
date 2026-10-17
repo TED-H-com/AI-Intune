@@ -371,6 +371,7 @@ type Change struct {
 
 type Store struct {
 	usageToolCallLimit atomic.Int64
+	diskGrowthDefaults atomic.Pointer[DiskGrowthPolicy]
 	diskOpsV2Writes    atomic.Bool
 	diskManifestSigner atomic.Pointer[rsa.PrivateKey]
 	// db is the single writer connection. rdb is the query-only reader pool,
@@ -589,6 +590,10 @@ func Open(path string) (*Store, error) {
 	if err := rejectDuplicateDesiredStateResourceRevisions(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	if _, err := db.Exec(diskGrowthSchema); err != nil {
+		db.Close()
+		return nil, err
 	}
 	if err := migrateDiskTimerEvidence(db); err != nil {
 		db.Close()
@@ -1761,6 +1766,11 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 	}
 	if validLowerSHA256(c.DiskActionKey) {
 		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities VALUES (?,? ,?,1)`, machineID, fmtTime(c.SentAt), "disk_actions_v1:"+c.DiskActionKey); err != nil {
+			return err
+		}
+	}
+	if c.DiskTotalBytes > 0 && c.DiskFreeBytes >= 0 && c.DiskFreeBytes <= c.DiskTotalBytes && !c.SentAt.After(receivedAt) && receivedAt.Sub(c.SentAt) <= 15*time.Minute {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO disk_growth_samples VALUES(?,?,?,?,?,?)`, machineID, "/", fmtTime(c.SentAt), c.DiskTotalBytes, c.DiskFreeBytes, fmtTime(receivedAt)); err != nil {
 			return err
 		}
 	}
