@@ -121,7 +121,7 @@
       {{if .RetiredAt}} · 已退場{{end}}
     </span>
   </td>
-  <td class="st {{color .State}}">{{label .State}}{{with attentionReasons .State .Facts.Credentials .Findings .Reason}} <span class="small attention-reasons">— {{.}}</span>{{end}}</td>
+  <td class="st {{color .State}}">{{label .State}}{{$machineID := .MachineID}}{{with attentionReasons .State .Facts.Credentials .Findings .Reason}} <span class="small attention-reasons">— {{.}}</span> <a class="small" href="/machines/{{$machineID}}#attention-next-action">Review findings and next steps</a>{{end}}</td>
   <td class="reason">{{.Reason}}
     {{$seen := onlineSilentPeer $.Tailnet .MachineID}}
     {{if $seen}}<br><span class="st amber">但 Tailscale 說它現在是 online（{{$seen.IP}}）</span>

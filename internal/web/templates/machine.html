@@ -13,6 +13,12 @@
   {{if $md.Checkins.Invalid}}<p class="small dim">已取回的心跳裡有 {{$md.Checkins.Invalid}} 筆無效，沒有畫進狀態條。</p>{{end}}
 </div></div>
 
+{{if eq $md.Judgement.State "Degraded"}}
+<div class="panel" id="attention-next-action"><h2>Next steps</h2>
+<p>Review the findings below and their observation times before acting. Check the affected service logs for agent or workload findings; use Disk usage and safe cleanup for disk findings. For login findings, ask the assigned service user to sign in through the provider's normal flow. After repair, wait for a fresh observation and confirm the reason clears.</p>
+<p>State is based on the evidence currently available; a heartbeat alone does not prove workload recovery. Avoid restarting services or deleting files without reviewing impact and approval requirements.</p></div>
+{{end}}
+
 {{if $md.Judgement.Findings.Total}}
 <h2>{{if $m.RetiredAt}}保留觀測的診斷{{else}}發現{{end}}</h2>
 <div class="panel">
