@@ -123,7 +123,7 @@
   </td>
   <td class="st {{color .State}}">{{label .State}}{{with attentionReasons .State .Facts.Credentials .Findings .Reason}} <span class="small attention-reasons">— {{.}}</span>{{end}}</td>
   <td class="reason">{{.Reason}}
-    {{$seen := index $.Tailnet.OnlineButSilent .MachineID}}
+    {{$seen := onlineSilentPeer $.Tailnet .MachineID}}
     {{if $seen}}<br><span class="st amber">但 Tailscale 說它現在是 online（{{$seen.IP}}）</span>
       <span class="dim small">；agent 未回報 Hub</span>{{end}}
   </td>

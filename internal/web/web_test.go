@@ -4612,3 +4612,26 @@ func TestMachinePageSeparatesAnUnmeasuredUptimeFromAFreshBoot(t *testing.T) {
 		t.Fatalf("量到 0 uptime 的機器頁沒有 uptime=0s；真正剛開機被印成 unknown，operator 無法分辨量到的 0")
 	}
 }
+
+func TestDashboardRequiresActualOnlineTailnetPeer(t *testing.T) {
+	for _, result := range []tailnet.Result{
+		{}, {Available: true},
+		{OnlineButSilent: map[string]tailnet.Peer{"m-sampleagent1": {Online: true}}},
+		{Available: true, OnlineButSilent: map[string]tailnet.Peer{"m-sampleagent1": {Online: false}}},
+	} {
+		body := renderDashboardWithTailnet(t, result)
+		if strings.Contains(body, "但 Tailscale 說它現在是 online") {
+			t.Fatal("claimed online without available matched online peer")
+		}
+	}
+}
+func TestLocalSessionBadgeDoesNotClaimTailscaleVerification(t *testing.T) {
+	s, _ := newServer(t)
+	var out bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&out, "dashboard.html", page{Access: accessView{Known: true, LocalSession: true}, Locale: navigationLocaleFor(httptest.NewRequest("GET", "/?lang=en", nil), "")}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Local account · MFA verified") || strings.Contains(out.String(), "Tailscale verified") {
+		t.Fatal("incorrect local session badge")
+	}
+}

@@ -1967,10 +1967,17 @@ var funcs = template.FuncMap{
 	"diskReportCategories": func() []string {
 		return []string{"app-update-backups", "installer-leftovers", "release-build-directories", "unused-docker-images", "caches-models", "orphaned-processes", "agent-session-stores", "duplicate-archives"}
 	},
-	"diskTime":               fmtDiskTime,
-	"diskExpiry":             fmtDiskExpiry,
-	"label":                  label,
-	"statusDisplayLabel":     statusDisplayLabel,
+	"diskTime":           fmtDiskTime,
+	"diskExpiry":         fmtDiskExpiry,
+	"label":              label,
+	"statusDisplayLabel": statusDisplayLabel,
+	"onlineSilentPeer": func(result tailnet.Result, id string) *tailnet.Peer {
+		peer, ok := result.OnlineButSilent[id]
+		if !result.Available || !ok || !peer.Online {
+			return nil
+		}
+		return &peer
+	},
 	"attentionReasons":       attentionReasons,
 	"detailAttentionReasons": detailAttentionReasons,
 	"deploymentBlockerLabel": operator.DeploymentBlockerLabel,
