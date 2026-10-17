@@ -306,7 +306,7 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
   </a>
   <div class="topbar-tools">
     {{if .Access.Known}}
-      <span class="topbar-boundary"><span class="dot green" aria-hidden="true"></span>{{.Locale.VerifiedLabel}}</span>
+      <span class="topbar-boundary"><span class="dot green" aria-hidden="true"></span>{{if .Access.LocalSession}}{{if .Access.MFAEnforcementDisabled}}Local account · MFA enforcement disabled{{else}}Local account · MFA verified{{end}}{{else}}{{.Locale.VerifiedLabel}}{{end}}</span>
       <span class="operator-chip" title="{{.Access.Attribution}}">
         <span>{{.Access.Login}}</span><span class="operator-detail">{{.Access.Permissions}} · {{.Access.Device}}</span>
       </span>
