@@ -12,6 +12,8 @@
   {{if $md.Checkins.Truncated}}<p class="small dim">{{$.CheckinWindowText}}內超過 {{$md.Disclosure.CheckinLimit}} 筆心跳。已取回最近 {{$md.Disclosure.CheckinLimit}} 筆，狀態條畫出其中最近 {{len $.Strip}} 筆。</p>{{end}}
   {{if $md.Checkins.Invalid}}<p class="small dim">已取回的心跳裡有 {{$md.Checkins.Invalid}} 筆無效，沒有畫進狀態條。</p>{{end}}
 </div></div>
+{{template "readiness-panel" .Readiness}}
+<p><a href="/readiness">Fleet readiness</a></p>
 <p><a href="#oom-kills">Recent OOM kills</a></p>
 
 {{if eq $md.Judgement.State "Degraded"}}

@@ -1,0 +1,16 @@
+{{define "readiness-panel"}}
+<div class="panel" id="readiness"><h2>Readiness</h2>
+<p>Unknown means missing, unsupported, changed-target, or stale evidence. Facts expire after 15 minutes. Check-ins expire after 10 minutes. <a href="/channels">Configure notification channels</a>.</p>
+{{range .Items}}<h3><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a></h3>
+<p>Observed as service user: {{if .Facts.ServiceUser}}{{.Facts.ServiceUser}}{{else}}Unknown{{end}} · Hub receipt: {{if .ReceivedAt}}{{.ReceivedAt}}{{else}}none{{end}}</p>
+<table><thead><tr><th>Check</th><th>Status</th><th>Next action</th></tr></thead><tbody>{{range .Items}}<tr><td>{{.Name}}</td><td><strong>{{readinessStatus .Status}}</strong></td><td>{{.NextAction}} <a href="{{.Doc}}">Instructions</a></td></tr>{{end}}</tbody></table>
+{{if .Facts.BackupLastSuccess}}<p>Backup last completed OK: {{.Facts.BackupLastSuccess}}</p>{{end}}
+{{if $.Manage}}<form method="post" action="/readiness" class="disk-form">
+<input type="hidden" name="machine" value="{{.MachineID}}">
+<label>Access path<select name="path"><option value="">Choose a path</option>{{ $path := .Config.Path }}{{range readinessPaths}}<option value="{{.}}" {{if eq . $path}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+<label>Scoped sudoers drop-in<input name="sudoers_path" value="{{.Config.SudoersPath}}" placeholder="/etc/sudoers.d/agent-scoped"></label>
+<label>Backup user service unit<input name="backup_unit" value="{{.Config.BackupUnit}}" placeholder="backup.service"></label>
+<button>Save readiness targets</button></form>{{else}}<p>Ask a Hub administrator to configure readiness targets.</p>{{end}}
+{{else}}<p>No enrolled machines. <a href="/machines/enrollment">Enroll the first machine</a> to begin its readiness checklist.</p>{{end}}</div>
+{{end}}
+{{define "readiness.html"}}{{template "head" .}}<h1>Host readiness</h1>{{template "readiness-panel" .Readiness}}{{template "foot" .}}{{end}}

@@ -1927,6 +1927,9 @@ VALUES (?,?,?,?,?,?,?,?)`)
 		return nil
 	}
 
+	if err := put("host_readiness", "host_readiness", b.Readiness); err != nil {
+		return err
+	}
 	if b.OOMKills != nil {
 		if err := put("oom", "oom", b.OOMKills); err != nil {
 			return err

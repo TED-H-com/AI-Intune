@@ -27,6 +27,7 @@ type MachineDataTable struct {
 
 // machineDataTables 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var machineDataTables = []MachineDataTable{
+	{Table: "host_readiness_config", TimeCol: ""},
 	{Table: "channel_bots", TimeCol: ""},
 	{Table: "channel_bindings", TimeCol: ""},
 	{Table: "machine_registry", TimeCol: "created_at"},

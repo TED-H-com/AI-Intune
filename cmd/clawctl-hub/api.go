@@ -213,7 +213,13 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		return
 	}
 	settings, settingsDigest := h.resolveAgentSettings(machineID)
+	readinessConfig, err := h.store.HostReadinessConfig(machineID)
+	if err != nil {
+		h.writeStoreError(w, "readiness config", machineID, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, model.CheckinResponse{
+		ReadinessConfig:            readinessConfig,
 		DiskTimerTransitions:       transitions,
 		ReceivedAt:                 received,
 		CheckinIntervalSeconds:     settings.CheckinIntervalSeconds,

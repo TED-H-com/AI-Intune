@@ -308,7 +308,7 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 		title:    "指派",
 		holds:    "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。Channel bindings and bot inventory (name, kind, host, agent type, token reference, status and notes) are retained until explicitly removed. They have no routing behavior.",
 		source:   DataSourceOperator,
-		tables:   []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings", "channel_bots"},
+		tables:   []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings", "channel_bots", "host_readiness_config"},
 		freeText: "Bot inventory names, token references and notes; resolved tokens are not stored.",
 		path:     "/machines/configuration",
 	},

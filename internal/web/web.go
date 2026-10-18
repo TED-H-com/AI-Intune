@@ -268,7 +268,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), s.certificateRoutes(mux)...)...)
+	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), s.readinessRoutes(mux)...)...)...)
 }
 
 type maintenancePageView struct {
@@ -386,6 +386,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	Readiness                 *readinessPage
 	BuildVersion, BuildCommit string
 
 	Schedules             *schedulePage
@@ -1354,7 +1355,14 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "Read OOM evidence", err)
 		return
 	}
+	checklist, err := s.store.HostChecklist(machine.Item.MachineID, time.Now().UTC())
+	if err != nil {
+		s.fail(w, "Unable to load readiness", err)
+		return
+	}
+	principal, _ = operatorauth.PrincipalFromContext(r.Context())
 	s.render(w, r, "machine.html", page{
+		Readiness:               &readinessPage{Items: []store.HostChecklist{checklist}, Manage: principal.Has(operatorauth.Admin)},
 		DiskGrowth:              growth,
 		Loops:                   &loopsPage{Items: loopItems, Machine: machine.Item.MachineID},
 		OOMKills:                oomKills.Items,
@@ -1983,6 +1991,17 @@ func label(s state.State) string {
 }
 
 var funcs = template.FuncMap{
+	"readinessStatus": func(v string) string {
+		switch v {
+		case "pass":
+			return "Pass"
+		case "fail":
+			return "Fail"
+		default:
+			return "Unknown"
+		}
+	},
+	"readinessPaths": func() []string { return []string{"tailscale", "cloudflare", "jump_host", "direct"} },
 	"diskItemIDs": func(items []diskreport.Item) string {
 		ids := []string{}
 		for _, i := range items {

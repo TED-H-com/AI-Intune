@@ -361,3 +361,30 @@ For profiles, use **Apps → Profiles** to publish and **Apps → Assignments** 
 a revision. **Reports → 發佈與指派** is a read-only reconciliation report; use its
 links back to those task pages when the report identifies missing publication or
 assignment work.
+
+## Host readiness checklist
+
+A host can check in while its access path, service-user login, scoped privilege
+policy, notifications, or backup is incomplete. Open **Readiness** (`/readiness`)
+or the machine detail Readiness panel. Administrators configure each machine's
+access path (`tailscale`, `cloudflare`, `jump_host`, `direct`), expected
+`/etc/sudoers.d/` drop-in, and user backup `.service` unit (the service triggered
+by its timer). Defaults are empty, with explicit next actions.
+
+The agent receives targets on check-in and reports optional readiness facts in
+observations, preserving schema version 1 compatibility. Linux collects Tailscale
+backend state, drop-in regular-file presence via lstat (never file contents),
+per-CLI local sign-in booleans as the agent service user, and user systemd backup
+job presence and last successful completed execution. Other platforms report
+unknown. Sign-in booleans reuse the existing credential classification without
+including tokens, paths, errors, or account metadata. They do not verify provider
+acceptance. Missing tools, permission failures and unsupported measurements are
+unknown, not failed. Non-Tailscale access requires an operator SSH check; selecting
+a path never proves reachability. Drop-in presence does not validate policy scope.
+
+Hub derives check-in recency (10 minutes) and notification channel bindings.
+Bindings do not prove delivery; use Channels' test action. Agent facts expire after
+15 minutes and become unknown when targets change. Backup success must be within
+48 hours; timer presence alone does not establish a successful backup. Inspect the
+backup service and its timer, then follow the restore-drill runbook to verify data.
+No commands install policy, log in, provision channels, or run backups automatically.
