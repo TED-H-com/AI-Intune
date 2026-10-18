@@ -718,6 +718,7 @@ func serve(argv []string) {
 	}
 
 	ui.SetTerminalLimits(h.terminalIdleTimeout, h.terminalMaxLifetime)
+	h.store.SetSigninTransport(h.sendSignin)
 	if err := ui.SetRetentionPolicy(h.retention); err != nil {
 		log.Fatalf("invalid web retention policy configuration: %v", err)
 	}
@@ -786,6 +787,7 @@ func serve(argv []string) {
 	// 這一筆是早報「三台同時失聯」唯一能拿來對的東西。
 	h.journalStart(time.Now())
 
+	go ui.RunSigninNotifications(ctx)
 	go h.reconcileLoop(ctx)
 	go h.agentSessionRevocationLoop(ctx)
 	go h.jobReaperLoop(ctx)

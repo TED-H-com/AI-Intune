@@ -370,6 +370,7 @@ type Change struct {
 // ---------------------------------------------------------------- Store
 
 type Store struct {
+	signins            signinMemory
 	usageToolCallLimit atomic.Int64
 	diskGrowthDefaults atomic.Pointer[DiskGrowthPolicy]
 	diskOpsV2Writes    atomic.Bool
@@ -1989,6 +1990,9 @@ VALUES (?,?,?,?,?,?,?,?)`)
 		if err := put(KindJournal, j.Unit, j); err != nil {
 			return err
 		}
+	}
+	if err := s.putSigninHealth(tx, machineID, b.AuthHealth, receivedAt, put); err != nil {
+		return err
 	}
 	for _, c := range b.Credentials {
 		if err := put(KindCredential, c.Provider, c); err != nil {

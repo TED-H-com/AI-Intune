@@ -88,7 +88,7 @@ func (b *operatorBoundary) authorizeActionMFA(w http.ResponseWriter, r *http.Req
 	for key, values := range r.PostForm {
 		// Never echo factors or account credentials into a challenge.
 		lower := strings.ToLower(key)
-		if lower == "code" || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "token") {
+		if strings.Contains(lower, "code") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "token") {
 			continue
 		}
 		fields[key] = values

@@ -3193,11 +3193,8 @@ func firstLine(s string) string {
 
 // PHASES.md Phase 3 的第二條判準：「瀏覽器與前端 log 裡找不到 BAT token」。
 //
-// 終端那一頁有 script，也因此有 console。第一個理由不再涵蓋整個 UI。
-// 這個測試守的是例外只有那一頁：其餘每一個 operator HTML 頁面仍然沒有
-// script。判準本身現在靠的是第二個理由 —— Hub 沒有 BAT 的憑證，所以
-// 沒有前端可以把它交出去。會讓這個測試紅的修改，是讓第二個頁面開始跑
-// JavaScript。
+// Only the audit helper, active sign-in refresh, and terminal may run scripts.
+// These scripts never receive BAT credentials; the Hub does not hold them.
 func TestNoFrontEndMeansNoFrontEndLog(t *testing.T) {
 	s, st := newServer(t)
 	id := onlineMachine(t, st, "samplehub1")
@@ -3223,8 +3220,8 @@ func TestNoFrontEndMeansNoFrontEndLog(t *testing.T) {
 		}
 	}
 	sort.Strings(scriptedTemplates)
-	if len(scriptedTemplates) != 2 || scriptedTemplates[0] != "base.html" || scriptedTemplates[1] != "terminal.html" {
-		t.Fatalf("script-bearing templates=%v, want only terminal.html", scriptedTemplates)
+	if len(scriptedTemplates) != 3 || scriptedTemplates[0] != "base.html" || scriptedTemplates[1] != "signins.html" || scriptedTemplates[2] != "terminal.html" {
+		t.Fatalf("script-bearing templates=%v, want base.html, signins.html, terminal.html", scriptedTemplates)
 	}
 
 	mux := http.NewServeMux()

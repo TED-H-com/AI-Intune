@@ -142,6 +142,7 @@ func Tools() []Tool {
 	ttl := intBound(int(store.OperatorEnrollTokenMinTTLSeconds), int(store.OperatorEnrollTokenMaxTTLSeconds), "Seconds. Hub accepts 60 to 86400.")
 
 	return append([]Tool{
+		{Name: "signins_list", Description: "Read fleet CLI sign-in metadata. No login URLs, device codes, secrets, or write actions.", InputSchema: obj(map[string]any{}), Annotations: readAnn("signins_list")},
 		{Name: "jobs_summary", Description: "Read bounded Hub job counts and threshold flags. Scope view. Null flags mean insufficient evidence.", InputSchema: obj(map[string]any{"kind": strField(1, 256, "", "Executor kind"), "machine_id": strField(1, 256, "", "Machine identifier"), "window": strEnum("24h", "7d"), "per_machine": boolField}), Annotations: readAnn("jobs_summary")},
 		{Name: "approvals_summary", Description: "Read observed approvals. Scope view. Preview and pending metrics are null when not persisted.", InputSchema: obj(map[string]any{"window": strEnum("24h", "7d")}), Annotations: readAnn("approvals_summary")},
 		{Name: "loops_list", Description: "Read agent-reported loop episodes and policy. Scope view. Coverage is limited to agents reporting call activity.", InputSchema: obj(map[string]any{"machine_id": strField(1, 256, "", "Machine identifier")}), Annotations: readAnn("loops_list")},

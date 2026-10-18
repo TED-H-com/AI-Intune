@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -589,6 +590,13 @@ func runActiveTerminalLink(parent context.Context, conn *websocket.Conn, batSess
 		frame, err := agentrelay.DecodeDownstream(payload)
 		if err != nil {
 			break
+		}
+		if frame.Type == agentrelay.DownstreamSignin {
+			var c model.SigninCommand
+			if json.Unmarshal(frame.Data, &c) == nil && c.ID == frame.Session {
+				handleSigninCommand(parent, c)
+			}
+			continue
 		}
 		if dispatcher.dispatch(frame, len(frame.Data)) == terminalDispatchRefused {
 			break
