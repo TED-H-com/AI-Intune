@@ -46,5 +46,8 @@ kill_timeout = "30s"
   policy = "always"
 
 [[vm]]
-  size = "shared-cpu-1x"
+  # shared-cpu-2x (12.5% CPU baseline): on shared-cpu-1x (6.25%) litestream
+  # compaction plus Hub derivation exhausted the Fly CPU burst balance after a
+  # redeploy and the Hub was quota-throttled (2026-10-18 incident).
+  size = "shared-cpu-2x"
   memory = "1024mb"

@@ -278,7 +278,7 @@ Check `http://<that-ip>:<CLAWCTL_PORT>/healthz` and follow the shared verificati
 
 ## Cost note
 
-This shape uses one `shared-cpu-1x` machine with 1 GB (`1024mb`) of RAM and a 3 GB volume. This is roughly $7/month at the time of writing; check the [Fly pricing page](https://fly.io/docs/about/pricing/) for exact current numbers. Cloudflare R2's free tier usually covers the storage and operations needed at the default 10 s sync interval.
+This shape uses one `shared-cpu-2x` machine with 1 GB (`1024mb`) of RAM and a 3 GB volume. This is roughly $8/month (about $0.70/month more than `shared-cpu-1x`, whose 6.25% CPU baseline was too small: after a redeploy resets the Fly burst balance, litestream compaction plus Hub work got the machine quota-throttled) at the time of writing; check the [Fly pricing page](https://fly.io/docs/about/pricing/) for exact current numbers. Cloudflare R2's free tier usually covers the storage and operations needed at the default 10 s sync interval.
 
 ## Cloudflare R2 setup (optional)
 
