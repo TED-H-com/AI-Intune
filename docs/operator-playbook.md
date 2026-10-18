@@ -83,19 +83,25 @@ visibility and explicit replacement/revocation timing.
 **Symptom:** A bot needs incident evidence, but upstream text may contain credentials.
 
 **Hub today:** Machine detail/evidence DTOs exclude dedicated secret fields, but
-bounded free-text findings, credential notes/errors and run summaries are not
-universally secret-redacted. Structural exclusion is not a general bot-safe contract.
+the human contracts intentionally preserve bounded free text. Machine detail now
+links to **Bot view**, which renders the same combined scrubbed projection returned
+by `GET /v1/operator/machines/{id}/safe` and MCP `machine_safe_detail`. The response
+reports a replacement count, whether anything changed, sorted redaction-class flags
+and scrubber version. The service-token route editor labels this route “scrubbed
+machine detail”; it is opt-in and is not part of the Hermes default preset.
 
-**Manual steps:** Prefer enum states, counts and summary endpoints. A human must
-review each free-text field before releasing evidence. Remove tokens, cookies,
-authorization headers, env values, URLs with credentials/query secrets, private
-access inventory, and sensitive log fragments. Send the minimum typed facts,
-time window, source timestamp and explicit omissions. Do not treat a successful
-secret-pattern scan as proof; unknown credential formats can evade it. Keep raw
-evidence in approved restricted storage, with access references outside bot output.
+**Manual steps:** Open the machine's Bot view first and review the exact payload.
+Prefer enum states, counts and summaries; grant the safe route only when the bot
+needs the full projection. Inspect `redaction_flags` and unexpected markers before
+sharing. The scrubber covers credential assignments, Authorization/Bearer values,
+common provider prefixes, private-key PEM blocks, URLs with userinfo, JWTs and
+high-entropy strings. It is heuristic: unknown formats can evade it and long,
+diverse path components can be false positives (ordinary paths, UUIDs and hex
+hashes are regression fixtures). Keep raw human evidence in approved restricted
+storage and never treat zero redactions as proof that no secret exists.
 
-**Planned Hub feature:** A dedicated bot-safe projection with enum-only reasons,
-redaction/provenance flags, omission markers and secret-shaped regression fixtures.
+For a service token, have a human explicitly select only this manifest route and
+verify both one intended read and one denied route. Do not add it to a broad preset.
 
 ## Disk cleanup approval
 

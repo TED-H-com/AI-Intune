@@ -49,6 +49,10 @@ func (f *fakeHub) Machine(context.Context, string) (operator.MachineDetailResult
 	f.call("Machine")
 	return operator.MachineDetailResult{}, nil
 }
+func (f *fakeHub) MachineSafe(context.Context, string) (operator.MachineSafeResult, error) {
+	f.call("MachineSafe")
+	return operator.MachineSafeResult{SchemaVersion: 1, Projection: map[string]any{}, RedactionFlags: []string{}, ScrubberVersion: 1}, nil
+}
 func (f *fakeHub) MachineEvidence(context.Context, string, int) (operator.MachineEvidenceResult, error) {
 	f.call("MachineEvidence")
 	return operator.MachineEvidenceResult{}, nil

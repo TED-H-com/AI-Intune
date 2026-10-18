@@ -35,6 +35,9 @@ func TestServiceTokenRouteEditWeb(t *testing.T) {
 	if page.Code != 200 || !strings.Contains(page.Body.String(), `action="/account/service-tokens/routes"`) || !strings.Contains(page.Body.String(), `value="GET /v1/operator/machines" checked`) {
 		t.Fatal("missing selected route editor")
 	}
+	if !strings.Contains(page.Body.String(), `value="GET /v1/operator/machines/{id}/safe"`) || !strings.Contains(page.Body.String(), "scrubbed machine detail") {
+		t.Fatal("safe machine route missing from token editor")
+	}
 	code, _ := totp.Code(factor, time.Now().Unix()/30)
 	fields := url.Values{"id": {token.ID}, "routes": {"GET /v1/operator/jobs"}, "password": {usersPassword}, "code": {code}}
 	// Browser cross-origin requests are rejected before factor verification.

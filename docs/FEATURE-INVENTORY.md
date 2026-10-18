@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 323 個 production operations 基線
+## 324 個 production operations 基線
 
-此數字按 HTTP method + route 計數：24 個 non-operator operations、299 個 operator
-operations；其中 151 個為 operator JSON、148 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=117`、`operate=33`、`admin=149`。這組數字由 route/API/service/Web/CLI
-合約測試固定；323-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：24 個 non-operator operations、300 個 operator
+operations；其中 152 個為 operator JSON、148 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=118`、`operate=33`、`admin=149`。這組數字由 route/API/service/Web/CLI
+合約測試固定；324-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -94,7 +94,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 23 | `POST /v1/channels/{id}/inbound` | Signed provider webhook | Chat commands | Disabled by default; Telegram secret / Discord signature, allowlist, canonical permissions and one-time approvals; see CHANNELS.md |
 | 24 | `GET /version` | JSON | Public | Build version, commit and build time only |
 
-### Operator HTML/BFF 與 JSON（299）
+### Operator HTML/BFF 與 JSON（300）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -356,7 +356,7 @@ HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-151 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+152 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
@@ -422,6 +422,7 @@ domain service 見 `internal/operator/`。
 | 321 | `GET /readiness` | HTML | Read | View; fleet readiness gaps and next actions |
 | 322 | `POST /readiness` | HTML | Yes | Human Admin; configure machine readiness targets |
 | 323 | `GET /v1/operator/machines/{id}/readiness` | JSON | Read | View; same checklist as UI and MCP |
+| 324 | `GET /v1/operator/machines/{id}/safe` | JSON | Read | `view`; opt-in service-token route and MCP `machine_safe_detail`; recursive secret-shape/high-entropy scrub with counts and flags; machine detail Bot view renders the same projection; excluded from Hermes defaults |
 
 ## Workload / submenu parity matrix
 
@@ -439,7 +440,7 @@ domain service 見 `internal/operator/`。
 | 功能 | Native source / API | UI | Operator API | CLI | 人工 action | 下一步 / 依賴 |
 |---|---|---:|---:|---:|---|---|
 | Machine list / status | `operator.Service.ListMachinesPage`；`internal/operator` | ✅ canonical filters/paging | ✅ `GET /v1/operator/machines` schema v2 | ✅ `machines` HTTP | 讀取 | machine/display/state/lifecycle/reporting/channel filters；creation-ceiling live keyset；received-at evidence cutoff；restore/VACUUM 後重開 traversal，不宣稱 atomic snapshot |
-| Machine detail | `operator.Service.MachineDetail`＋`MachineEvidence`；`internal/operator` | ✅ typed judgement/expectations/monitor/identity/resources/history＋typed evidence | △ `GET /v1/operator/machines/{id}` v5＋evidence v4 | △ `machines show`＋`machines evidence` | 讀取 | detail v5 有 Hub judgement／100 findings、50 條 expectation definitions、20-entry event pages、artifact/event clocks 與 unknown/read-failed/invalid/truncated，另有 24h/1000 check-ins、20 state spans、100 durable identity hints。Artifact freshness 不是 outcome，event enum 由 operator 宣告且不掃 free text；display text 不做 path/secret 掃描。Evidence v4 負責 OpenClaw/CLI/credential/occupancy/systemd/text。pending HTML 與 BAT connect 已分別讀 dedicated typed operator service／typed BFF v1；獨立 verifier 證據在工作單與部署 gate 呈現，不併進 machine detail |
+| Machine detail | `operator.Service.MachineDetail`＋`MachineEvidence`＋`MachineSafe`；`internal/operator` | ✅ typed human detail/evidence and auditable Bot view | ✅ human detail/evidence unchanged; opt-in `GET /v1/operator/machines/{id}/safe` recursively scrubs every string and reports redaction count/flags | ✅ `machines show`＋`machines evidence`; MCP `machine_safe_detail` | 讀取 | Human DTOs retain their existing bounded display text. Bot view uses a detached combined detail/evidence JSON tree and the reusable `internal/scrubguard` heuristic for credential assignments, authorization values, provider prefixes, private-key PEM, credential URLs, JWTs and high-entropy strings. The service-token editor labels it “scrubbed machine detail”; it is not in Hermes defaults. Heuristics can false-positive on long diverse path components and cannot prove all secrets absent. |
 | Registry display-name rename | `ApplyOperatorMachineRename`；display-name preview + `PUT` | ✅ 單機動作 preview/confirm | ✅ | ✅ `machine rename` HTTP only | 是 | 唯一名稱、typed current-name confirmation、stale preview、idempotent replay 與 atomic registry/pending-ticket-label/receipt/audit；名稱型 expectations 改用新名稱，machine ID、agent、hostname、channel 與 lifecycle 不變 |
 | 機器指派使用者 | `MachineAssignedUser/ChangeMachineAssignedUser` | ✅ 明細、Devices 欄位與預覽／確認 | ✅ `GET/PUT assigned-user` | ✅ `machine assigned-user` HTTP／資料庫；`machines show` | 是 | Tailnet 使用者識別碼或 `none`；名稱確認、版本檢查、請求重放與稽核 |
 | Registry notes | `ApplyOperatorMachineNotes`；notes preview + `PUT` | ✅ 單機動作 preview/confirm | ✅ | ✅ `machine notes` HTTP only | 是 | 空字串清除、typed current-name confirmation、舊備註 CAS、stale preview、idempotent replay 與 atomic registry/receipt/audit；receipt/audit 只記錄有無與動作，不複製 free text；機器設定與 agent 不變 |

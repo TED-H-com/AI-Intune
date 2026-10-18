@@ -130,6 +130,8 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return s.machineGet(ctx, raw)
 	case "machine_readiness":
 		return s.machineReadiness(ctx, raw)
+	case "machine_safe_detail":
+		return s.machineSafeDetail(ctx, raw)
 	case "machine_oom_kills":
 		return s.machineOOMKills(ctx, raw)
 	case "machine_evidence":
@@ -262,6 +264,23 @@ func (s *Service) machineGet(ctx context.Context, raw json.RawMessage) (any, err
 		return nil, err
 	}
 	result, err := s.Hub.Machine(ctx, args.MachineID)
+	if err != nil {
+		return nil, hubErr(err)
+	}
+	return result, nil
+}
+
+func (s *Service) machineSafeDetail(ctx context.Context, raw json.RawMessage) (any, error) {
+	var args struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return nil, err
+	}
+	if err := requireID("machine_id", args.MachineID); err != nil {
+		return nil, err
+	}
+	result, err := s.Hub.MachineSafe(ctx, args.MachineID)
 	if err != nil {
 		return nil, hubErr(err)
 	}

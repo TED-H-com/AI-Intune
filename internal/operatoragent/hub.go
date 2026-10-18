@@ -21,6 +21,7 @@ type Hub interface {
 	HubStatus(context.Context) (operator.HubStatus, error)
 	ListMachines(context.Context, operator.MachineListRequest) (operator.MachineListResult, error)
 	Machine(context.Context, string) (operator.MachineDetailResult, error)
+	MachineSafe(context.Context, string) (operator.MachineSafeResult, error)
 	MachineEvidence(context.Context, string, int) (operator.MachineEvidenceResult, error)
 	Jobs(context.Context, operator.JobListRequest) (operator.JobListResult, error)
 	Job(context.Context, string) (operator.JobDetailResult, error)

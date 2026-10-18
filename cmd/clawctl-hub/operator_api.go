@@ -177,6 +177,8 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 	mux.HandleFunc("GET /v1/operator/jobs-summary", h.handleOperatorJobsSummary)
 	mux.HandleFunc("GET /v1/operator/approvals-summary", h.handleOperatorApprovalsSummary)
 	mux.HandleFunc("GET /v1/operator/hub-status", h.handleOperatorHubStatus)
+	patterns = append(patterns, "GET /v1/operator/machines/{id}/safe")
+	mux.HandleFunc("GET /v1/operator/machines/{id}/safe", h.handleGetOperatorMachineSafe)
 	mux.HandleFunc(patterns[0], h.handleListOperatorMachines)
 	mux.HandleFunc(patterns[1], h.handleGetOperatorMachine)
 	mux.HandleFunc(patterns[2], h.handleGetOperatorMachineChannel)
@@ -1241,4 +1243,22 @@ func (h *hub) handleOperatorOOMKills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, events)
+}
+
+func (h *hub) handleGetOperatorMachineSafe(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.ForceQuery || r.URL.RawQuery != "" {
+		writeErr(w, 400, "BAD_REQUEST", "Query parameters are not supported")
+		return
+	}
+	result, err := operator.New(h.store).MachineSafe(r.PathValue("id"), time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, 404, store.OperatorCodeMachineNotFound, "Machine not found")
+			return
+		}
+		writeErr(w, 500, "INTERNAL", "Unable to read scrubbed machine detail")
+		return
+	}
+	writeJSON(w, 200, result)
 }
