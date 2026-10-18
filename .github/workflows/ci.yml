@@ -64,8 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     # The store package alone takes about 12 minutes under -race on a
     # developer box, which is past go test's default 10m timeout. Each group
-    # runs in its own job with an explicit -timeout.
-    timeout-minutes: 60
+    # runs in its own job with an explicit -timeout. On GitHub runners the
+    # store group already took ~44m on main (Oct 2026), right at the old 45m
+    # go test limit, so allow 75m / 90m to avoid timing flakes.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -89,4 +91,4 @@ jobs:
         run: command -v make >/dev/null || { sudo apt-get update && sudo apt-get install -y make; }
 
       - name: go test -race
-        run: go test -race -count=1 -timeout 45m ${{ matrix.packages }}
+        run: go test -race -count=1 -timeout 75m ${{ matrix.packages }}
