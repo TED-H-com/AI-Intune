@@ -1,7 +1,16 @@
 {{define "updates.html"}}{{template "head" .}}
 {{$u := .Updates}}
 
-<div class="page-heading"><div><h1>更新</h1><p>Artifact catalog、channel 成員、最近部署與 rollout gate。第一批一台的部署在 <a href="/deployments?view=new">新增部署</a> 建立，phase 在該 deployment 的動作區。Hub 在 canary 工作單 succeeded 之後才開下一批；失敗會暫停。</p></div></div>
+<div class="page-heading"><div><h1>更新</h1><p>檢視 artifact、channel 成員與部署安全閘門。第一批一台的部署在 <a href="/deployments?view=new">新增部署</a> 建立，phase 在該 deployment 的動作區。Hub 在 canary 工作單 succeeded 之後才開下一批；失敗會暫停。</p></div></div>
+
+<div class="panel">
+<h2>開始更新</h2>
+<ol>
+  <li><a href="/apps?view=fetch">取得支援的 OpenClaw artifact</a>，選擇完整版本並預覽下載。</li>
+  <li><a href="/machines">選擇機器並指派 channel</a>：在機器詳細頁的「部署通道」選擇 canary。</li>
+  <li><a href="/deployments?view=new">預覽 canary 部署</a>：填入版本與 SHA-256，以 batch size 1 檢查第一台機器與安全閘門；預覽不會執行部署。</li>
+</ol>
+</div>
 
 <div class="section-title"><h2 id="artifacts" class="section-anchor" tabindex="-1">Hub artifact catalog evidence</h2><p class="active-filter">本頁 {{len $u.Artifacts}} 項；符合條件共 {{$u.ArtifactTotal}} 項</p></div>
 <div class="panel" style="padding:4px 6px">
@@ -19,7 +28,7 @@
 {{end}}</tbody>
 </table>
 {{else if $u.Continuation}}<p class="empty">本頁沒有 artifact；catalog 可能已變更，或這個 cursor 已到結尾。</p>
-{{else}}<p class="empty">沒有 artifact。</p>{{end}}
+{{else}}<p class="empty">沒有 artifact。<a href="/apps?view=fetch">取得支援的 artifact</a> 後再預覽部署。</p>{{end}}
 </div>
 {{if or $u.StartOverHref $u.NextHref}}<p class="small dim">
   {{if $u.StartOverHref}}<a href="{{$u.StartOverHref}}">從第一頁重新開始</a>{{end}}
@@ -35,17 +44,17 @@
   <table><thead><tr><th>機器</th><th>最後觀測版本</th><th>觀測收件時間</th></tr></thead><tbody>
   {{range .Members}}<tr><td><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a></td><td>{{if .LastObservedVersion}}{{.LastObservedVersion}}{{else}}未知{{end}}</td><td>{{if .LastObservationReceivedAt}}{{.LastObservationReceivedAt.Local.Format "2006-01-02 15:04:05"}}{{else}}沒有觀測{{end}}</td></tr>{{end}}
   </tbody></table>
-  {{else}}<p class="empty">沒有成員</p>{{end}}
+  {{else}}<p class="empty">沒有成員。<a href="/machines">選擇機器</a>，在「部署通道」指派到 {{.Name}}。</p>{{end}}
   <p class="small dim">顯示 Hub 保存的最後一筆觀測。</p>
   <h3>最近一張 deployment</h3>
   {{if .Latest}}<p><a href="/deployments/{{.Latest.DeploymentID}}">{{if .Latest.Material.Version}}{{.Latest.Material.Version}}{{else}}版本未知{{end}} · {{.Latest.State}} · {{short .Latest.DeploymentID 8}}</a></p>
-  {{else}}<p class="empty">還沒有部署過</p>{{end}}
+  {{else}}<p class="empty">還沒有部署過。完成 artifact 與 channel 指派後，<a href="/deployments?view=new">預覽部署</a>。</p>{{end}}
   <h3>本頁每個 catalog evidence 的預覽</h3>
   {{range .Previews}}<p><span class="mono">{{.Artifact.Version}}</span>：{{.Summary}}{{if .Promote}}<br>{{.Promote}}{{end}}</p>
   {{if .PromotionTargets}}<table><thead><tr><th>Canary 機器</th><th>工作單</th><th>獨立證據</th><th>下一步</th></tr></thead><tbody>
   {{range .PromotionTargets}}<tr><td>{{.DisplayName}}</td>{{if .JobID}}<td><a class="mono" href="/jobs/{{.JobID}}">{{short .JobID 8}}</a></td>{{else}}<td>—</td>{{end}}<td>{{.State}}</td><td>{{if eq .NextStep "none"}}無{{else if eq .NextStep "assign_verifier"}}到工作單指派跨故障域 verifier{{else if eq .NextStep "wait_for_verifier"}}等待已指派 verifier 完整回報{{else if eq .NextStep "rerun_verifier"}}重新執行已指派 verifier{{else if eq .NextStep "assign_active_verifier"}}到工作單指派仍有效的 verifier{{else if eq .NextStep "reassign_verifier"}}重新指派 verifier{{else if eq .NextStep "upgrade_and_reassign_verifier"}}升級後重新指派 verifier{{else if eq .NextStep "repair_and_rerun_canary"}}修復後重跑 canary{{else}}確認 artifact 後重跑 canary{{end}}</td></tr>{{end}}
   </tbody></table>{{end}}
-  {{else}}<p class="empty">沒有預覽。</p>{{end}}
+  {{else}}<p class="empty">沒有預覽。先<a href="/apps?view=fetch">取得 artifact</a>，再<a href="/deployments?view=new">預覽部署與安全閘門</a>。</p>{{end}}
 </div>
 {{end}}
 

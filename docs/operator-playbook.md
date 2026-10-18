@@ -340,3 +340,24 @@ pressure. Do not put secrets in unit or process names.
 For automation use GET /v1/operator/machines/{id}/oom-kills with a View principal
 and an exact route grant for service tokens. It is a read-only projection of the
 same evidence shown to humans.
+
+## Prepare an application update in the Hub
+
+For a generic incident where an update cannot be previewed because its prerequisites
+have not been prepared, open **Machines → Updates** and follow the numbered path:
+
+1. Open **Apps → Fetch**, select a supported package and exact version, and review
+   the artifact intake preview.
+2. Open **Machines**, choose the intended machine, and assign it to the `canary`
+   deployment channel.
+3. Open **Apps → Deployments → New deployment**, enter the catalog version and
+   SHA-256, keep the first batch at one machine, and review the canary preview.
+
+An empty New Deployment candidate list links back to Fetch and Machines. Previewing
+does not execute a deployment; use the existing typed confirmation only after the
+target snapshot and safety gates are correct.
+
+For profiles, use **Apps → Profiles** to publish and **Apps → Assignments** to apply
+a revision. **Reports → 發佈與指派** is a read-only reconciliation report; use its
+links back to those task pages when the report identifies missing publication or
+assignment work.

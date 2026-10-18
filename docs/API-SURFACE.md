@@ -309,6 +309,13 @@ Updates 不再由 HTML 自己拼 Store rows；`operator.Service.Updates` 與
 成員、最後觀測版本與 Hub 收件時間、latest safe deployment、rollout plan 和 stable promotion gate。這是 read/preview
 composition，不是第二個 deployment writer；artifact 在 overview 仍是 metadata-only，真正 create/
 promotion 繼續走 Deployments preview/apply，且會重新驗 material bytes。
+Updates 的空畫面依操作順序連到三個既有的人工作業入口：Fetch 取得支援的 artifact、Machines
+指派 channel、New Deployment 預覽 canary。New Deployment 沒有候選材料時也連回 Fetch 與
+Machines，而不是把唯讀 catalog 當成下一步。這些連結沒有新增 API contract。
+
+Apps 的 Profiles 與 Assignments 是變更入口；`/reports/profile` 是唯讀核對入口。三頁互相使用
+明確標籤連結，且 Store、Profiles、Assignments、Artifacts、Operations 的空畫面會指向各自缺少的
+前置作業。它們仍共用既有 operator projections 與 mutation routes。
 
 Deployments list/detail 同樣回 explicit safe DTO；Web template model 不接 raw desired spec、artifact
 URL/provenance 或 `created_by`。List cursor 綁 exact channel/state/stuck filters 與最後一筆 keyset
