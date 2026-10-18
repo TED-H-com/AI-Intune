@@ -12,7 +12,7 @@ ops/fly/deploy.sh --org <your-org> --app <your-app-name> --region iad
 # Optional: add --secrets-file ~/clawctl-fly/secrets.env (regular file, mode 0600).
 ```
 
-The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one 1024mb Machine, and waits up to about three minutes for HTTPS `/healthz`. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
+The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one 1024mb Machine, and verifies HTTPS `/healthz`, `/version`, and `/setup` with bounded retries. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
 
 Before every deploy, the wrapper creates a Fly snapshot for **each `clawctl_data` volume**, including newly provisioned volumes. It polls `flyctl volumes snapshots list --json` until a new ID (absent from the pre-request inventory) has status `created`, a creation time after the request, and age at most 300 seconds. It prints the verified ID and volume. Creation, inventory, or verification failure blocks deployment. Polling defaults to 180 seconds per volume (`FLY_SNAPSHOT_TIMEOUT=1..9999`); each snapshot CLI call also has a 15-second timeout. GNU coreutils `timeout` is required. Dry-run prints the gate without calling Fly.
 
@@ -393,3 +393,27 @@ Build the image locally when Docker is available:
 ```
 
 That builds the `hub-fly` target, checks `tailscaled`, `tailscale`, `litestream`, `clawctl-hub`, and the bundle files, and checks that Tailscale mode fails clearly with no `TS_AUTHKEY`. It also parses both Fly config files. For local-only static validation, run `CLAWCTL_SMOKE_STATIC_ONLY=1 bash ops/docker/smoke-build.sh`; `bash ops/test-fly.sh` uses only local stubs.
+
+### Post-deploy verification retries
+
+A rollout can succeed while an edge connection drops during verification. Each
+check gets six attempts by default, with a 10-second total curl timeout per
+attempt and 1/2/4/8/8-second backoff (8 seconds maximum). Configure
+`--verify-attempts` / `FLY_VERIFY_ATTEMPTS` (1–99) and
+`--verify-timeout` / `FLY_VERIFY_TIMEOUT` (1–999 seconds per attempt).
+Each check is bounded by attempts × timeout plus the intervening backoffs.
+Flags override environment values; dry-run makes no requests.
+
+Every failed observation is retried through that budget, including curl
+6/7/28/52/56 (DNS, refused/reset/dropped connection, timeout), HTTP 502/503/504,
+and stale or malformed version responses. Logs name the endpoint, attempt,
+status/classification, and delay without printing response bodies or curl errors.
+`/healthz` must return 200; `/version` must return 200 with a JSON `commit`
+matching the full Git HEAD passed to the image build. `/setup` accepts 200
+(first run) or 404 (already configured). The existing implicit fly.dev 421
+custom-domain guidance remains; an explicit public-origin 421 fails verification.
+
+Exit 2 means **deploy succeeded, verification failed**; exit 1 covers earlier
+configuration/provision/build failures. Inspect the deployed app and public
+origin, and recheck health and commit before deciding whether another deploy is
+needed. Setup logs are read only after all endpoint checks pass.
