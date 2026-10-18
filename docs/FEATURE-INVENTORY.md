@@ -879,3 +879,16 @@ is performed by loop detection. See [API surface](API-SURFACE.md#loop-episodes-u
   raw logs and command lines excluded. Counter evidence can overlap kernel
   evidence. The first counter read after agent startup establishes a baseline.
 - MCP/operator-agent: read-only `machine_oom_kills` mirrors the human detail panel.
+
+## Updates and profile task guidance
+
+- **Updates:** the overview gives humans an ordered Fetch → channel assignment →
+  canary preview path. Artifact, channel, deployment, and preview empty states link
+  to the prerequisite that can resolve them. New Deployment uses the same Fetch and
+  Machines actions when no supported artifact candidate exists.
+- **Profiles:** Apps → Profiles publishes a profile and Apps → Assignments applies it
+  to a machine. Reports → 發佈與指派 is explicitly read-only and links back to both
+  task pages. Empty Store/catalog/profile/assignment/operation states point to their
+  next available UI action.
+- These are navigation and copy contracts over existing UI/API capabilities; they do
+  not add a writer or bypass preview/confirmation gates.

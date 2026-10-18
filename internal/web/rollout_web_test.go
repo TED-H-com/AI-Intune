@@ -807,9 +807,33 @@ func TestUpdatesTrueZeroMessagesAndBothChannels(t *testing.T) {
 	s, _ := newServer(t)
 	s.SetArtifactsDir(t.TempDir())
 	body := get(t, s, "/updates")
-	for _, want := range []string{"沒有 artifact", "canary channel", "stable channel", "沒有成員", "還沒有部署過"} {
+	for _, want := range []string{
+		"沒有 artifact", "canary channel", "stable channel", "沒有成員", "還沒有部署過",
+		`href="/apps?view=fetch"`, `href="/machines"`, `href="/deployments?view=new"`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("空 Updates 頁缺少 %q", want)
+		}
+	}
+	fetch := strings.Index(body, "取得支援的 OpenClaw artifact")
+	assign := strings.Index(body, "選擇機器並指派 channel")
+	preview := strings.Index(body, "預覽 canary 部署")
+	if fetch < 0 || assign <= fetch || preview <= assign {
+		t.Errorf("空 Updates 頁沒有依 prerequisite 順序呈現 fetch → assign → preview：fetch=%d assign=%d preview=%d", fetch, assign, preview)
+	}
+}
+
+func TestNewDeploymentEmptyCatalogLinksToPrerequisites(t *testing.T) {
+	s, _ := newServer(t)
+	body := get(t, s, "/deployments?view=new")
+	for _, want := range []string{
+		"沒有 OpenClaw artifact 候選",
+		`href="/apps?view=fetch"`,
+		`href="/machines"`,
+		"指派 canary channel",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("空 New Deployment 頁缺少 prerequisite action %q", want)
 		}
 	}
 }
