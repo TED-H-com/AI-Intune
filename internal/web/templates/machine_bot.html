@@ -1,0 +1,6 @@
+{{define "machine_bot.html"}}{{template "head" .}}
+<div class="page-heading"><h1>Bot view</h1><p>Scrubbed machine detail and evidence, exactly as returned by the opt-in operator safe API. Redactions are heuristic; review before sharing.</p></div>
+<p><a href="?">Back to human detail</a> · <a href="/account/service-tokens">Configure token routes</a></p>
+<p>If evidence is empty, return to human detail to review enrollment and wait for a fresh agent check-in.</p>
+<pre>{{.BotJSON}}</pre>
+{{template "foot" .}}{{end}}

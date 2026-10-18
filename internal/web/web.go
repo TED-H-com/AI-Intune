@@ -17,6 +17,7 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -490,6 +491,7 @@ type page struct {
 	// MachineDetail owns the typed monitor, identity, resource, history and
 	// expectation sections.
 	OOMKills      []model.OOMKill
+	BotJSON       string
 	MachineDetail *operator.MachineDetailResult
 	Machine       machinePageMachine
 	// MachineConnect is the separate typed BFF disclosure for actionable BAT
@@ -1235,6 +1237,22 @@ func hubInFleet(ov store.Overview, hubHost string) string {
 // ---------------------------------------------------------------- 單機頁
 
 func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("view") == "bot" {
+		w.Header().Set("Cache-Control", "no-store")
+		result, err := s.operator.MachineSafe(r.PathValue("id"), time.Now().UTC())
+		if err != nil {
+			http.Error(w, "Machine unavailable", http.StatusNotFound)
+			return
+		}
+		raw, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			s.fail(w, "Unable to render bot view", err)
+			return
+		}
+		s.render(w, r, "machine_bot.html", page{Title: "Bot view", BotJSON: string(raw)})
+		return
+	}
+
 	now := time.Now().UTC()
 	machine, err := s.operator.MachineDetail(r.PathValue("id"), now)
 	if err != nil {
