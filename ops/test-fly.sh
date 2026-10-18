@@ -435,7 +435,7 @@ test_autopilot() (
   trap 'rm -rf "$tmpdir"' EXIT
   mkdir "$tmpdir/bin"
   export PATH="$tmpdir/bin:$PATH" STUB_DIR="$tmpdir" FLY_API_TOKEN=stub-auth
-  unset FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL FLY_BUILDER FLY_SKIP_SNAPSHOT FLY_SNAPSHOT_TIMEOUT
+  unset FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL FLY_BUILDER FLY_SKIP_SNAPSHOT FLY_SNAPSHOT_TIMEOUT FLY_VERIFY_ATTEMPTS FLY_VERIFY_TIMEOUT
   cat > "$tmpdir/bin/fly" <<'STUB'
 #!/bin/bash
 set -euo pipefail
@@ -490,7 +490,26 @@ STUB
   cat > "$tmpdir/bin/curl" <<'STUB'
 #!/bin/bash
 printf '%s\n' "$*" >> "$STUB_DIR/curl-calls"
-if [[ "${*: -1}" == */setup ]]; then printf '%s' "${STUB_SETUP_STATUS:-404}"; else printf 200; fi
+path=${*: -1}
+if [[ "$path" == *"${STUB_CHECK:-/healthz}" ]]; then
+  if [[ "${STUB_CURL_ONCE:-0}" == 1 && ! -e "$STUB_DIR/curl-once" ]]; then
+    touch "$STUB_DIR/curl-once"
+    printf 000
+    exit "${STUB_CURL_RC:-52}"
+  fi
+  if [[ -n "${STUB_CURL_FAIL:-}" ]]; then printf 000; exit "$STUB_CURL_FAIL"; fi
+  if [[ -n "${STUB_HTTP:-}" ]]; then printf '%s' "$STUB_HTTP"; exit 0; fi
+fi
+body=/dev/null
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --output ]]; then body=$2; shift; fi
+  shift
+done
+if [[ "$path" == */version ]]; then
+  if [[ "${STUB_BAD_VERSION:-0}" == 1 ]]; then printf 'not-json' > "$body"
+  else printf '{"commit":"%s"}' "${STUB_COMMIT:-$(git rev-parse HEAD)}" > "$body"; fi
+fi
+if [[ "$path" == */setup ]]; then printf '%s' "${STUB_SETUP_STATUS:-404}"; else printf 200; fi
 STUB
   cat > "$tmpdir/bin/docker" <<'STUB'
 #!/bin/bash
@@ -503,7 +522,7 @@ STUB
 exit 0
 STUB
   chmod +x "$tmpdir/bin/"*
-  reset_stub() { : > "$tmpdir/calls"; : > "$tmpdir/curl-calls"; rm -f "$tmpdir/fallback" "$tmpdir/volume" "$tmpdir/once" "$tmpdir"/snapshot-*; }
+  reset_stub() { : > "$tmpdir/calls"; : > "$tmpdir/curl-calls"; rm -f "$tmpdir/fallback" "$tmpdir/volume" "$tmpdir/once" "$tmpdir/curl-once" "$tmpdir"/snapshot-*; }
   deploy() { bash ops/fly/deploy.sh --org test-org --app test-hub "$@" > "$tmpdir/output" 2>&1; }
   reset_stub
   deploy --dry-run
@@ -519,6 +538,47 @@ STUB
   ! grep -q '^logs ' "$tmpdir/calls"
   ! grep -q 'stub-first-run-code' "$tmpdir/output"
   grep -q 'already closed' "$tmpdir/output"
+
+  # Every endpoint survives a dropped connection; all requested curl failures retry.
+  for endpoint in /healthz /version /setup; do
+    for curl_rc in 6 7 28 52 56; do
+      reset_stub
+      STUB_CHECK=$endpoint STUB_CURL_ONCE=1 STUB_CURL_RC=$curl_rc deploy --verify-attempts 2 --verify-timeout 1
+      grep -q "Verify $endpoint attempt 2/2:.*OK\|Verify $endpoint attempt 2/2: commit matches" "$tmpdir/output"
+    done
+    for failure in 7 28 52 56; do
+      reset_stub
+      result=0
+      STUB_CHECK=$endpoint STUB_CURL_FAIL=$failure FLY_VERIFY_ATTEMPTS=2 deploy || result=$?
+      [[ "$result" == 2 ]]
+      grep -q 'deploy succeeded, verification failed' "$tmpdir/output"
+      [[ $(grep -c "$endpoint$" "$tmpdir/curl-calls") == 2 ]]
+      ! grep -q '^logs ' "$tmpdir/calls"
+    done
+    for http_status in 502 503 504; do
+      reset_stub
+      result=0
+      STUB_CHECK=$endpoint STUB_HTTP=$http_status deploy --verify-attempts 2 || result=$?
+      [[ "$result" == 2 ]]
+      grep -q "transient HTTP $http_status" "$tmpdir/output"
+    done
+  done
+  reset_stub
+  result=0
+  STUB_COMMIT=wrong deploy --verify-attempts 2 || result=$?
+  [[ "$result" == 2 ]]
+  grep -q 'commit mismatch' "$tmpdir/output"
+  ! grep -q '^logs ' "$tmpdir/calls"
+  reset_stub
+  result=0
+  STUB_BAD_VERSION=1 deploy --verify-attempts 2 || result=$?
+  [[ "$result" == 2 ]]
+  grep -q 'invalid version response' "$tmpdir/output"
+  for invalid in 0 -1 abc 100; do
+    reset_stub
+    if deploy --verify-attempts "$invalid"; then exit 1; fi
+    [[ ! -s "$tmpdir/calls" ]]
+  done
 
   reset_stub
   STUB_MISSING=1 STUB_SETUP_STATUS=200 deploy

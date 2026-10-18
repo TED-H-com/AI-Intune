@@ -822,6 +822,8 @@ Screenshots use generic fixture data under `docs/screenshots/phase2/p2-05/`.
 
 `ops/fly/deploy.sh` verifies fresh snapshots of all `clawctl_data` volumes before deployment and retries transient builder failures before fallback. This host operation adds no Hub web, API, MCP, or store contract. Human operators use the script; see [Fly deployment](DEPLOY-FLY.md) for the explicit snapshot bypass and recovery limits.
 
+Fly post-deploy verification retries `/healthz`, `/version` (exact built commit), and `/setup` with configurable attempts/timeouts and capped backoff. Exit 2 distinguishes a completed deployment with failed verification. This changes only the existing ops workflow; no Hub UI/API/store contract changes. See [verification retries](DEPLOY-FLY.md#post-deploy-verification-retries).
+
 ## Sustained disk growth alerts
 
 Humans configure growth thresholds on Disk policies and review critical growth

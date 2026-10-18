@@ -1019,6 +1019,8 @@ for immediate grant semantics, rotation boundaries and audit diffs.
 
 `ops/fly/deploy.sh` verifies fresh snapshots of all `clawctl_data` volumes before deployment and retries transient builder failures before fallback. This host operation adds no Hub web, API, MCP, or store contract. Human operators use the script; see [Fly deployment](DEPLOY-FLY.md) for the explicit snapshot bypass and recovery limits.
 
+Fly post-deploy verification retries `/healthz`, `/version` (exact built commit), and `/setup` with configurable attempts/timeouts and capped backoff. Exit 2 distinguishes a completed deployment with failed verification. This changes only the existing ops workflow; no Hub UI/API/store contract changes. See [verification retries](DEPLOY-FLY.md#post-deploy-verification-retries).
+
 ## Disk growth evidence
 
 `GET /v1/operator/disk-ops/status/{machine_id}` includes a `growth` array,

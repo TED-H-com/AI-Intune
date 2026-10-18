@@ -15,14 +15,18 @@ secrets_file=${FLY_SECRETS_FILE:-}
 builder=${FLY_BUILDER:-auto}
 skip_snapshot=${FLY_SKIP_SNAPSHOT:-0}
 snapshot_timeout=${FLY_SNAPSHOT_TIMEOUT:-180}
+verify_attempts=${FLY_VERIFY_ATTEMPTS:-6}
+verify_timeout=${FLY_VERIFY_TIMEOUT:-10}
 dry_run=0
 destroy=0
 fail() { echo "deploy: $*" >&2; exit 1; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --org|--app|--region|--secrets-file|--public-url|--builder)
+    --org|--app|--region|--secrets-file|--public-url|--builder|--verify-attempts|--verify-timeout)
       [[ $# -ge 2 ]] || fail "missing flag value"
       case "$1" in
+        --verify-attempts) verify_attempts=$2 ;;
+        --verify-timeout) verify_timeout=$2 ;;
         --builder) builder=$2 ;;
         --org) org=$2 ;; --app) app=$2 ;; --region) region=$2 ;; --secrets-file) secrets_file=$2 ;;
         --public-url) url=$2; public_url_given=1 ;;
@@ -36,6 +40,8 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$skip_snapshot" == 0 || "$skip_snapshot" == 1 ]] || fail "FLY_SKIP_SNAPSHOT must be 0 or 1"
 [[ "$snapshot_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || fail "FLY_SNAPSHOT_TIMEOUT must be 1..9999 seconds"
+[[ "$verify_attempts" =~ ^[1-9][0-9]?$ ]] || fail "verification attempts must be 1..99"
+[[ "$verify_timeout" =~ ^[1-9][0-9]{0,2}$ ]] || fail "verification timeout must be 1..999 seconds"
 if [[ "$destroy" == 0 && "$skip_snapshot" == 1 ]]; then
   echo "WARNING: SNAPSHOT SAFETY GATE DISABLED; deploying without a verified recovery snapshot!" >&2
 fi
@@ -103,7 +109,8 @@ if [[ "$dry_run" == 1 ]]; then
       echo "Builder: $builder; no fallback. Remote mode removes only newly created fly-builder-* apps."
     fi
     plan scale count 1 -a "$app" --yes
-    echo "Wait for $url/healthz; check /setup before reading a first-run code."
+    echo "Wait for $url/healthz; verify /version commit and /setup before reading a first-run code."
+    echo "Verification: $verify_attempts attempts/check, ${verify_timeout}s/request, 1s exponential backoff capped at 8s; exhausted checks exit 2."
   fi
   exit 0
 fi
@@ -216,7 +223,8 @@ fi
 if [[ -n "$secrets_file" ]]; then
   "$fly" secrets import --stage -a "$app" < "$secrets_file" > "$work/import" 2>&1 || fail "secrets import failed"
 fi
-args=(deploy . --config "$work/fly.toml" --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg "CLAWCTL_VERSION=$(git rev-parse --short HEAD)" --build-arg "CLAWCTL_COMMIT=$(git rev-parse HEAD)" --build-arg "CLAWCTL_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --ha=false --yes)
+expected_commit=$(git rev-parse HEAD)
+args=(deploy . --config "$work/fly.toml" --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg "CLAWCTL_VERSION=$(git rev-parse --short HEAD)" --build-arg "CLAWCTL_COMMIT=$expected_commit" --build-arg "CLAWCTL_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --ha=false --yes)
 # Return failure on exhaustion or a permanent error; callers preserve cleanup.
 transient() {
   grep -Eiq 'unexpected EOF|(^|[^a-z])EOF([^a-z]|$)|context deadline|handshake|list[ -]workers|h2c|failed to dial gRPC|failed to get status|Unavailable|remote builder.*(500|502|503)|HTTP[^0-9]*(500|502|503)' "$1"
@@ -275,24 +283,71 @@ case "$builder" in
     fi ;;
 esac
 "$fly" scale count 1 -a "$app" --yes >/dev/null 2>&1 || fail "scale failed"
-deadline=$((SECONDS + 180))
-while :; do
-  status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$url/healthz") || status=000
-  [[ "$status" == 200 ]] && break
-  (( SECONDS < deadline )) || fail "health check timed out"
-  sleep 3
-done
+verification_failed() { echo "deploy succeeded, verification failed: $*" >&2; exit 2; }
+# Keep response bodies and curl diagnostics private (setup HTML may contain secrets).
+# Retry every failed observation: even a commit mismatch can be an old Machine
+# briefly serving traffic during rollout. Never accept it after exhaustion.
+verify() {
+  local path=$1 attempt rc reason delay=1
+  for ((attempt=1; attempt<=verify_attempts; attempt++)); do
+    rc=0
+    status=$(curl --silent --output "$work/verify-body" --write-out '%{http_code}' \
+      --connect-timeout "$verify_timeout" --max-time "$verify_timeout" "$url$path" 2> "$work/verify-error") || rc=$?
+    reason="HTTP $status"
+    if (( rc != 0 )); then
+      case "$rc" in
+        6|7|28|52|56) reason="transient network error (curl $rc)" ;;
+        *) reason="curl error $rc" ;;
+      esac
+    else
+      case "$status" in
+        502|503|504) reason="transient HTTP $status" ;;
+        421) reason="HTTP 421: public origin must match CLAWCTL_PUBLIC_URL" ;;
+      esac
+      if [[ "$path" == /healthz && "$status" == 200 ]] ||
+         [[ "$path" == /setup && ( "$status" == 200 || "$status" == 404 || ( "$status" == 421 && "$public_url_given" == 0 ) ) ]]; then
+        echo "Verify $path attempt $attempt/$verify_attempts: HTTP $status OK."
+        return 0
+      fi
+      if [[ "$path" == /version && "$status" == 200 ]]; then
+        if python3 - "$work/verify-body" "$expected_commit" <<'PY_VERSION'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    if not isinstance(data, dict) or data.get('commit') != sys.argv[2]:
+        sys.exit(1)
+except (ValueError, OSError):
+    sys.exit(1)
+PY_VERSION
+        then
+          echo "Verify $path attempt $attempt/$verify_attempts: commit matches deployed HEAD."
+          return 0
+        fi
+        reason="invalid version response or commit mismatch"
+      fi
+    fi
+    echo "Verify $path attempt $attempt/$verify_attempts: $reason." >&2
+    if (( attempt < verify_attempts )); then
+      echo "Retry $path in ${delay}s." >&2
+      sleep "$delay"
+      (( delay >= 8 )) || delay=$((delay * 2))
+    fi
+  done
+  verification_failed "$path exhausted $verify_attempts attempts; check the public origin and deployed build before retrying deployment"
+}
+verify /healthz
+verify /version
 echo "$url"
-status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$url/setup") || fail "setup check failed"
+verify /setup
 case "$status" in
   200)
-    "$fly" logs -a "$app" --no-tail > "$work/logs" 2>&1 || fail "cannot read setup logs"
+    "$fly" logs -a "$app" --no-tail > "$work/logs" 2>&1 || verification_failed "cannot read setup logs"
     code=$(sed -n 's|.*first-run setup: open https://[^[:space:]]*/setup and enter setup code \([^[:space:]]*\).*|\1|p' "$work/logs" | tail -n 1)
     if [[ -n "$code" ]]; then printf 'Setup code: %s\n' "$code"; else echo "No generated setup code found; use your configured code."; fi ;;
   404) echo "Setup is already closed; use /login." ;;
   421)
     if [[ "$public_url_given" == 1 ]]; then
-      fail "setup HTTP 421: --public-url / FLY_PUBLIC_URL must match the configured CLAWCTL_PUBLIC_URL"
+      verification_failed "setup HTTP 421: --public-url / FLY_PUBLIC_URL must match the configured CLAWCTL_PUBLIC_URL"
     fi
     echo "fly.dev refuses operator routes (HTTP 421): CLAWCTL_PUBLIC_URL is a custom domain. Check https://<your-domain>/setup or rerun the checks with --public-url."
     exit 0 ;;
