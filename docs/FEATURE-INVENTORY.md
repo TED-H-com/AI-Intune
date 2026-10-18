@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 319 個 production operations 基線
+## 320 個 production operations 基線
 
-此數字按 HTTP method + route 計數：24 個 non-operator operations、295 個 operator
-operations；其中 149 個為 operator JSON、146 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=114`、`operate=33`、`admin=148`。這組數字由 route/API/service/Web/CLI
-合約測試固定；319-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：24 個 non-operator operations、296 個 operator
+operations；其中 150 個為 operator JSON、146 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=115`、`operate=33`、`admin=148`。這組數字由 route/API/service/Web/CLI
+合約測試固定；320-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -94,7 +94,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 23 | `POST /v1/channels/{id}/inbound` | Signed provider webhook | Chat commands | Disabled by default; Telegram secret / Discord signature, allowlist, canonical permissions and one-time approvals; see CHANNELS.md |
 | 24 | `GET /version` | JSON | Public | Build version, commit and build time only |
 
-### Operator HTML/BFF 與 JSON（295）
+### Operator HTML/BFF 與 JSON（296）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -356,7 +356,7 @@ HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-149 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+150 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
@@ -418,6 +418,7 @@ domain service 見 `internal/operator/`。
 | 317 | `PUT /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked configuration replacement |
 | 318 | `DELETE /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked removal |
 | 319 | `POST /v1/operator/certificates/{id}/probe` | JSON | 是 | Human Admin; revision-checked queued probe |
+| 320 | `GET /v1/operator/machines/{id}/oom-kills` | JSON | Read | `view`; recent typed OOM attribution; machine detail UI and MCP |
 
 ## Workload / submenu parity matrix
 
@@ -861,3 +862,18 @@ is performed by loop detection. See [API surface](API-SURFACE.md#loop-episodes-u
 - **Tests:** generated certificates served by `httptest` TLS servers cover trust,
   expiry, wildcard depth and missing SANs; store tests cover revisions and retained
   evidence, and UI/API/MCP/client tests cover the operator workflows.
+
+## Linux OOM kill attribution
+
+- Human UI: machine detail **Recent OOM kills** with time, source, unit/container,
+  process, optional memory pressure, and actionable missing-evidence guidance.
+  Machines/fleet attention flags recent OOM evidence through a memory finding.
+- Collection: bounded system journal parsing for systemd-oomd and kernel kills;
+  cgroup v2 local oom_kill counter deltas after a baseline observation.
+  Missing access/platform support is unknown, never proof of no kills.
+- Read API: GET /v1/operator/machines/{id}/oom-kills, using the same operator
+  service as the UI. Existing observation uploads remain schema-1 compatible.
+- Limits: last hour, maximum 64 events, overlapping reports deduplicated;
+  raw logs and command lines excluded. Counter evidence can overlap kernel
+  evidence. The first counter read after agent startup establishes a baseline.
+- MCP/operator-agent: read-only `machine_oom_kills` mirrors the human detail panel.

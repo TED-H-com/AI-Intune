@@ -488,6 +488,7 @@ type page struct {
 	// 單機頁
 	// MachineDetail owns the typed monitor, identity, resource, history and
 	// expectation sections.
+	OOMKills      []model.OOMKill
 	MachineDetail *operator.MachineDetailResult
 	Machine       machinePageMachine
 	// MachineConnect is the separate typed BFF disclosure for actionable BAT
@@ -1348,9 +1349,15 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "Unable to load loop episodes", err)
 		return
 	}
+	oomKills, err := s.operator.MachineOOMKills(machine.Item.MachineID, now)
+	if err != nil {
+		s.fail(w, "Read OOM evidence", err)
+		return
+	}
 	s.render(w, r, "machine.html", page{
 		DiskGrowth:              growth,
 		Loops:                   &loopsPage{Items: loopItems, Machine: machine.Item.MachineID},
+		OOMKills:                oomKills.Items,
 		Title:                   machine.Item.DisplayName,
 		Nav:                     "machines-detail",
 		Now:                     now.Local().Format("2006-01-02 15:04"),
