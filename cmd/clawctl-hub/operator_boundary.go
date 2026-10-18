@@ -131,6 +131,10 @@ type nonOperatorRoutePolicy struct {
 // public account traffic. In particular, /v1/operator/* can never be classified as
 // a machine route.
 var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
+	"GET /join.sh":                   {nonOperatorAgent},
+	"POST /v1/join/start":            {nonOperatorAgent},
+	"POST /v1/join/poll":             {nonOperatorAgent},
+	"GET /v1/join/bundle/{arch}":     {nonOperatorAgent},
 	"POST /v1/channels/{id}/inbound": {nonOperatorChat},
 	"GET /setup":                     {nonOperatorAccount},
 	"POST /setup":                    {nonOperatorAccount},
@@ -176,6 +180,9 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /machines/host-profile":                {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"POST /machines/host-profile":               {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/host-profile":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /machines/join":                        {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/join/decide":                {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/joins":                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /readiness":                            {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"POST /readiness":                           {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/machines/{id}/readiness":  {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
@@ -549,7 +556,9 @@ func newHubHTTPHandler(h *hub, ui *web.Server, authorizer operatorRequestAuthori
 	}
 	ui.SetScheduleAdmission(h.admitScheduleMutation)
 	root := http.NewServeMux()
+	ui.SetJoinClientIP(h.clientIP)
 	nonOperatorRegistered := h.machineAndPublicRoutes(root)
+	nonOperatorRegistered = append(nonOperatorRegistered, ui.JoinPublicRoutes(root)...)
 	nonOperatorRegistered = append(nonOperatorRegistered, ui.InboundRoutes(root)...)
 	nonOperatorRegistered = append(nonOperatorRegistered, registerAccountRoutes(root, h.store, ui, authority, h.clientIP, cloud...)...)
 
@@ -603,6 +612,9 @@ func validateNonOperatorRoutePolicies(registered []string, policies map[string]n
 		}
 		switch policy.Class {
 		case nonOperatorAgent:
+			if pattern == "GET /join.sh" {
+				break
+			}
 			if !strings.HasPrefix(path, "/v1/") {
 				return fmt.Errorf("non-operator route %q is not a valid machine-plane path", pattern)
 			}

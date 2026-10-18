@@ -702,6 +702,9 @@ func serve(argv []string) {
 	ui.SetTailnetCache(tailnetCache)
 	ui.SetOperatorService(operatorService)
 	ui.SetHubBase(h.publicURL)
+	if err := ui.ConfigureJoinFromEnv(); err != nil {
+		log.Fatal(err)
+	}
 	secretRegistry, err := secrets.LoadConfig(os.Getenv("CLAWCTL_SECRETS_CONFIG"), secrets.NotifyReferences(h.notifyEnv))
 	if err != nil {
 		log.Fatal("invalid secrets configuration")

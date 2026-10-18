@@ -103,6 +103,7 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	})
 
 	machineNav := map[string]string{
+		"/machines/join":                       "Waiting to join",
 		sectionHref("/machines", "fleet-kpis"): "概觀", sectionHref("/machines", "machines"): "所有裝置",
 		sectionHref("/machines", "findings"): "監視", "/jobs": "代理程式活動", "/machines/enrollment": "註冊裝置",
 		"/machines/configuration": "組態", "/machines/compliance": "合規性",

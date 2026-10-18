@@ -1884,3 +1884,12 @@ CREATE TABLE IF NOT EXISTS fleet_host_profile (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  profile TEXT NOT NULL
 );
+
+-- Join requests contain only public metadata and the SHA-256 of a device secret.
+CREATE TABLE IF NOT EXISTS join_requests (
+ code TEXT PRIMARY KEY, secret_hash BLOB NOT NULL UNIQUE,
+ hostname TEXT NOT NULL, os TEXT NOT NULL, arch TEXT NOT NULL, user TEXT NOT NULL,
+ client_ip TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','redeemed','approval_expired'))
+);
+CREATE INDEX IF NOT EXISTS join_requests_expiry ON join_requests(expires_at);

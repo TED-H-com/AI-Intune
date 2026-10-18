@@ -1,5 +1,29 @@
 # New Linux host
 
+## Fastest path: join command
+
+From the non-root account that will run the agent:
+
+```sh
+curl -fsSL https://hub.example.com/join.sh | sudo bash
+```
+
+Open the displayed Hub link (`/machines/join`), match the code, choose a name,
+and click **Approve** with a fresh administrator MFA session. No credentials
+need to be copied. The command prepares OpenSSH, optionally connects Tailscale
+with a Hub-issued pre-authorised key, verifies the agent bundle, and runs the
+agent installer as root for your non-root account. Python 3 is installed if missing.
+The initial command needs sudo access. Use `--user NAME` when invoking from a root shell
+(download the script first, then run `bash join.sh --user NAME`).
+
+Requests last 15 minutes. Rejection or expiry exits without installing the
+agent; run the command again for a new code. If the Hub restarts after approval,
+ask the administrator to approve again while the request is valid. Temporary
+credential files are private and shredded on exit. The optional bundled
+`fleet-apply/install.sh` runs when present. Check `/readiness` after joining.
+
+The longer manual bootstrap path follows.
+
 Use Ubuntu 22.04, 24.04, or 26.04, or Oracle Linux 9. Use amd64 or arm64.
 Create the VM with a non-root account named `ops`, an SSH key, and sudo access.
 Keep enough free disk for the agent, its jobs, and a 500 MB journal.

@@ -38,7 +38,7 @@ var allAuditActions = [...]AuditAction{
 	AuditRetire,
 	AuditUnretire,
 	AuditEnrollToken,
-	AuditKeyedInstaller,
+	AuditKeyedInstaller, AuditJoinApprove, AuditJoinReject,
 	AuditRevokeToken,
 	AuditEnrollmentLimit,
 	AuditDeploymentCreate,
