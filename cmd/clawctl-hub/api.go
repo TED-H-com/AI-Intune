@@ -234,8 +234,16 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		hostProfile = &p
 		hostDigest, _ = p.Digest()
 	}
+	var diskJobs []model.DiskJob
+	if linux {
+		diskJobs, err = h.store.DeliverDiskJobs(machineID)
+		if err != nil {
+			h.writeStoreError(w, "disk setup jobs", machineID, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, model.CheckinResponse{
-		HostProfile: hostProfile, HostProfileDigest: hostDigest,
+		DiskJobs: diskJobs, HostProfile: hostProfile, HostProfileDigest: hostDigest,
 		ReadinessConfig:            readinessConfig,
 		DiskTimerTransitions:       transitions,
 		ReceivedAt:                 received,

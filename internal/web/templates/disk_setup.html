@@ -1,0 +1,16 @@
+{{define "disk-setup-panel"}}{{with .}}
+<div class="panel section-anchor" id="disks"><h2>Disks</h2>
+<p>Set up a new, empty disk once. Existing filesystems and partitions are always preserved. Disk facts are reported by this machine. <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/HOST-PROFILE.md#new-disk-setup">Safety checks</a>.</p>
+{{if not .Manage}}<p>Read-only. Ask an administrator to approve disk setup.</p>{{end}}
+{{$page := .}}
+{{range .Inventory.Devices}}
+<h3>{{.Path}} — {{.Model}}</h3><p>Serial: {{.Serial}} · WWN: {{.WWN}} · {{diskSize .SizeBytes}} · {{.Type}} · {{if .ReadOnly}}Read-only{{end}} {{if .Removable}}Removable{{end}} {{if .Boot}}Boot disk{{end}} {{if .Member}}Storage member{{end}}</p>
+<p>Filesystem: {{if .FSType}}{{.FSType}}{{else}}None reported{{end}} · UUID: {{.UUID}} · Label: {{.Label}} · Mounted at: {{range .Mountpoints}}{{.}} {{else}}None{{end}} · Partitions or members: {{len .Children}}</p>
+{{if unusedDisk .}}<p><strong>Ready to set up</strong></p>
+{{if and $page.Manage (diskAvailable . $page.Inventory.Jobs)}}<form method="post" action="/machines/{{$page.Machine}}/disks/approve" class="disk-form"><input type="hidden" name="device" value="{{.Path}}">
+<div class="form-grid"><label>Mount point <input name="mount_point" value="/data" required maxlength="256"></label><label>Filesystem <select name="fstype"><option>ext4</option><option>xfs</option></select></label><label>Label <input name="label" value="data" pattern="[A-Za-z0-9_-]{1,16}" required maxlength="16"></label><label>Owner user <input name="owner" value="{{$page.Owner}}" required maxlength="32"></label></div>
+<label><input type="checkbox" name="confirm" value="yes" required> I approve creating one partition and a filesystem on {{.Model}}, serial {{.Serial}}{{if not .Serial}}WWN {{.WWN}}{{end}}, {{diskSize .SizeBytes}} ({{.Path}}).</label><p><button>Approve disk setup</button></p></form>{{end}}{{end}}
+{{else}}<p>No disk inventory yet. Linux machines report disks at their next check-in.</p>{{end}}
+<h3>Disk setup jobs</h3><table><thead><tr><th>Disk</th><th>Requested setup</th><th>Status and result</th><th>Action</th></tr></thead><tbody>
+{{range .Inventory.Jobs}}<tr><td>{{.Job.Device}} · {{.Job.Model}} · {{.Job.Serial}}</td><td>{{.Job.MountPoint}} · {{.Job.FSType}} · {{.Job.Owner}}</td><td>{{.State}} {{.Result.Reason}} {{.Result.Step}} {{if .Result.UUID}}UUID: {{.Result.UUID}} · {{.Result.MountPoint}} <pre>{{.Result.DF}}</pre>{{end}}</td><td>{{if and $page.Manage (eq .State "pending")}}<form method="post" action="/machines/{{$page.Machine}}/disks/cancel"><input type="hidden" name="job_id" value="{{.Job.ID}}"><button>Cancel</button></form>{{end}}</td></tr>{{else}}<tr><td colspan="4">No disk setup jobs.</td></tr>{{end}}
+</tbody></table></div>{{end}}{{end}}

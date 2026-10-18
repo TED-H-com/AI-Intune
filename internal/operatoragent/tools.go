@@ -130,6 +130,8 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return s.machinesList(ctx, raw)
 	case "machine_get":
 		return s.machineGet(ctx, raw)
+	case "machine_disks":
+		return s.machineDisks(ctx, raw)
 	case "host_profile_get":
 		return s.hostProfileGet(ctx, raw)
 	case "machine_readiness":

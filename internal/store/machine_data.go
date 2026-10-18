@@ -29,6 +29,7 @@ type MachineDataTable struct {
 var machineDataTables = []MachineDataTable{
 	{Table: "fleet_host_profile", TimeCol: ""},
 	{Table: "host_readiness_config", TimeCol: ""},
+	{Table: "disk_setup_jobs", TimeCol: "created_at"},
 	{Table: "channel_bots", TimeCol: ""},
 	{Table: "channel_bindings", TimeCol: ""},
 	{Table: "machine_registry", TimeCol: "created_at"},

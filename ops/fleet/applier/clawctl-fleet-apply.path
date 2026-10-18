@@ -2,6 +2,7 @@
 Description=Watch fleet host setup profile
 [Path]
 PathChanged=@@PROFILE@@
+PathChanged=@@JOBS@@
 Unit=clawctl-fleet-apply.service
 [Install]
 WantedBy=multi-user.target

@@ -291,9 +291,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryJobs: {
 		title:  "工作單",
-		holds:  "派給這台的每一張工作單：狀態、修訂號、租約、逾時、產出物摘要，以及它屬於哪一次部署的哪一批。",
+		holds:  "派給這台的每一張工作單：狀態、修訂號、租約、逾時、產出物摘要，以及它屬於哪一次部署的哪一批。 New disk setup jobs retain approved identity, settings, state and result without automatic pruning; view them on the machine Disks panel.",
 		source: DataSourceOperator,
-		tables: []string{"jobs", "deployment_targets"},
+		tables: []string{"jobs", "deployment_targets", "disk_setup_jobs"},
 		path:   "/jobs",
 	},
 	DataCategoryDiskClean: {

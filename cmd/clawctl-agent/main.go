@@ -653,6 +653,8 @@ func applyWorkloadPolicy(obs *model.ObservationBatch, policy *workloadPolicyBund
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if runtime.GOOS == "linux" {
+		obs.BlockDevices = probe.CollectBlockDevices(ctx)
+		obs.DiskJobResults = readPendingDiskJobResults("/var/lib/clawctl-fleet-apply/disk-jobs")
 		obs.HostProfileApply = readHostApplyResult("/var/lib/clawctl-fleet-apply/last.json")
 	}
 	obs.Readiness = probe.CollectReadiness(ctx, policy.readiness, obs.Credentials)

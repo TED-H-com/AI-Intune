@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-334（28 non-operator＋306 operator；154 operator JSON＋152 HTML/BFF/CSV/download），exact auth tally 是
-`view=122`／`operate=33`／`admin=151`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+337（28 non-operator＋309 operator；155 operator JSON＋154 HTML/BFF/CSV/download），exact auth tally 是
+`view=123`／`operate=33`／`admin=153`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1244,3 +1244,23 @@ while the request is still valid. An already minted enrollment ticket expires
 naturally and cannot be reconstructed. Join decisions and their secret-free
 `join_approve` / `join_reject` audit rows commit together. Rows older than seven
 days past expiry are pruned lazily on start/list, without changing ledger retention.
+
+## New disk provisioning contract
+
+The machine Disks panel is the human approval surface. Two Admin + fresh-MFA
+HTML POSTs (`/machines/{id}/disks/approve`, `/machines/{id}/disks/cancel`) and one
+View JSON GET (`/v1/operator/machines/{id}/disks`) are additive, human-only routes.
+MCP `machine_disks` is read-only and calls the strict operator client. Readiness
+links to eligible disks; existing disks are facts only. There is no wipe, force,
+overwrite or reuse control.
+
+`disk_setup_jobs` binds one single-use ID to machine, device, serial/WWN, model,
+exact byte size and approved mount/filesystem/label/owner. Active disk identities
+are unique. Pending approvals expire after 24 hours or may be cancelled;
+delivery is retryable and final results are idempotent. Atomic audit actions are
+`disk_setup_approve`, `disk_setup_cancel`, `disk_setup_result`. Linux agent files
+are unprivileged data; the root applier independently checks identity and empty
+state immediately before acting, reserves the ID durably, stops on failure and
+retains receipts forever for replay protection. Agent-relayed results are host
+facts, not independent verification. See [HOST-PROFILE](HOST-PROFILE.md#new-disk-setup)
+for the checks and compromised-account limitation.

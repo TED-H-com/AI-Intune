@@ -95,3 +95,61 @@ another account or host, substitute a template, or submit code to the applier.
 A profile digest identifies data; it is not a signature or proof of operator
 intent after the service account is compromised. Protect root-owned executable,
 installer, config and state directories separately.
+
+## New disk setup
+
+Open a Linux machine's **Disks** section. Every reported disk shows its identity,
+size, filesystem, mounts, partition count and boot/storage membership. Only an
+empty, non-removable, writable disk of at least 1 GiB with a serial or WWN is
+marked **Ready to set up**. Readiness links directly to these disks.
+
+An administrator chooses a mount point (default `/data`), ext4 or xfs, a label
+and an existing non-root owner (defaulting to the reported agent service user).
+The confirmation names the model, serial or WWN, device and size. Approval uses
+the Hub's protected browser form and fresh MFA window. Pending jobs can be
+cancelled; cancellation appears as Expired in the job list and is distinguished
+in the audit log. Approval, cancellation and final results each have an atomic
+audit entry: `disk_setup_approve`, `disk_setup_cancel`, `disk_setup_result`.
+Only one job may be active for a device, serial or WWN on that machine.
+Uncollected approvals expire after 24 hours; delivered jobs remain single use.
+The panel shows pending and completed jobs, refusal reasons, UUID, mount point
+and disk usage after successful setup.
+
+Check-in delivers `disk_jobs` only to Linux agents. The unprivileged agent writes
+`~/.config/clawctl/disk-jobs.json` atomically, mode 0600, replacing the previous
+list and dropping completed jobs. The root applier runs these jobs after profile
+settings during the same service invocation; both files are watched. Results
+are root-owned, readable receipts under
+`/var/lib/clawctl-fleet-apply/disk-jobs/<id>.json`. Keep those receipts: an
+existing ID, including a failed or interrupted operation, is never run again.
+The agent relays only results for its last delivered jobs, so historical receipts
+cannot crowd out a new result. Hub result transitions are machine-bound and
+idempotent.
+
+Before partitioning, the applier rechecks the exact device using lsblk and a
+matching serial/WWN alias under `/dev/disk/by-id`. Model and byte size must match
+exactly. It refuses partitions or children, any filesystem/UUID/label/partition
+table or wipefs signature, mounts, swap, holders, removable or read-only media,
+root/boot disks, an unavailable check, an existing fstab target, a mounted or
+non-empty target directory, unsafe paths and a missing or low-UID owner. System
+directories and `/var/lib/clawctl*` are forbidden mount targets. Labels use
+1–16 ASCII letters, digits, underscores or hyphens. Owner names use a bounded
+account-name grammar and must resolve to UID >= 1000.
+
+Only then does it create GPT with one partition, make ext4/xfs without force
+flags, obtain the UUID, back up and atomically append a marked fstab entry,
+mount, assign ownership/mode 0755 and verify the mounted UUID/type/target.
+A durable result reservation precedes partitioning. Failure after that point
+stops with a named step; it never attempts cleanup. Inspect a failed operation
+locally before deciding what to do next. **There is no wipe, force, overwrite or
+reuse-disk option, in the UI, API or applier.** Unknown job fields are rejected.
+Tests use fake commands and filesystem fixtures; no real disk acceptance is
+claimed.
+
+The installer-selected account and descriptor-based O_NOFOLLOW traversal,
+ownership checks, 64 KiB limit, strict JSON and per-value validation apply to the
+jobs file as well as the profile. Commands use fixed argument arrays. As with
+the profile, this user-writable file is not cryptographic proof of Hub approval:
+a compromised service account could request setup of an otherwise eligible
+empty local disk. Root-side checks preserve existing data; protect the account,
+root executable, configuration and receipt directory separately.

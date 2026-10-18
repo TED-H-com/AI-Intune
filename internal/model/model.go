@@ -129,6 +129,7 @@ type Checkin struct {
 }
 
 type CheckinResponse struct {
+	DiskJobs             []DiskJob                      `json:"disk_jobs,omitempty"`
 	HostProfile          *HostProfile                   `json:"host_profile,omitempty"`
 	HostProfileDigest    string                         `json:"host_profile_digest,omitempty"`
 	ReadinessConfig      ReadinessConfig                `json:"readiness_config"`
@@ -470,6 +471,8 @@ type CapabilitiesResponse struct {
 // 因為「今天是綠的，星期三就死了」只有歷史答得出來，而上游的資料庫
 // 7 天 / 2000 筆就會把歷史吃掉。
 type ObservationBatch struct {
+	BlockDevices     []BlockDevice    `json:"block_devices"`
+	DiskJobResults   []DiskJobResult  `json:"disk_job_results,omitempty"`
 	HostProfileApply *HostApplyResult `json:"host_profile_apply,omitempty"`
 	Readiness        *ReadinessFacts  `json:"readiness,omitempty"`
 	OOMKills         []OOMKill        `json:"oom_kills,omitempty"`

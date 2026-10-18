@@ -74,6 +74,7 @@ type ReadinessItem struct {
 	Doc        string `json:"doc"`
 }
 type HostChecklist struct {
+	ReadyDisks      int                   `json:"ready_disks"`
 	NeedsYou        int                   `json:"needs_you"`
 	Auto            int                   `json:"auto"`
 	Done            int                   `json:"done"`
@@ -227,6 +228,23 @@ func (s *Store) HostChecklist(id string, now time.Time) (HostChecklist, error) {
 	f.SignedIn = signedIn
 	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}[$]?$`).MatchString(f.ServiceUser) {
 		f.ServiceUser = ""
+	}
+	disks, err := s.MachineDisks(id)
+	if err != nil {
+		return v, err
+	}
+	for _, d := range disks.Devices {
+		if model.UnusedDisk(d) {
+			active := false
+			for _, j := range disks.Jobs {
+				if j.Job.Device == d.Path && (j.State == "pending" || j.State == "delivered") {
+					active = true
+				}
+			}
+			if !active {
+				v.ReadyDisks++
+			}
+		}
 	}
 	// Keep the API projection limited to typed readiness facts; no credential prose.
 	v.Facts = f
