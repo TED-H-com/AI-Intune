@@ -948,6 +948,10 @@ func (h *hub) reconcileLoop(ctx context.Context) {
 
 func (h *hub) reconcile() {
 	if err := h.store.ReconcileFleet(time.Now().UTC()); err != nil {
+		if errors.Is(err, store.ErrReconcileEvidenceChanged) {
+			log.Printf("reconciliation deferred: evidence changed; retry next tick")
+			return
+		}
 		log.Printf("reconciliation failed: %v", err)
 	}
 }

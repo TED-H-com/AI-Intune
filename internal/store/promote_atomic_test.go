@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -560,8 +562,7 @@ func TestImmediateTransactionsSerializeAcrossStoreInstances(t *testing.T) {
 	}
 }
 
-// Reconcile 的 Overview 與證據落地必須在同一把跨 Store writer reservation 裡。
-// 否則 stable create 可以卡進「已算出壞、還沒寫入歷史」的縫裡。
+// A stable create in the derive/materialize gap must invalidate the judgement.
 func TestReconcileJudgementAndStableCreateSerializeAcrossStoreInstances(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hub.db")
 	first, err := Open(path)
@@ -580,6 +581,7 @@ func TestReconcileJudgementAndStableCreateSerializeAcrossStoreInstances(t *testi
 	}
 	n, _ := eligiblePromotionFixture(t, first)
 	second.nowFn = first.nowFn
+	second.SetExpectations(first.expects)
 
 	// 讓 latest raw state 是 workload failure，再刻意清掉 observation ingest 已經
 	// 投影的 span；這樣本測試只證明 periodic reconcile 自己的交易邊界。
@@ -602,9 +604,13 @@ func TestReconcileJudgementAndStableCreateSerializeAcrossStoreInstances(t *testi
 
 	overviewDone := make(chan struct{})
 	release := make(chan struct{})
+	derivations := 0
 	first.afterReconcileOverview = func() {
-		close(overviewDone)
-		<-release
+		derivations++
+		if derivations == 1 {
+			close(overviewDone)
+			<-release
+		}
 	}
 	reconcileDone := make(chan error, 1)
 	go func() { reconcileDone <- first.ReconcileFleet(first.now()) }()
@@ -621,21 +627,24 @@ func TestReconcileJudgementAndStableCreateSerializeAcrossStoreInstances(t *testi
 	}()
 	select {
 	case got := <-createDone:
-		t.Fatalf("stable create crossed reconcile Overview/materialize boundary: err=%v decision=%s", got.err, got.decision.Summary())
-	case <-time.After(250 * time.Millisecond):
-		// 還在等 reconcile 的 BEGIN IMMEDIATE writer reservation 才對。
+		if !errors.Is(got.err, ErrPromoteLocked) || got.decision.Allowed {
+			t.Fatalf("create before judgement must reject raw workload failure: err=%v decision=%s", got.err, got.decision.Summary())
+		}
+		// Rejected creates roll back without changing evidence. A committed write
+		// in the same gap must invalidate the judgement as well.
+		if err := second.RecordStateTransition("cnode", state.Unreachable, "intervening judgement", first.now()); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("writer held during reconcile derivation")
 	}
 	close(release)
 	if err := <-reconcileDone; err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case got := <-createDone:
-		if !errors.Is(got.err, ErrPromoteLocked) || got.decision.Allowed {
-			t.Fatalf("stable create after reconcile err=%v decision=%s", got.err, got.decision.Summary())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("stable create stayed blocked after reconcile committed")
+	if derivations < 2 {
+		t.Fatal("intervening committed evidence did not trigger re-derivation")
 	}
 	var failures int
 	if err := first.DB().QueryRow(`SELECT COUNT(*) FROM canary_silent_failures WHERE machine_id='cnode'`).Scan(&failures); err != nil || failures != 1 {
@@ -715,5 +724,227 @@ func TestStableBatchGateAndJobInsertSerializeAcrossStoreInstances(t *testing.T) 
 	var jobs int
 	if err := first.DB().QueryRow(`SELECT COUNT(*) FROM jobs WHERE desired_id=?`, d.DesiredID).Scan(&jobs); err != nil || jobs != 2 {
 		t.Fatalf("stable deployment jobs=%d err=%v", jobs, err)
+	}
+}
+
+// Each conflicting commit must release the writer and derive again. Even changes
+// to existing rows (which MAX(rowid) misses) invalidate the pending judgement.
+func TestReconcileEvidenceRetryExhaustion(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetExpectations(&expect.Set{})
+	if err := s.PublishExpectationsPolicy(rolloutTestEvidenceEpoch); err != nil {
+		t.Fatal(err)
+	}
+	eligiblePromotionFixture(t, s)
+	var before int
+	if err := s.rdb.QueryRow(`SELECT count(*) FROM machine_state_history`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	s.afterReconcileOverview = func() {
+		attempts++
+		// A normal beginWrite-based call must work while the hook is blocked.
+		done := make(chan error, 1)
+		go func() {
+			tx, err := s.beginWrite(context.Background(), "reconcile_test_evidence")
+			if err != nil {
+				done <- err
+				return
+			}
+			defer tx.Rollback()
+			if _, err := tx.Exec(`UPDATE machine_registry SET display_name=display_name || 'x' WHERE machine_id='cnode'`); err != nil {
+				done <- err
+				return
+			}
+			done <- tx.Commit()
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("reconcile holds writer during derivation hook")
+		}
+	}
+	if err := s.ReconcileFleet(s.now()); !errors.Is(err, ErrReconcileEvidenceChanged) {
+		t.Fatalf("error = %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("derivations = %d, want 3", attempts)
+	}
+	var after int
+	if err := s.rdb.QueryRow(`SELECT count(*) FROM machine_state_history`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("exhausted batch wrote history: %d -> %d", before, after)
+	}
+}
+
+func TestReconcileRetriesBackdatedCheckin(t *testing.T) {
+	s := rolloutStore(t)
+	addRolloutMachine(t, s, "cnode", "samplehub1", false)
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	if err := s.RecordCheckin("cnode", model.Checkin{SentAt: now.Add(-24 * time.Hour)}, now.Add(-24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := s.Overview(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.Machines[0].State != state.Unreachable {
+		t.Fatalf("initial state = %s", initial.Machines[0].State)
+	}
+	attempts := 0
+	s.afterReconcileOverview = func() {
+		attempts++
+		if attempts == 1 {
+			// assigned before the evaluation cutoff, committed after the read phase
+			at := now.Add(-time.Second)
+			if err := s.RecordCheckin("cnode", model.Checkin{SentAt: at}, at); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.ReconcileFleet(now); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("derivations = %d", attempts)
+	}
+	ov, err := s.Overview(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	span, ok, err := s.openStateSpan("cnode")
+	if err != nil || !ok || span.State != ov.Machines[0].State || span.State == state.Unreachable {
+		t.Fatalf("span=%+v overview=%s err=%v", span, ov.Machines[0].State, err)
+	}
+	var failures int
+	if err := s.rdb.QueryRow(`SELECT count(*) FROM canary_silent_failures`).Scan(&failures); err != nil || failures != 0 {
+		t.Fatalf("stale failure written: count=%d err=%v", failures, err)
+	}
+}
+
+func TestReconcileDeriveLeavesWriterFreeAndExcludesWriterHold(t *testing.T) {
+	s := rolloutStore(t)
+	addRolloutMachine(t, s, "cnode", "samplehub1", false)
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	entered, release := make(chan struct{}), make(chan struct{})
+	attempts := 0
+	s.afterReconcileOverview = func() {
+		attempts++
+		if attempts == 1 {
+			close(entered)
+			<-release
+		}
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.ReconcileFleet(now) }()
+	<-entered
+	writerDone := make(chan error, 1)
+	go func() { writerDone <- s.RecordCheckin("cnode", model.Checkin{SentAt: now}, now) }()
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			close(release)
+			<-done
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		<-done
+		t.Fatal("RecordCheckin blocked by reconcile derivation")
+	}
+	// Hold the derivation longer than the allowed total reconcile writer hold.
+	time.Sleep(1100 * time.Millisecond)
+	s.gate.stats.mu.Lock()
+	h := s.gate.stats.hold["reconcile_fleet"]
+	s.gate.stats.mu.Unlock()
+	if h != nil {
+		close(release)
+		<-done
+		t.Fatal("writer acquired before derive hook returned")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	s.gate.stats.mu.Lock()
+	h = s.gate.stats.hold["reconcile_fleet"]
+	s.gate.stats.mu.Unlock()
+	if h == nil {
+		t.Fatal("no reconcile writer hold recorded")
+	}
+	_, seconds, _ := h.snapshot()
+	if seconds >= 1 {
+		t.Fatalf("reconcile writer hold includes derivation: %fs", seconds)
+	}
+	ov, err := s.Overview(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	span, ok, err := s.openStateSpan("cnode")
+	if err != nil || !ok || span.State != ov.Machines[0].State {
+		t.Fatalf("span=%+v ok=%v err=%v", span, ok, err)
+	}
+}
+
+func TestReconcileRetirementBetweenDeriveAndWrite(t *testing.T) {
+	s := rolloutStore(t)
+	addRolloutMachine(t, s, "cnode", "samplehub1", false)
+	attempts := 0
+	s.afterReconcileOverview = func() {
+		attempts++
+		if err := s.RetireMachine("cnode", s.now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ReconcileFleet(s.now()); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 {
+		t.Fatalf("derivations=%d", attempts)
+	}
+	var n int
+	if err := s.rdb.QueryRow(`SELECT COUNT(*) FROM machine_state_history WHERE machine_id='cnode'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("retired machine materialized %d state spans", n)
+	}
+}
+
+func TestReconcileBatchesDoNotInvalidateOtherMachines(t *testing.T) {
+	s := rolloutStore(t)
+	for i := 0; i < 17; i++ {
+		addRolloutMachine(t, s, fmt.Sprintf("node-%02d", i), fmt.Sprintf("node-%02d", i), false)
+	}
+	attempts := 0
+	s.afterReconcileOverview = func() { attempts++ }
+	if err := s.ReconcileFleet(s.now()); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 {
+		t.Fatalf("self-conflict caused %d derivations", attempts)
+	}
+	var n int
+	if err := s.rdb.QueryRow(`SELECT COUNT(*) FROM machine_state_history`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 17 {
+		t.Fatalf("materialized %d machines, want 17", n)
+	}
+	s.gate.stats.mu.Lock()
+	h := s.gate.stats.hold["reconcile_fleet"]
+	s.gate.stats.mu.Unlock()
+	_, _, count := h.snapshot()
+	if count != 3 {
+		t.Fatalf("write batches=%d, want 3", count)
 	}
 }

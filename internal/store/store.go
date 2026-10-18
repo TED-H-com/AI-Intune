@@ -396,7 +396,7 @@ type Store struct {
 	expectsLoaded bool
 
 	// afterReconcileOverview 只給 deterministic transaction-boundary 測試用。
-	// production 永遠是 nil；hook 執行時 BEGIN IMMEDIATE writer lock 已在手上。
+	// production 永遠是 nil；derive 後、取得 writer 前執行，每次 derivation 都會呼叫。
 	afterReconcileOverview func()
 	// afterBatchPromoteGate 只給 stable Continue/OpenDeploymentBatch 的
 	// gate→insert transaction-boundary 測試用；production 永遠是 nil。
@@ -665,6 +665,10 @@ func Open(path string) (*Store, error) {
 	if err := clearTerminalLeases(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	if err := migrateReconcileEvidence(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate reconcile evidence: %w", err)
 	}
 	// The writer pool is one connection for the life of the process. Set this
 	// only after migrations, which run on this same *sql.DB before any reader
