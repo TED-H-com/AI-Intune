@@ -44,7 +44,11 @@ func TestUnitSemantics(t *testing.T) {
 				return "", "", nil
 			}
 			f := &model.ReadinessFacts{}
-			c := model.ReadinessConfig{ExpectedUserUnits: tc.unit, AutoRemediate: tc.opt}
+			// Model the effective default-on fleet profile, including oneshot cases.
+			c := (model.FleetReadinessProfile{AutoRemediateUserUnits: true}).Effective(model.ReadinessConfig{ExpectedUserUnits: tc.unit})
+			if !tc.opt {
+				c.AutoRemediate = false
+			}
 			p.collect(t.Context(), c, f)
 			if model.UnitOK(f.Units[tc.unit]) != tc.ok {
 				t.Fatal(f.Units)
@@ -62,4 +66,13 @@ func TestUnitSemantics(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDefaultOnEmptyExpectedUnitsDoesNothing(t *testing.T) {
+	p := UnitReadinessCollector{now: time.Now, runner: func(context.Context, time.Duration, string, ...string) (string, string, error) {
+		t.Fatal("empty expected units must not call systemctl")
+		return "", "", nil
+	}}
+	c := (model.FleetReadinessProfile{AutoRemediateUserUnits: true}).Effective(model.ReadinessConfig{})
+	p.collect(t.Context(), c, &model.ReadinessFacts{})
 }

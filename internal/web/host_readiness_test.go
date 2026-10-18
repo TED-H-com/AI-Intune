@@ -62,6 +62,10 @@ func TestFleetReadinessFormAndGroups(t *testing.T) {
 		mux.ServeHTTP(w, r)
 		return w
 	}
+	w := request("GET", nil, true)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `name="auto_remediate" checked`) || !strings.Contains(w.Body.String(), "On by default.") || !strings.Contains(w.Body.String(), "an empty list does nothing") {
+		t.Fatal(w.Code, w.Body.String())
+	}
 	v := url.Values{"scope": {"fleet"}, "path": {"tailscale"}, "expected_clis": {"agy", "codex"}, "expected_user_units": {"worker.timer\nbackup.service"}, "auto_remediate": {"on"}}
 	if w := request("POST", v, false); w.Code != 403 {
 		t.Fatal(w.Code)
@@ -79,7 +83,7 @@ func TestFleetReadinessFormAndGroups(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	w := request("GET", nil, false)
+	w = request("GET", nil, false)
 	body := w.Body.String()
 	for _, want := range []string{"Needs you (2)", "Fixing itself (16)", "Fleet defaults", "Alpha", "Beta", "/readiness?machine=opaque-a#readiness"} {
 		if !strings.Contains(body, want) {
@@ -88,6 +92,18 @@ func TestFleetReadinessFormAndGroups(t *testing.T) {
 	}
 	if strings.Contains(body, ">opaque-a<") || strings.Contains(body, "Save fleet defaults") {
 		t.Fatal("viewer labels or controls")
+	}
+	v.Del("auto_remediate")
+	if w := request("POST", v, true); w.Code != 303 {
+		t.Fatal(w.Code)
+	}
+	profile, err = st.FleetReadinessProfile()
+	if err != nil || profile.AutoRemediateUserUnits {
+		t.Fatal(profile, err)
+	}
+	w = request("GET", nil, true)
+	if strings.Contains(w.Body.String(), `name="auto_remediate" checked`) {
+		t.Fatal("saved off checkbox checked")
 	}
 	v.Set("expected_user_units", "../bad.service")
 	if w := request("POST", v, true); w.Code != 400 {

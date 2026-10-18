@@ -10,7 +10,7 @@ func TestFleetReadinessAtomicDefaults(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	p, err := s.FleetReadinessProfile()
-	if err != nil || p.AutoRemediateUserUnits {
+	if err != nil || !p.AutoRemediateUserUnits {
 		t.Fatal(p, err)
 	}
 	p = model.FleetReadinessProfile{Path: "tailscale", ExpectedCLIs: []string{"agy"}, ExpectedUserUnits: []string{"worker.timer"}, AutoRemediateUserUnits: true}
@@ -79,5 +79,36 @@ func TestFleetReadinessAtomicDefaults(t *testing.T) {
 	ids, err = s.ReadinessMachineIDs()
 	if err != nil || len(ids) != 1 || ids[0] != "b" {
 		t.Fatal(ids, err)
+	}
+}
+
+func TestFleetReadinessDefaultOnAndSavedOff(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now().UTC()
+	if err := s.UpsertMachine(Machine{MachineID: "example", DisplayName: "Example", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveHostReadinessConfig("example", model.ReadinessConfig{ExpectedUserUnits: "worker.timer"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.EffectiveReadinessConfig("example")
+	if err != nil || !c.AutoRemediate {
+		t.Fatal(c, err)
+	}
+	yes, no := true, false
+	item := classifyReadiness(ReadinessItem{Key: "unit:worker.timer", Status: "fail"}, c, map[string]model.UnitFact{"worker.timer": {Loaded: &yes, Disabled: &yes, Enabled: &no, Active: &no}})
+	if item.Bucket != "auto" {
+		t.Fatalf("expected Fixing itself: %+v", item)
+	}
+	if err := s.SaveFleetReadinessProfile(model.FleetReadinessProfile{AutoRemediateUserUnits: false}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.FleetReadinessProfile()
+	if err != nil || p.AutoRemediateUserUnits {
+		t.Fatal(p, err)
+	}
+	c, err = s.EffectiveReadinessConfig("example")
+	if err != nil || c.AutoRemediate {
+		t.Fatal(c, err)
 	}
 }

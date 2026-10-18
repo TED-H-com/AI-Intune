@@ -9,7 +9,7 @@ import (
 	"unicode"
 )
 
-// ReadinessConfig contains validated targets and an explicit user-unit repair opt-in.
+// ReadinessConfig contains validated targets and the user-unit repair setting.
 type ReadinessConfig struct {
 	ExpectedUserUnits string `json:"expected_user_units"`
 	AutoRemediate     bool   `json:"auto_remediate"`

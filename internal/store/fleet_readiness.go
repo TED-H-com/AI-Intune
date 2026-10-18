@@ -14,6 +14,8 @@ func (s *Store) FleetReadinessProfile() (model.FleetReadinessProfile, error) {
 	var raw string
 	err := s.rdb.QueryRow(`SELECT config FROM fleet_readiness_profile WHERE id=1`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
+		// Only an absent profile gets default-on; saved false stays false.
+		p.AutoRemediateUserUnits = true
 		return p, nil
 	}
 	if err != nil {

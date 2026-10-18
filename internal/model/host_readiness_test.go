@@ -36,6 +36,6 @@ func TestFleetReadinessEffective(t *testing.T) {
 		t.Fatal("non-comparable config")
 	}
 	if (FleetReadinessProfile{}).Effective(ReadinessConfig{}).AutoRemediate {
-		t.Fatal("repair enabled by default")
+		t.Fatal("explicit false profile enabled repair")
 	}
 }

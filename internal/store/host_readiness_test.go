@@ -20,8 +20,12 @@ func TestHostChecklistCompatibilityAndFreshness(t *testing.T) {
 	if err = s.SaveHostReadinessConfig("example", c); err != nil {
 		t.Fatal(err)
 	}
+	effective, err := s.EffectiveReadinessConfig("example")
+	if err != nil {
+		t.Fatal(err)
+	}
 	yes := true
-	b := model.ObservationBatch{MeasuredAt: now, Readiness: &model.ReadinessFacts{Config: c, Tailscale: &yes, Sudoers: &yes}}
+	b := model.ObservationBatch{MeasuredAt: now, Readiness: &model.ReadinessFacts{Config: effective, Tailscale: &yes, Sudoers: &yes}}
 	if err = s.RecordObservation("example", b, now); err != nil {
 		t.Fatal(err)
 	}

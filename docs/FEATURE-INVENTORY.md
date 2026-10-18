@@ -904,6 +904,10 @@ is performed by loop detection. See [API surface](API-SURFACE.md#loop-episodes-u
   not add a writer or bypass preview/confirmation gates.
 
 Readiness includes fleet expected CLIs and user units, inherited targets and
-per-host counts in the read API/MCP. Opt-in Linux repair enables/starts only
-already-installed unmasked user units, once per unit per hour per agent process;
-no system scope or unit-file edits. Profile changes carry an atomic audit entry.
+per-host counts in the read API/MCP. Linux repair is on by default when no fleet
+profile has been saved; admins can save an explicit off setting in Fleet defaults.
+Only listed expected user units can be acted on; an empty list does nothing.
+Repair enables/starts only already-installed unmasked expected timers and
+long-running user services, once per unit per hour per agent process; never
+oneshot/static/indirect services, masked/not-found units, restart, sudo, system
+scope or unit-file edits. Profile changes carry an atomic audit entry.

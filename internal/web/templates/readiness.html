@@ -37,7 +37,7 @@
 <fieldset><legend>Expected CLIs</legend>{{range readinessCLIs}}<label><input type="checkbox" name="expected_clis" value="{{.}}" {{if readinessHasCLI $v.Fleet .}}checked{{end}}>{{.}}</label>{{end}}</fieldset>
 <label>Expected user timers and services (one per line, maximum 16)<textarea name="expected_user_units">{{readinessLines $v.Fleet.ExpectedUserUnits}}</textarea></label>
 <label><input type="checkbox" name="auto_remediate" {{if $v.Fleet.AutoRemediateUserUnits}}checked{{end}}>Let agents turn on expected user timers and services that are installed but off</label>
-<p>Off by default. Each installed user unit can be enabled and started at most once per hour. Missing units need installation.</p>
+<p>On by default. Only listed expected user units can be turned on; an empty list does nothing. Eligible installed user units can be enabled or started at most once per hour. Missing units need installation.</p>
 <button>Save fleet defaults</button></form>
 {{else}}<p>Access path: {{$v.Fleet.Path}} · Scoped sudoers drop-in: {{$v.Fleet.SudoersPath}} · Backup: {{$v.Fleet.BackupUnit}}</p><p>Expected CLIs: {{range $v.Fleet.ExpectedCLIs}}{{.}} {{else}}claude codex grok agy{{end}}</p><p>Expected user timers and services: {{range $v.Fleet.ExpectedUserUnits}}{{.}} {{else}}None{{end}}</p><p>Turn on installed user units automatically: {{if $v.Fleet.AutoRemediateUserUnits}}On{{else}}Off{{end}}</p>{{end}}</section>
 {{template "readiness-panel" .Readiness}}{{template "foot" .}}{{end}}

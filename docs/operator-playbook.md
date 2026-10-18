@@ -408,14 +408,16 @@ reports and eligible unit repairs; **Done** contains passing checks. Unknown
 means waiting where evidence can arrive automatically; manual SSH verification
 and unconfigured access/sudoers targets still need you.
 
-Automatic unit repair is **off by default**. Enable “Let agents turn on expected
-user timers and services that are installed but off” only for units you intend
-to run. Linux agents use `systemctl --user enable --now -- <unit>` for disabled
+Automatic unit repair is **on by default** when no fleet profile has been saved.
+Admins can turn off “Let agents turn on expected user timers and services that
+are installed but off” in Fleet defaults; the saved off setting is respected.
+Only units listed in expected user units can be acted on; an empty list does
+nothing. List only units you intend to run. Linux agents use `systemctl --user enable --now -- <unit>` for disabled
 units and `systemctl --user start -- <unit>` for enabled but inactive or failed
 units. Only loaded, unmasked expected timers and long-running services are
 eligible. Oneshot and static/indirect services are never started or enabled;
 idle is healthy, and a failed last run needs human attention. Agents never
-restart units, edit unit files, or touch system scope.
+restart units, use sudo, edit unit files, or touch system scope.
 Attempts are limited to once per unit per hour in the agent process (restart
 resets that memory). Failures return a bounded reason under Needs you.
 The fleet profile change is recorded atomically in the Hub audit log; each
