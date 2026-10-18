@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 326 個 HTTP operations（30 non-operator＋296 operator；150 條 operator JSON）、
+> 逐一對照 329 個 HTTP operations（30 non-operator＋299 operator；151 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 326-operation tally above (30 non-operator + 296 operator). The inventory/contract excludes these six public account operations and totals 320. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 329-operation tally above (30 non-operator + 299 operator). The inventory/contract excludes these six public account operations and totals 323. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -23,7 +23,7 @@ These six operations are included in the 326-operation tally above (30 non-opera
 
 | Method | Operator download route | Authority / behavior |
 |---|---|---|
-| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 296 operator tally. |
+| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 299 operator tally. |
 
 In local mode operator routes use a local admin session, including `/metrics`; in `both`, sessions precede eligible WhoIs fallback. Forwarded identity headers and machine/verifier bearers never authorize operators. The Tailscale-specific explanations below describe the advanced mode. See [Autopilot](AUTOPILOT.md) for setup, expiry, lockout and recovery.
 
@@ -978,8 +978,8 @@ for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
 Adds ten operator operations (six JSON, four HTML). The combined manifest totals
-326 including public accounts, 320 excluding them; 296 operator (150 JSON,
-146 HTML/plain), exact grants view=115 / operate=33 / admin=148.
+329 including public accounts, 323 excluding them; 299 operator (151 JSON,
+148 HTML/plain), exact grants view=117 / operate=33 / admin=149.
 
 | Method | Route | Admission |
 | --- | --- | --- |
@@ -1195,3 +1195,17 @@ other observation fields.
 MCP/operator-agent tool: `machine_oom_kills` with required `machine_id` and no
 other arguments; read-only, forwarding to the same HTTP endpoint. The operator
 client validates the bounded typed response before returning it to the tool.
+
+### Host readiness
+
+`GET /v1/operator/machines/{id}/readiness` (View, authenticated human operator;
+no service-token grants) returns `machine_id`, `config`, Hub `received_at`, typed
+`facts`, and `items` with `name`, `status` (`pass`, `fail`, `unknown`), `next_action`,
+and `doc`. Unknown machine returns 404. It uses the same projection as `/readiness`
+and the machine detail panel. Admin-only `POST /readiness` configures measurement
+targets from the UI. Optional `readiness_config` in check-in responses and
+`readiness` in schema-v1 observations are backward compatible. Readiness is evidence,
+not authorization to perform privileged operations; see operator-playbook's Host
+readiness checklist for freshness and measurement limits.
+The operator client and MCP `machine_readiness` tool expose the same read (human
+network identity; no configuration writes). Unknown/missing CLI evidence is null.

@@ -72,6 +72,7 @@ type appliedSettings struct {
 // 分開存，checkin 恰好在兩次 Load 中間更新時，Agent 會把 A 規則的量測標成
 // B token，Hub 就無法知道這批證據實際用了哪一份政策。
 type workloadPolicyBundle struct {
+	readiness    model.ReadinessConfig
 	expectations []model.Expectation
 	token        string
 }
@@ -546,6 +547,7 @@ func runAgent() {
 				// ⚠ 期望由 Hub 下發，agent 不自己決定要量什麼。規則與 token
 				// 是同一份證據的身分，必須用同一次 atomic Store 發布。
 				bundle := &workloadPolicyBundle{
+					readiness:    resp.ReadinessConfig,
 					expectations: append([]model.Expectation(nil), resp.Expectations...),
 					token:        resp.WorkloadPolicyToken,
 				}
@@ -645,6 +647,9 @@ func applyWorkloadPolicy(obs *model.ObservationBatch, policy *workloadPolicyBund
 	if policy == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	obs.Readiness = probe.CollectReadiness(ctx, policy.readiness, obs.Credentials)
 	obs.Artifacts = probe.CheckArtifacts(policy.expectations)
 	// ⚠ 用 obs.MeasuredAt（agent 自己的時鐘）當事件窗口的原點。
 	// 這裡跟 artifact 不一樣：artifact 只回報 mtime、由 Hub 用 Hub 的

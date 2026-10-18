@@ -1867,3 +1867,8 @@ CREATE TABLE IF NOT EXISTS certificate_monitors (
  config TEXT NOT NULL,
  result TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS host_readiness_config (
+ machine_id TEXT PRIMARY KEY REFERENCES machine_registry(machine_id),
+ config TEXT NOT NULL
+);

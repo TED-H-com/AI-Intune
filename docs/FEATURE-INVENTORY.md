@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 320 個 production operations 基線
+## 323 個 production operations 基線
 
-此數字按 HTTP method + route 計數：24 個 non-operator operations、296 個 operator
-operations；其中 150 個為 operator JSON、146 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=115`、`operate=33`、`admin=148`。這組數字由 route/API/service/Web/CLI
-合約測試固定；320-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：24 個 non-operator operations、299 個 operator
+operations；其中 151 個為 operator JSON、148 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=117`、`operate=33`、`admin=149`。這組數字由 route/API/service/Web/CLI
+合約測試固定；323-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -94,7 +94,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 23 | `POST /v1/channels/{id}/inbound` | Signed provider webhook | Chat commands | Disabled by default; Telegram secret / Discord signature, allowlist, canonical permissions and one-time approvals; see CHANNELS.md |
 | 24 | `GET /version` | JSON | Public | Build version, commit and build time only |
 
-### Operator HTML/BFF 與 JSON（296）
+### Operator HTML/BFF 與 JSON（299）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -356,7 +356,7 @@ HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-150 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+151 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
@@ -419,6 +419,9 @@ domain service 見 `internal/operator/`。
 | 318 | `DELETE /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked removal |
 | 319 | `POST /v1/operator/certificates/{id}/probe` | JSON | 是 | Human Admin; revision-checked queued probe |
 | 320 | `GET /v1/operator/machines/{id}/oom-kills` | JSON | Read | `view`; recent typed OOM attribution; machine detail UI and MCP |
+| 321 | `GET /readiness` | HTML | Read | View; fleet readiness gaps and next actions |
+| 322 | `POST /readiness` | HTML | Yes | Human Admin; configure machine readiness targets |
+| 323 | `GET /v1/operator/machines/{id}/readiness` | JSON | Read | View; same checklist as UI and MCP |
 
 ## Workload / submenu parity matrix
 
@@ -879,6 +882,12 @@ is performed by loop detection. See [API surface](API-SURFACE.md#loop-episodes-u
   raw logs and command lines excluded. Counter evidence can overlap kernel
   evidence. The first counter read after agent startup establishes a baseline.
 - MCP/operator-agent: read-only `machine_oom_kills` mirrors the human detail panel.
+
+- **Host readiness:** fleet `/readiness` and machine-detail panel list pass/fail/unknown
+  checks with concrete next actions and documentation links. Administrators configure
+  access path, scoped sudoers drop-in, and user backup service. Linux agents report
+  typed facts; older agents/other OSes remain unknown. Hub derives heartbeat age and
+  channel bindings. Read API: `GET /v1/operator/machines/{id}/readiness`.
 
 ## Updates and profile task guidance
 

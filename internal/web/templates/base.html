@@ -323,7 +323,7 @@ blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bo
 </header>
 <div class="app-shell">
   <aside class="sidebar">
-    <nav aria-label="{{.Locale.MainNavAria}}">
+    <nav aria-label="{{.Locale.MainNavAria}}"><a class="nav-item" href="/readiness">Readiness</a>
       <div class="nav-group-label">{{.Locale.NavGroupLabel}}</div>
       <a href="/" class="nav-item {{if eq .Nav "dashboard"}}on{{end}}" {{if eq .Nav "dashboard"}}aria-current="page"{{end}}>
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span><span>{{.Locale.DashboardLabel}}</span>
