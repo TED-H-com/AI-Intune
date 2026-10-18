@@ -1878,3 +1878,9 @@ CREATE TABLE IF NOT EXISTS fleet_readiness_profile (
   id INTEGER PRIMARY KEY CHECK (id=1),
   config TEXT NOT NULL
 );
+
+-- Fleet-wide, optional Linux host setup; no managed defaults.
+CREATE TABLE IF NOT EXISTS fleet_host_profile (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ profile TEXT NOT NULL
+);

@@ -2662,6 +2662,7 @@ else
 	failed=$((failed + 1))
 fi
 
+# Includes the root applier fixture suite in ops/fleet/applier/test.sh.
 for fleet_test in "$ROOT"/ops/fleet/*/test.sh; do
 	[ -f "$fleet_test" ] || continue
 	if bash "$fleet_test"; then

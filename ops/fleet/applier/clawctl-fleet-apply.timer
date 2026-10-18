@@ -1,0 +1,8 @@
+[Unit]
+Description=Repair fleet host setup drift
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+RandomizedDelaySec=2min
+[Install]
+WantedBy=timers.target

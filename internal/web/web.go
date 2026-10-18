@@ -269,7 +269,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), s.readinessRoutes(mux)...)...)...)
+	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), s.hostProfileRoutes(mux)...)...)...)...)
 }
 
 type maintenancePageView struct {
@@ -387,6 +387,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	HostProfile               *hostProfilePage
 	Readiness                 *readinessPage
 	BuildVersion, BuildCommit string
 
@@ -2039,6 +2040,14 @@ var funcs = template.FuncMap{
 		default:
 			return "Unknown"
 		}
+	},
+	"hostProfileLabel": func(name string) string {
+		for _, f := range hostProfileFields(model.HostProfile{}) {
+			if f.Name == name {
+				return f.Label
+			}
+		}
+		return "Profile validation"
 	},
 	"readinessPaths": func() []string { return []string{"tailscale", "cloudflare", "jump_host", "direct"} },
 	"diskItemIDs": func(items []diskreport.Item) string {

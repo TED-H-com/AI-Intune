@@ -173,11 +173,11 @@ example.com/cap/clawctl-admin
 
 另外一條 non-operator route 是 opt-in signed chat webhook `POST /v1/channels/{id}/inbound`，有獨立 provider authentication；見 [CHANNELS.md](CHANNELS.md)。
 
-目前 code route manifest 固定為 324 operations：24 條 non-operator，加上 300 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=118`、`operate=33`、`admin=149`，
-其中 `/v1/operator/*` JSON routes 共 152 條、HTML/BFF/CSV/download 共 148 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 327 operations：24 條 non-operator，加上 303 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=120`、`operate=33`、`admin=150`，
+其中 `/v1/operator/*` JSON routes 共 153 條、HTML/BFF/CSV/download 共 150 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-324-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+327-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies accept boundary-authorized human
 Tailscale admins or local admins with a current session MFA proof, checked before
@@ -809,3 +809,13 @@ chain and create a replacement when every credential must lose authority.
 The transactional `service-token-routes-edit` audit records each added/removed
 route as an old-to-new grant diff, followed by a completion entry. Individual
 entries avoid truncating large diffs; no token plaintext or factor is recorded.
+
+### Host setup profile
+
+`GET /machines/host-profile` and `GET /v1/operator/host-profile` require View.
+`POST /machines/host-profile` requires human Admin and uses the existing locked
+HTML MFA/CSRF boundary plus strict `operatorWebForm` decoding. All three routes
+are service-token ineligible. The single-row save and `fleet_host_profile` audit
+commit atomically. MCP `host_profile_get` is read-only and uses the same read
+API. The root applier's account identity is installed locally, never supplied
+by the Hub profile. See [HOST-PROFILE](HOST-PROFILE.md).

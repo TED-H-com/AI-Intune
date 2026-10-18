@@ -102,3 +102,20 @@ bash ops/fleet/net/ntp-check.sh
 
 Check the latest check-in and evidence on the Hub. Review timer status and disk
 space. Disk-clean behavior is described in [maintenance](../../ops/maintenance/README.md).
+
+## Automatic host setup
+
+Install the root applier for the agent service account, then open
+**Machines → Configuration → Host setup profile** to choose Linux settings.
+The initial profile manages nothing. Preview and apply the bootstrap phase:
+
+```sh
+bash ops/fleet/bootstrap/bootstrap-host.sh --phases applier
+sudo bash ops/fleet/bootstrap/bootstrap-host.sh --apply --resume --phases applier
+```
+
+Bootstrap selects `fleet-apply/install.sh` from a supplied `--package-dir` when
+present; otherwise it uses the checkout installer. Plan prints the root step;
+apply records success only after installation, and resume retries failures.
+The installer needs the non-root agent account (`--agent-user` when run directly).
+See [Host setup profile](../HOST-PROFILE.md) for drift repair, status and rollback.

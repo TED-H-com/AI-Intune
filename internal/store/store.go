@@ -1931,6 +1931,9 @@ VALUES (?,?,?,?,?,?,?,?)`)
 		return nil
 	}
 
+	if err := put("host_profile_apply", "host_profile_apply", b.HostProfileApply); err != nil {
+		return err
+	}
 	if err := put("host_readiness", "host_readiness", b.Readiness); err != nil {
 		return err
 	}

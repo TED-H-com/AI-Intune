@@ -218,7 +218,24 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		h.writeStoreError(w, "readiness config", machineID, err)
 		return
 	}
+	var hostProfile *model.HostProfile
+	var hostDigest string
+	linux, profileErr := h.store.LinuxMachine(machineID)
+	if profileErr != nil {
+		h.writeStoreError(w, "host platform", machineID, profileErr)
+		return
+	}
+	if linux {
+		p, e := h.store.HostProfile()
+		if e != nil {
+			h.writeStoreError(w, "host profile", machineID, e)
+			return
+		}
+		hostProfile = &p
+		hostDigest, _ = p.Digest()
+	}
 	writeJSON(w, http.StatusOK, model.CheckinResponse{
+		HostProfile: hostProfile, HostProfileDigest: hostDigest,
 		ReadinessConfig:            readinessConfig,
 		DiskTimerTransitions:       transitions,
 		ReceivedAt:                 received,

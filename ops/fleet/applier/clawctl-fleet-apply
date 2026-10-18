@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Root-only fixed host vocabulary. Never execute profile text or source config."""
+import argparse
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
+
+HEADER = '# Managed by clawctl-fleet-apply v1\n'
+FIELDS = ('lid_ignore', 'disable_sleep', 'power_profile', 'wifi_power_save_off',
+          'journald_max_mb', 'unattended_upgrades', 'scoped_sudoers', 'linger',
+          'root_disk_clean_timer')
+TARGETS = ('sleep.target', 'suspend.target', 'hibernate.target', 'hybrid-sleep.target')
+
+
+def strict(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError('duplicate field')
+        out[k] = v
+    return out
+
+
+def parse(raw):
+    p = json.loads(raw, object_pairs_hook=strict)
+    if type(p) is not dict or set(p) - set(FIELDS):
+        raise ValueError('invalid fields')
+    for k, v in p.items():
+        if v is None:
+            continue
+        if k == 'power_profile':
+            if type(v) is not str or v not in ('performance', 'balanced', 'power-saver'):
+                raise ValueError('invalid power mode')
+        elif k == 'journald_max_mb':
+            if type(v) is not int or not 100 <= v <= 4096:
+                raise ValueError('invalid journal size')
+        elif type(v) is not bool:
+            raise ValueError('invalid boolean')
+    return {k: p[k] for k in FIELDS if p.get(k) is not None}
+
+
+class Applier:
+    def __init__(self, args):
+        self.args = args
+        self.prefix = args.root_prefix.rstrip('/')
+        self.changed = False
+        self.system_uid = os.geteuid() if self.prefix else 0
+
+    def path(self, name):
+        return Path(self.prefix + name)
+
+    def safe(self, path, leaf_link=False):
+        parts = list(path.parents)[::-1] + [path]
+        if self.prefix:
+            parts = [p for p in parts if str(p) == self.prefix or str(p).startswith(self.prefix + '/')]
+        for p in parts:
+            if p.is_symlink() and not (leaf_link and p == path):
+                raise ValueError('symlink refused')
+            if p.exists() and not p.is_symlink():
+                s = p.stat()
+                if s.st_uid != self.system_uid or s.st_mode & 0o022:
+                    raise ValueError('untrusted system directory')
+
+    def run(self, *argv, query=False, allow_failure=False):
+        if self.args.dry_run and not query:
+            self.changed = True
+            return ''
+        # Command output is never copied to the public result.
+        r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           timeout=60, env={'PATH': os.environ['PATH'], 'LC_ALL': 'C'})
+        if r.returncode and not allow_failure:
+            raise ValueError('host command failed')
+        return r.stdout[:4096].decode('utf-8', errors='replace').strip()
+
+    def atomic(self, path, body, mode=0o644):
+        self.safe(path)
+        if self.args.dry_run:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent))
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                os.fchmod(f.fileno(), mode)
+                f.write(body)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, str(path))
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def drop(self, name, body, enabled=True, sudoers=False):
+        path = self.path(name)
+        self.safe(path)
+        old = path.read_bytes() if path.exists() else None
+        if old is not None and not old.startswith(HEADER.encode()):
+            if not enabled:
+                return
+            raise ValueError('existing unmanaged file preserved')
+        want = (HEADER + body).encode() if enabled else None
+        if old == want:
+            if old is not None and stat.S_IMODE(path.stat().st_mode) != (0o440 if sudoers else 0o644):
+                if not self.args.dry_run:
+                    path.chmod(0o440 if sudoers else 0o644)
+                self.changed = True
+            return
+        if sudoers and want is not None:
+            # A trusted root directory, never the agent's home or shared /tmp.
+            parent = Path(tempfile.gettempdir()) if self.args.dry_run else self.path('/var/lib/clawctl-fleet-apply')
+            parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=str(parent))
+            try:
+                with os.fdopen(fd, 'wb') as f:
+                    os.fchmod(f.fileno(), 0o440)
+                    f.write(want)
+                self.run('visudo', '-cf', tmp, query=True)
+            finally:
+                os.unlink(tmp)
+        if not self.args.dry_run:
+            if old is not None:
+                self.atomic(Path(str(path) + '.fleet-apply.bak'), old, 0o440 if sudoers else 0o644)
+            if want is None:
+                path.unlink()
+            else:
+                self.atomic(path, want, 0o440 if sudoers else 0o644)
+        self.changed = True
+
+    def read_input(self):
+        conf = self.path('/etc/clawctl/fleet-apply.conf')
+        self.safe(conf)
+        s = conf.stat()
+        if s.st_uid != self.system_uid or s.st_mode & 0o022 or s.st_size > 1024:
+            raise ValueError('untrusted installer configuration')
+        c = json.loads(conf.read_text(), object_pairs_hook=strict)
+        if set(c) != {'agent_user'} or not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_-]{0,31}', c['agent_user']):
+            raise ValueError('invalid service user')
+        self.user = c['agent_user']
+        if self.prefix:
+            records = [l.split(':') for l in self.path('/etc/passwd').read_text().splitlines()]
+            record = next(r for r in records if r[0] == self.user)
+            uid, home = int(record[2]), record[5]
+        else:
+            record = pwd.getpwnam(self.user)
+            uid, home = record.pw_uid, record.pw_dir
+        if uid == 0 or not home.startswith('/') or '..' in Path(home).parts:
+            raise ValueError('non-root service user required')
+        # Traverse all user-controlled directories using dirfds and O_NOFOLLOW.
+        # Holding each descriptor prevents symlink swaps between stat and read.
+        profile = self.path(home + '/.config/clawctl/host-profile.json')
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for component in profile.parts[1:-1]:
+                new = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = new
+            f = os.open(profile.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(f, 'rb') as stream:
+                s = os.fstat(stream.fileno())
+                if not stat.S_ISREG(s.st_mode) or s.st_uid != uid or s.st_size > 65536:
+                    raise ValueError('untrusted profile')
+                raw = stream.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError('oversized profile')
+        finally:
+            os.close(fd)
+        return parse(raw)
+
+    def apply_item(self, name, value):
+        if name == 'lid_ignore':
+            self.drop('/etc/systemd/logind.conf.d/90-clawctl-fleet.conf',
+                      '[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n', value)
+            # Avoid restarting logind under active sessions. HUP reloads config.
+            if self.changed:
+                self.run('systemctl', 'kill', '--kill-who=main', '--signal=HUP', 'systemd-logind.service')
+        elif name == 'disable_sleep':
+            for target in TARGETS:
+                mask = self.path('/etc/systemd/system/' + target)
+                marker = self.path('/var/lib/clawctl-fleet-apply/' + target + '.owned')
+                self.safe(mask, leaf_link=True)
+                self.safe(marker)
+                owned = marker.exists()
+                exists = mask.exists() or mask.is_symlink()
+                if value:
+                    if exists and (not mask.is_symlink() or os.readlink(mask) != '/dev/null'):
+                        raise ValueError('existing sleep unit preserved')
+                    if not exists:
+                        # Record intent first so interrupted masking can be repaired.
+                        self.atomic(marker, HEADER.encode())
+                        if not self.args.dry_run:
+                            mask.parent.mkdir(parents=True, exist_ok=True)
+                            mask.symlink_to('/dev/null')
+                        self.changed = True
+                elif owned:
+                    if exists and mask.is_symlink() and os.readlink(mask) == '/dev/null':
+                        if not self.args.dry_run:
+                            mask.unlink()
+                        self.changed = True
+                    if not self.args.dry_run:
+                        marker.unlink()
+            if self.changed:
+                self.run('systemctl', 'daemon-reload')
+        elif name == 'power_profile':
+            if not shutil.which('powerprofilesctl'):
+                return 'unsupported', 'Power profiles are unavailable'
+            if self.run('powerprofilesctl', 'get', query=True) != value:
+                self.run('powerprofilesctl', 'set', value)
+                self.changed = True
+        elif name == 'wifi_power_save_off':
+            self.drop('/etc/NetworkManager/conf.d/90-clawctl-fleet.conf',
+                      '[connection]\nwifi.powersave=2\n', value)
+            if self.changed:
+                self.run('systemctl', 'reload', 'NetworkManager.service')
+        elif name == 'journald_max_mb':
+            self.drop('/etc/systemd/journald.conf.d/90-clawctl-fleet.conf',
+                      '[Journal]\nSystemMaxUse=%dM\n' % value)
+            if self.changed:
+                self.run('systemctl', 'restart', 'systemd-journald.service')
+        elif name == 'unattended_upgrades':
+            release = self.path('/etc/os-release').read_text()
+            if not re.search(r'^ID=["\']?(ubuntu|debian)["\']?$', release, re.M):
+                return 'unsupported', 'Automatic security updates require Debian or Ubuntu'
+            # No package/network operations at this boundary.
+            if value and not self.path('/usr/bin/unattended-upgrade').exists():
+                return 'unsupported', 'Install the unattended-upgrades package first'
+            self.drop('/etc/apt/apt.conf.d/90-clawctl-fleet-auto-upgrades',
+                      'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n', value)
+        elif name == 'scoped_sudoers':
+            # Exact service commands only; never permit arbitrary binary/unit installation.
+            body = (self.user + ' ALL=(root) NOPASSWD: /usr/bin/systemctl restart clawctl-agent.service, '
+                    '/usr/bin/systemctl enable --now disk-clean-root.timer, '
+                    '/usr/bin/systemctl disable --now disk-clean-root.timer, '
+                    '/usr/local/sbin/disk-clean --scope root --dry-run\n')
+            self.drop('/etc/sudoers.d/clawctl-fleet-agent', body, value, sudoers=True)
+        elif name == 'linger':
+            marker = self.path('/var/lib/clawctl-fleet-apply/linger.owned')
+            self.safe(marker)
+            enabled = self.run('loginctl', 'show-user', self.user, '-p', 'Linger', '--value', query=True) == 'yes'
+            if value and not enabled:
+                self.atomic(marker, HEADER.encode())
+                self.run('loginctl', 'enable-linger', self.user)
+                self.changed = True
+            elif not value and marker.exists():
+                if enabled:
+                    self.run('loginctl', 'disable-linger', self.user)
+                    self.changed = True
+                if not self.args.dry_run:
+                    marker.unlink()
+        elif name == 'root_disk_clean_timer':
+            marker = self.path('/var/lib/clawctl-fleet-apply/disk-clean.owned')
+            self.safe(marker)
+            timer = self.path('/etc/systemd/system/disk-clean-root.timer')
+            self.safe(timer)
+            if value:
+                installer = self.path('/usr/local/lib/clawctl-fleet-apply/maintenance/install-timers.sh')
+                self.safe(installer)
+                destinations = ('/usr/local/sbin/disk-clean', '/etc/disk-clean/root.conf',
+                                '/etc/systemd/system/disk-clean-root.service',
+                                '/etc/systemd/system/disk-clean-root.timer',
+                                '/etc/tmpfiles.d/00-disk-clean.conf',
+                                '/etc/systemd/journald.conf.d/50-disk-clean.conf')
+                before = []
+                for dest in destinations:
+                    path = self.path(dest)
+                    self.safe(path)
+                    before.append(path.read_bytes() if path.exists() else None)
+                if not timer.exists():
+                    self.atomic(marker, HEADER.encode())
+                argv = ['bash', str(installer), '--scope', 'root', '--apply']
+                if self.prefix:
+                    argv += ['--prefix', self.prefix]
+                self.run(*argv)
+                after = [self.path(dest).read_bytes() if self.path(dest).exists() else None for dest in destinations]
+                if before != after or self.args.dry_run:
+                    self.changed = True
+                enabled = self.run('systemctl', 'is-enabled', 'disk-clean-root.timer', query=True, allow_failure=True) if timer.exists() else ''
+                active = self.run('systemctl', 'is-active', 'disk-clean-root.timer', query=True, allow_failure=True)
+                if enabled != 'enabled' or active != 'active':
+                    self.run('systemctl', 'enable', '--now', 'disk-clean-root.timer')
+                    self.changed = True
+            elif marker.exists():
+                enabled = self.run('systemctl', 'is-enabled', 'disk-clean-root.timer', query=True, allow_failure=True)
+                active = self.run('systemctl', 'is-active', 'disk-clean-root.timer', query=True, allow_failure=True)
+                if enabled == 'enabled' or active == 'active':
+                    self.run('systemctl', 'disable', '--now', 'disk-clean-root.timer')
+                    self.changed = True
+                # Retain provenance while installed files remain, including across
+                # repeated on/off cycles and interrupted timer changes.
+        return ('changed', 'Host setting updated') if self.changed else ('ok', '')
+
+    def apply(self):
+        result = {'schema': 'clawctl-fleet-apply/v1', 'profile_digest': '',
+                  'applied_at': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                  'items': {}, 'reboot_required': self.path('/var/run/reboot-required').exists()}
+        try:
+            profile = self.read_input()
+            canonical = json.dumps(profile, separators=(',', ':'), ensure_ascii=True).encode()
+            result['profile_digest'] = 'sha256:' + hashlib.sha256(canonical).hexdigest()
+        except (OSError, ValueError, KeyError, StopIteration, TypeError):
+            result['items']['profile'] = {'status': 'failed', 'detail': 'Profile refused; check ownership, JSON and installer configuration'}
+        else:
+            for name in FIELDS:
+                self.changed = False
+                status, detail = 'unmanaged', ''
+                if name in profile:
+                    pending = self.path('/var/lib/clawctl-fleet-apply/' + name + '.pending')
+                    self.safe(pending)
+                    self.changed = pending.exists()
+                    self.atomic(pending, HEADER.encode())
+                    try:
+                        status, detail = self.apply_item(name, profile[name])
+                        if not self.args.dry_run:
+                            pending.unlink()
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        status, detail = 'failed', 'Host setting could not be applied; inspect local service configuration'
+                result['items'][name] = {'status': status, 'detail': detail}
+        self.atomic(self.path('/var/lib/clawctl-fleet-apply/last.json'),
+                    (json.dumps(result, separators=(',', ':')) + '\n').encode())
+        print(json.dumps(result))
+        return int(any(v['status'] == 'failed' for v in result['items'].values()))
+
+
+def main():
+    os.umask(0o022)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--root-prefix', default='')
+    args = parser.parse_args()
+    if (os.geteuid() != 0 and not args.root_prefix) or (args.root_prefix and not args.root_prefix.startswith('/')):
+        parser.error('requires root and an absolute root prefix')
+    a = Applier(args)
+    state = a.path('/var/lib/clawctl-fleet-apply')
+    a.safe(state)
+    if args.dry_run:
+        return a.apply()
+    state.mkdir(parents=True, exist_ok=True, mode=0o755)
+    state.chmod(0o755)
+    lock = state / 'apply.lock'
+    a.safe(lock)
+    with lock.open('w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        return a.apply()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

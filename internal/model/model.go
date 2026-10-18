@@ -129,6 +129,8 @@ type Checkin struct {
 }
 
 type CheckinResponse struct {
+	HostProfile          *HostProfile                   `json:"host_profile,omitempty"`
+	HostProfileDigest    string                         `json:"host_profile_digest,omitempty"`
 	ReadinessConfig      ReadinessConfig                `json:"readiness_config"`
 	DiskTimerTransitions map[string]DiskTimerTransition `json:"disk_timer_transitions,omitempty"`
 	// ReceivedAt 回送給 Agent，讓它能自己發現時鐘漂移並記在 log 裡。
@@ -468,10 +470,11 @@ type CapabilitiesResponse struct {
 // 因為「今天是綠的，星期三就死了」只有歷史答得出來，而上游的資料庫
 // 7 天 / 2000 筆就會把歷史吃掉。
 type ObservationBatch struct {
-	Readiness     *ReadinessFacts `json:"readiness,omitempty"`
-	OOMKills      []OOMKill       `json:"oom_kills,omitempty"`
-	SchemaVersion int             `json:"schema_version"`
-	MeasuredAt    time.Time       `json:"measured_at"`
+	HostProfileApply *HostApplyResult `json:"host_profile_apply,omitempty"`
+	Readiness        *ReadinessFacts  `json:"readiness,omitempty"`
+	OOMKills         []OOMKill        `json:"oom_kills,omitempty"`
+	SchemaVersion    int              `json:"schema_version"`
+	MeasuredAt       time.Time        `json:"measured_at"`
 
 	// WorkloadPolicyToken 是產生本批 Artifacts / Events 時實際使用的政策身分。
 	// 空值代表舊 Agent 或第一次 checkin 前的量測，Hub 必須視為 unknown，

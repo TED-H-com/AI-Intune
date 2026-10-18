@@ -27,6 +27,7 @@ type MachineDataTable struct {
 
 // machineDataTables 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var machineDataTables = []MachineDataTable{
+	{Table: "fleet_host_profile", TimeCol: ""},
 	{Table: "host_readiness_config", TimeCol: ""},
 	{Table: "channel_bots", TimeCol: ""},
 	{Table: "channel_bindings", TimeCol: ""},
@@ -137,6 +138,12 @@ func (s *Store) MachineDataHoldings(machineID string) ([]MachineDataHolding, err
 
 func (s *Store) machineDataHolding(table MachineDataTable, machineID string) (MachineDataHolding, error) {
 	holding := MachineDataHolding{Table: table.Table}
+	if table.Table == "fleet_host_profile" {
+		// Shared desired settings apply to every Linux machine, not a per-host copy.
+		err := s.rdb.QueryRow(`SELECT count(*) FROM fleet_host_profile WHERE singleton=1 AND EXISTS(SELECT 1 FROM machine_registry WHERE machine_id=? AND os='linux')`, machineID).Scan(&holding.Rows)
+		return holding, err
+	}
+
 	if table.Table == "usage_recommendation_cycles" {
 		err := s.rdb.QueryRow(`SELECT count(*) FROM usage_recommendation_cycles c JOIN usage_recommendations r ON r.id=c.recommendation_id WHERE r.machine_id=?`, machineID).Scan(&holding.Rows)
 		return holding, err

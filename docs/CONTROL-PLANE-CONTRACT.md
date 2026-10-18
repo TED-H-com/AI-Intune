@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-324（24 non-operator＋300 operator；152 operator JSON＋148 HTML/BFF/CSV/download），exact auth tally 是
-`view=118`／`operate=33`／`admin=149`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+327（24 non-operator＋303 operator；153 operator JSON＋150 HTML/BFF/CSV/download），exact auth tally 是
+`view=120`／`operate=33`／`admin=150`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1192,3 +1192,15 @@ alerts use persisted episodes and the existing notifications ledger. P2-04 retai
 its exact human quarantine/restore operations; P2-05 adds no privileged agent actions.
 
 Inbound chat is an opt-in provider-authenticated front end over the same operator service; see [CHANNELS.md](CHANNELS.md).
+
+### Host profile data handoff
+
+`GET /machines/host-profile` is the human View surface; only human Admin can
+`POST /machines/host-profile`. The audited fleet profile is optional and Linux
+only. `GET /v1/operator/host-profile` and read-only MCP `host_profile_get` return
+the same profile and per-host status. The check-in adds `host_profile` and
+`host_profile_digest`; the agent validates the digest and atomically saves data.
+A separate root service applies the fixed vocabulary and embedded templates;
+observations relay `host_profile_apply`. This is not an arbitrary job executor,
+and does not relax the observer's privilege boundary or enable root Hub jobs.
+See [HOST-PROFILE](HOST-PROFILE.md) for ownership, validation and evidence limits.

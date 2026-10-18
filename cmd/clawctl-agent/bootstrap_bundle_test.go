@@ -30,6 +30,30 @@ func TestBootstrapBundlesCarryTheTargetInstallerAndService(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, tree := range []string{"fleet/applier", "maintenance"} {
+		source := filepath.Join("..", "..", "ops", tree)
+		err := filepath.WalkDir(source, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(source, path)
+			if err != nil {
+				return err
+			}
+			dest := filepath.Join(root, "ops", tree, rel)
+			if d.IsDir() {
+				return os.MkdirAll(dest, 0755)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dest, raw, 0755)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	makefile, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +104,10 @@ func TestBootstrapBundlesCarryTheTargetInstallerAndService(t *testing.T) {
 				for _, file := range support {
 					want[file] = readOpsFile(t, file)
 				}
+				if target == "linux" {
+					want["fleet-apply/install.sh"] = readOpsFile(t, "fleet/applier/install.sh")
+					want["fleet-apply/clawctl-fleet-apply"] = readOpsFile(t, "fleet/applier/clawctl-fleet-apply")
+				}
 				gz, err := gzip.NewReader(bytes.NewReader(body))
 				if err != nil {
 					t.Fatal(err)
@@ -94,10 +122,21 @@ func TestBootstrapBundlesCarryTheTargetInstallerAndService(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					if target == "linux" && strings.HasPrefix(header.Name, "fleet-apply/") {
+						source := strings.TrimPrefix(header.Name, "fleet-apply/")
+						if !strings.HasPrefix(source, "maintenance/") {
+							source = "fleet/applier/" + source
+						}
+						raw, err := os.ReadFile(filepath.Join("..", "..", "ops", source))
+						if err != nil {
+							t.Fatal(err)
+						}
+						want[header.Name] = string(raw)
+					}
 					expected, ok := want[header.Name]
 					mode := int64(0o644)
 					if header.Name == "clawctl-agent" || header.Name == "clawctl-agent.exe" ||
-						strings.HasPrefix(header.Name, "install-agent") {
+						strings.HasPrefix(header.Name, "install-agent") || strings.HasPrefix(header.Name, "fleet-apply/") && (strings.HasSuffix(header.Name, ".sh") || strings.HasSuffix(header.Name, "/clawctl-fleet-apply") || strings.HasSuffix(header.Name, "/disk-clean")) {
 						mode = 0o755
 					}
 					content, err := io.ReadAll(tr)
