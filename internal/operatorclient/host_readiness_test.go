@@ -23,6 +23,18 @@ func TestReadinessClient(t *testing.T) {
 	if _, err := c.MachineReadiness(t.Context(), "example"); err != nil {
 		t.Fatal(err)
 	}
+	for _, count := range []int{7, 26} {
+		result.Items = make([]store.ReadinessItem, count)
+		result.NeedsYou = 1
+		if got, err := c.MachineReadiness(t.Context(), "example"); err != nil || got.NeedsYou != 1 {
+			t.Fatal(got, err)
+		}
+	}
+	result.Items = nil
+	if _, err := c.MachineReadiness(t.Context(), "example"); err == nil {
+		t.Fatal("accepted empty checklist")
+	}
+	result.Items = make([]store.ReadinessItem, 10)
 	result.MachineID = "other"
 	if _, err := c.MachineReadiness(t.Context(), "example"); err == nil {
 		t.Fatal("accepted mismatched identity")

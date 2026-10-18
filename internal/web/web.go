@@ -2009,6 +2009,27 @@ func label(s state.State) string {
 }
 
 var funcs = template.FuncMap{
+	"readinessBuckets": func() []string { return []string{"needs_you", "auto", "done"} },
+	"readinessBucketTitle": func(b string) string {
+		switch b {
+		case "needs_you":
+			return "Needs you"
+		case "auto":
+			return "Fixing itself"
+		default:
+			return "Done"
+		}
+	},
+	"readinessCLIs": func() []string { return []string{"claude", "codex", "grok", "agy"} },
+	"readinessHasCLI": func(p model.FleetReadinessProfile, c string) bool {
+		for _, v := range p.ExpectedCLIs {
+			if v == c {
+				return true
+			}
+		}
+		return false
+	},
+	"readinessLines": func(v []string) string { return strings.Join(v, "\n") },
 	"readinessStatus": func(v string) string {
 		switch v {
 		case "pass":

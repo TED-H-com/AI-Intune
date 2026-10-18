@@ -213,7 +213,7 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		return
 	}
 	settings, settingsDigest := h.resolveAgentSettings(machineID)
-	readinessConfig, err := h.store.HostReadinessConfig(machineID)
+	readinessConfig, err := h.store.EffectiveReadinessConfig(machineID)
 	if err != nil {
 		h.writeStoreError(w, "readiness config", machineID, err)
 		return

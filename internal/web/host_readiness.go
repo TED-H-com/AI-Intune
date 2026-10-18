@@ -7,12 +7,17 @@ import (
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 )
 
 type readinessPage struct {
-	Items  []store.HostChecklist
-	Manage bool
+	Items                []store.HostChecklist
+	Manage               bool
+	Fleet                model.FleetReadinessProfile
+	Summary              []readinessGroup
+	NeedsYou, Auto, Done int
 }
 
 func (s *Server) readinessRoutes(mux *http.ServeMux) []string {
@@ -34,8 +39,19 @@ func (s *Server) hostReadiness(w http.ResponseWriter, r *http.Request) {
 		id = r.URL.Query().Get("machine")
 	}
 	if r.Method == "POST" {
-		if !operatorWebForm(w, r, nil, "machine", "path", "sudoers_path", "backup_unit") {
+		if !operatorWebForm(w, r, map[string]bool{"expected_clis": true}, "scope", "machine", "path", "sudoers_path", "backup_unit", "expected_clis", "expected_user_units", "auto_remediate") {
 			http.Error(w, "Invalid form", 400)
+			return
+		}
+		if r.PostForm.Get("scope") == "fleet" {
+			audit := store.AuditEntry{At: time.Now().UTC()}
+			operator.ApplyActor(&audit, operator.ActorFromRequest(r, operator.SourceKindWeb))
+			profile := model.FleetReadinessProfile{Path: r.PostForm.Get("path"), SudoersPath: r.PostForm.Get("sudoers_path"), BackupUnit: r.PostForm.Get("backup_unit"), ExpectedCLIs: r.PostForm["expected_clis"], ExpectedUserUnits: strings.Fields(r.PostForm.Get("expected_user_units")), AutoRemediateUserUnits: r.PostForm.Get("auto_remediate") == "on"}
+			if err := s.store.SaveFleetReadinessProfile(profile, audit); err != nil {
+				http.Error(w, "Invalid fleet defaults: check access path, scoped drop-in, CLI names and user unit names (maximum 16).", 400)
+				return
+			}
+			http.Redirect(w, r, "/readiness", http.StatusSeeOther)
 			return
 		}
 		id = r.PostForm.Get("machine")
@@ -62,13 +78,13 @@ func (s *Server) hostReadiness(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Items = append(view.Items, item)
 	} else {
-		ov, err := s.store.Overview(time.Now().UTC())
+		ids, err := s.store.ReadinessMachineIDs()
 		if err != nil {
 			s.fail(w, "Unable to load readiness", err)
 			return
 		}
-		for _, m := range ov.Machines {
-			item, err := s.store.HostChecklist(m.MachineID, time.Now().UTC())
+		for _, machineID := range ids {
+			item, err := s.store.HostChecklist(machineID, time.Now().UTC())
 			if err != nil {
 				s.fail(w, "Unable to load readiness", err)
 				return
@@ -81,5 +97,44 @@ func (s *Server) hostReadiness(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(view.Items[0])
 		return
 	}
+	var err error
+	view.Fleet, err = s.store.FleetReadinessProfile()
+	if err != nil {
+		s.fail(w, "Unable to load fleet defaults", err)
+		return
+	}
+	view.group()
 	s.render(w, r, "readiness.html", page{Title: "Host readiness", Nav: "machines", Readiness: view})
+}
+
+type readinessHost struct{ ID, Name string }
+type readinessGroup struct {
+	Key, Name, Action, Bucket string
+	Hosts                     []readinessHost
+}
+
+func (v *readinessPage) group() {
+	groups := map[string]*readinessGroup{}
+	for _, host := range v.Items {
+		v.NeedsYou += host.NeedsYou
+		v.Auto += host.Auto
+		v.Done += host.Done
+		for _, item := range host.Items {
+			key := item.Bucket + ":" + item.Key
+			g := groups[key]
+			if g == nil {
+				g = &readinessGroup{Key: item.Key, Name: item.Name, Action: item.NextAction, Bucket: item.Bucket}
+				groups[key] = g
+			}
+			g.Hosts = append(g.Hosts, readinessHost{host.MachineID, host.DisplayName})
+		}
+	}
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v.Summary = append(v.Summary, *groups[k])
+	}
 }

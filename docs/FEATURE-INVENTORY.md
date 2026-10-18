@@ -419,8 +419,8 @@ domain service 見 `internal/operator/`。
 | 318 | `DELETE /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked removal |
 | 319 | `POST /v1/operator/certificates/{id}/probe` | JSON | 是 | Human Admin; revision-checked queued probe |
 | 320 | `GET /v1/operator/machines/{id}/oom-kills` | JSON | Read | `view`; recent typed OOM attribution; machine detail UI and MCP |
-| 321 | `GET /readiness` | HTML | Read | View; fleet readiness gaps and next actions |
-| 322 | `POST /readiness` | HTML | Yes | Human Admin; configure machine readiness targets |
+| 321 | `GET /readiness` | HTML | Read | View; grouped Needs you / Fixing itself / Done, fleet defaults and next actions |
+| 322 | `POST /readiness` | HTML | Yes | Human Admin; configure machine targets or audited fleet defaults |
 | 323 | `GET /v1/operator/machines/{id}/readiness` | JSON | Read | View; same checklist as UI and MCP |
 | 324 | `GET /v1/operator/machines/{id}/safe` | JSON | Read | `view`; opt-in service-token route and MCP `machine_safe_detail`; recursive secret-shape/high-entropy scrub with counts and flags; machine detail Bot view renders the same projection; excluded from Hermes defaults |
 
@@ -902,3 +902,8 @@ is performed by loop detection. See [API surface](API-SURFACE.md#loop-episodes-u
   next available UI action.
 - These are navigation and copy contracts over existing UI/API capabilities; they do
   not add a writer or bypass preview/confirmation gates.
+
+Readiness includes fleet expected CLIs and user units, inherited targets and
+per-host counts in the read API/MCP. Opt-in Linux repair enables/starts only
+already-installed unmasked user units, once per unit per hour per agent process;
+no system scope or unit-file edits. Profile changes carry an atomic audit entry.

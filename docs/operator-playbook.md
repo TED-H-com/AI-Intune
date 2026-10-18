@@ -372,10 +372,10 @@ assignment work.
 
 A host can check in while its access path, service-user login, scoped privilege
 policy, notifications, or backup is incomplete. Open **Readiness** (`/readiness`)
-or the machine detail Readiness panel. Administrators configure each machine's
+or the machine detail Readiness panel. Administrators configure fleet defaults or each machine's
 access path (`tailscale`, `cloudflare`, `jump_host`, `direct`), expected
 `/etc/sudoers.d/` drop-in, and user backup `.service` unit (the service triggered
-by its timer). Defaults are empty, with explicit next actions.
+by its timer). Empty host fields inherit Fleet defaults.
 
 The agent receives targets on check-in and reports optional readiness facts in
 observations, preserving schema version 1 compatibility. Linux collects Tailscale
@@ -393,4 +393,30 @@ Bindings do not prove delivery; use Channels' test action. Agent facts expire af
 15 minutes and become unknown when targets change. Backup success must be within
 48 hours; timer presence alone does not establish a successful backup. Inspect the
 backup service and its timer, then follow the restore-drill runbook to verify data.
-No commands install policy, log in, provision channels, or run backups automatically.
+No commands install policy, log in, or provision channels automatically.
+
+On **Readiness → Fleet defaults**, choose the access path, sudoers drop-in,
+backup service, expected CLI checkboxes, and expected user units (one per line,
+maximum 16). Save once for new and existing hosts with empty overrides.
+Viewers can read these defaults. An empty CLI selection retains all four CLIs
+for compatibility.
+
+**Needs you** groups human tasks across hosts, with links using their display
+names. OAuth consent, missing units, offline machines, Tailscale approval and
+notification setup need human attention. **Fixing itself** includes waiting for
+reports and eligible unit repairs; **Done** contains passing checks. Unknown
+means waiting where evidence can arrive automatically; manual SSH verification
+and unconfigured access/sudoers targets still need you.
+
+Automatic unit repair is **off by default**. Enable “Let agents turn on expected
+user timers and services that are installed but off” only for units you intend
+to run. Linux agents use `systemctl --user enable --now -- <unit>` for disabled
+units and `systemctl --user start -- <unit>` for enabled but inactive or failed
+units. Only loaded, unmasked expected timers and long-running services are
+eligible. Oneshot and static/indirect services are never started or enabled;
+idle is healthy, and a failed last run needs human attention. Agents never
+restart units, edit unit files, or touch system scope.
+Attempts are limited to once per unit per hour in the agent process (restart
+resets that memory). Failures return a bounded reason under Needs you.
+The fleet profile change is recorded atomically in the Hub audit log; each
+attempt is reported in readiness, not as a separate Hub audit event.
