@@ -5,11 +5,16 @@
 #   LITESTREAM_SYNC_INTERVAL:     default 10s
 #   LITESTREAM_SNAPSHOT_INTERVAL: default 24h
 #   LITESTREAM_RETENTION:         default 168h
+#   LITESTREAM_L0_RETENTION_CHECK_INTERVAL: default 5m
 #   LITESTREAM_PATH:              default clawctl/litestream/clawctl.sqlite
 #   LITESTREAM_BUCKET:            or derived from R2_BUCKET
 #   LITESTREAM_ENDPOINT:          or derived from R2_ENDPOINT / R2_ACCOUNT_ID
 #   R2_ACCESS_KEY_ID:             required (from secrets)
 #   R2_SECRET_ACCESS_KEY:         required (from secrets)
+
+# L0 cleanup lists the retained L1 history on every pass. Avoid the upstream
+# 15s polling default without changing replication or the recovery window.
+l0-retention-check-interval: ${LITESTREAM_L0_RETENTION_CHECK_INTERVAL}
 
 snapshot:
   interval: ${LITESTREAM_SNAPSHOT_INTERVAL}
