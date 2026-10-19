@@ -48,7 +48,7 @@ func TestJoinSingleUseConcurrentAndSecretFreeReads(t *testing.T) {
 	if _, status, err := s.PollJoin(v.Secret); err != nil || status != 202 {
 		t.Fatalf("pending: %d %v", status, err)
 	}
-	if !s.JoinBundleAuthorized(v.Secret, "amd64") || s.JoinBundleAuthorized(v.Secret, "arm64") {
+	if !s.JoinBundleAuthorized(v.Secret, "linux", "amd64") || s.JoinBundleAuthorized(v.Secret, "linux", "arm64") {
 		t.Fatal("bundle not bound to architecture")
 	}
 	approveFixture(t, s, v.Code)
@@ -88,7 +88,7 @@ func TestJoinSingleUseConcurrentAndSecretFreeReads(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if success != 1 || token == "" || s.JoinBundleAuthorized(v.Secret, "amd64") {
+	if success != 1 || token == "" || s.JoinBundleAuthorized(v.Secret, "linux", "amd64") {
 		t.Fatal("redemption was not single-use")
 	}
 	audit, err := st.Audit("", 10)
@@ -147,7 +147,7 @@ func TestJoinRestartRecoveryRejectionAndBounds(t *testing.T) {
 }
 func TestJoinInputAndName(t *testing.T) {
 	s, _ := joinFixture(t)
-	for i, req := range []JoinStart{{"host", "linux", "amd64", "root"}, {"host", "windows", "amd64", "operator"}, {"host", "linux", "mips", "operator"}, {strings.Repeat("a", 254), "linux", "amd64", "operator"}, {"host\nname", "linux", "arm64", "operator"}} {
+	for i, req := range []JoinStart{{"host", "linux", "amd64", "root"}, {"host", "darwin", "amd64", "operator"}, {"host", "linux", "mips", "operator"}, {strings.Repeat("a", 254), "linux", "amd64", "operator"}, {"host\nname", "linux", "arm64", "operator"}} {
 		if _, err := s.StartJoin(req, fmt.Sprint(i)); !errors.Is(err, ErrJoinInput) {
 			t.Fatal("invalid input accepted", err)
 		}
@@ -193,6 +193,55 @@ func TestJoinExpiredPollAndNoPlaintextPersistence(t *testing.T) {
 			if strings.Contains(string(data), value) {
 				t.Fatalf("plaintext credential persisted in %s", filepath.Base(file))
 			}
+		}
+	}
+}
+
+func TestJoinWindowsPlatformsAndValidation(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			s, _ := joinFixture(t)
+			v, err := s.StartJoin(JoinStart{"WIN-PC", "windows", arch, "Jane Doe"}, "192.0.2.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := s.ListJoins()
+			if err != nil || len(rows) != 1 || rows[0].OS != "windows" || rows[0].Arch != arch {
+				t.Fatal("Windows identity was not persisted")
+			}
+			if !s.JoinBundleAuthorized(v.Secret, "windows", arch) || s.JoinBundleAuthorized(v.Secret, "linux", arch) || s.JoinBundleAuthorized(v.Secret, "windows", "386") {
+				t.Fatal("bundle authority must bind OS and arch")
+			}
+			wrong := JoinBundle{"https://hub.example.com/v1/join/bundle/linux-" + arch, strings.Repeat("a", 64)}
+			if err := s.DecideJoin(context.Background(), v.Code, "Host", true, "https://hub.example.com", wrong, Actor{}); err == nil {
+				t.Fatal("cross-OS approval accepted")
+			}
+			correct := JoinBundle{"https://hub.example.com/v1/join/bundle/windows-" + arch, strings.Repeat("b", 64)}
+			if err := s.DecideJoin(context.Background(), v.Code, "Host", true, "https://hub.example.com", correct, Actor{}); err != nil {
+				t.Fatal(err)
+			}
+			if !s.JoinBundleAuthorized(v.Secret, "windows", arch) {
+				t.Fatal("approved download unavailable")
+			}
+			if _, status, err := s.PollJoin(v.Secret); err != nil || status != 200 {
+				t.Fatalf("poll: %d %v", status, err)
+			}
+			if s.JoinBundleAuthorized(v.Secret, "windows", arch) {
+				t.Fatal("redeemed authority remains")
+			}
+		})
+	}
+	for i, req := range []JoinStart{
+		{"host", "freebsd", "amd64", "user"}, {"host", "", "amd64", "user"},
+		{"host", "windows", "386", "user"}, {"", "windows", "amd64", "user"},
+		{"bad/host", "windows", "amd64", "user"}, {"host", "windows", "amd64", ""},
+		{"host", "windows", "amd64", " Jane"}, {"host", "windows", "amd64", "Jane "},
+		{"host", "windows", "amd64", `DOMAIN\Jane`}, {"host", "windows", "amd64", "Jane;whoami"},
+		{"host", "windows", "amd64", ".."}, {"host", "linux", "amd64", "Jane Doe"},
+	} {
+		s, _ := joinFixture(t)
+		if _, err := s.StartJoin(req, fmt.Sprint(i)); !errors.Is(err, ErrJoinInput) {
+			t.Errorf("invalid details accepted: %+v %v", req, err)
 		}
 	}
 }

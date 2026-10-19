@@ -348,6 +348,7 @@ func runVerify(args []string) {
 	timeoutText := fs.String("timeout", "2m", "maximum time to wait for a Hub receipt")
 	sinceText := fs.String("since", "", "minimum Hub receipt time in RFC3339")
 	expectedHub := fs.String("hub", "", "expected Hub base URL")
+	monitorOnly := fs.Bool("monitor-only", false, "require jobs disabled instead of enabled")
 	requirePlatformEvidence := fs.Bool("require-platform-evidence", false,
 		"require fresh Hub-stored identity evidence matching this binary's platform")
 	_ = fs.Parse(args)
@@ -383,9 +384,9 @@ func runVerify(args []string) {
 		var receipt model.AgentReadinessResponse
 		if err := doJSON(ctx, http.MethodGet, cfg.HubURL+"/v1/agent/readiness", cfg.AgentToken, nil, &receipt); err != nil {
 			last = err.Error()
-		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence); pending == "" {
-			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=enabled agent=%s",
-				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), receipt.AgentVersion)
+		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence, *monitorOnly); pending == "" {
+			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=%t agent=%s",
+				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), *receipt.JobsEnabled, receipt.AgentVersion)
 			if *requirePlatformEvidence {
 				fmt.Printf(" evidence=%s/%s received=%s", runtime.GOOS, runtime.GOARCH,
 					receipt.IdentityReceivedAt.UTC().Format(time.RFC3339))
@@ -406,7 +407,7 @@ func runVerify(args []string) {
 }
 
 func readinessPending(receipt model.AgentReadinessResponse, machineID, agentVersion string, since time.Time,
-	requirePlatformEvidence bool,
+	requirePlatformEvidence bool, monitorOnly ...bool,
 ) string {
 	if receipt.MachineID != machineID {
 		return "machine_id does not match"
@@ -420,8 +421,9 @@ func readinessPending(receipt model.AgentReadinessResponse, machineID, agentVers
 	if receipt.AgentVersion != agentVersion {
 		return "agent version received by Hub does not match"
 	}
-	if receipt.JobsEnabled == nil || !*receipt.JobsEnabled {
-		return "Hub has not confirmed jobs enabled"
+	wantJobs := len(monitorOnly) == 0 || !monitorOnly[0]
+	if receipt.JobsEnabled == nil || *receipt.JobsEnabled != wantJobs {
+		return "Hub has not confirmed requested jobs setting"
 	}
 	if receipt.DeviceSyncV1 == nil || !*receipt.DeviceSyncV1 {
 		return "Hub has not confirmed device-sync v1 executor"

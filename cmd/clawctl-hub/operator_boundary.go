@@ -131,6 +131,7 @@ type nonOperatorRoutePolicy struct {
 // public account traffic. In particular, /v1/operator/* can never be classified as
 // a machine route.
 var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
+	"GET /join.ps1":                  {nonOperatorAgent},
 	"GET /join.sh":                   {nonOperatorAgent},
 	"POST /v1/join/start":            {nonOperatorAgent},
 	"POST /v1/join/poll":             {nonOperatorAgent},
@@ -630,7 +631,7 @@ func validateNonOperatorRoutePolicies(registered []string, policies map[string]n
 		}
 		switch policy.Class {
 		case nonOperatorAgent:
-			if pattern == "GET /join.sh" {
+			if pattern == "GET /join.sh" || pattern == "GET /join.ps1" {
 				break
 			}
 			if !strings.HasPrefix(path, "/v1/") {

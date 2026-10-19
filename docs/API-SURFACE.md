@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 358 個 HTTP operations（35 non-operator＋323 operator；159 條 operator JSON）、
+> 逐一對照 359 個 HTTP operations（36 non-operator＋323 operator；159 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 358-operation tally above (35 non-operator + 323 operator). The inventory/contract excludes these six public account operations and totals 352. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 359-operation tally above (36 non-operator + 323 operator). The inventory/contract excludes these six public account operations and totals 353. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -1344,7 +1344,20 @@ the same read. Linux check-in responses add `host_profile` and
 `host_profile_digest`; observations add `host_profile_apply`. No operator write
 API or write MCP is introduced. See [HOST-PROFILE](HOST-PROFILE.md).
 
-## One-command Linux join
+## One-command Linux and Windows join
+
+Windows `amd64` and `arm64` endpoints can run `irm https://hub.example.com/join.ps1 | iex`
+in an elevated PowerShell session under the intended agent account. The public
+`GET /join.ps1` script templates the same HTTPS Hub URL and prints the join code,
+approval page and expiry. Download it first to pass `-Hub`, `-LogFile` (default
+`%ProgramData%\clawctl\join.log`) or `-JobsEnabled`. Windows defaults to
+monitor-only (`jobs_enabled=false`) and installs a user logon scheduled task.
+It uses the approval's one-time enrollment token, verifies the approved SHA-256,
+rejects archive traversal/links, and deletes temporary secrets. Windows joins
+use public HTTPS without configuring Tailscale; Linux-only jobs remain blocked
+at server dispatch and claim even when jobs are enabled. See the Windows
+commands in [README](../README.md#4-enroll-an-endpoint).
+
 
 Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
 non-root agent account, then match its code at `/machines/join`. The public
@@ -1364,11 +1377,14 @@ requests globally. IPs use the existing trusted-proxy resolver. Join codes and
 atomically marking the request redeemed. All join responses use no-store.
 The script downloads the bundle while pending, then checks its SHA-256 from
 the approved payload before extraction. Bundle access requires the matching
-pending/approved, unexpired device secret and architecture; redemption ends
+pending/approved, unexpired device secret, OS and architecture; redemption ends
 that authority. Secrets stay out of URLs, argv, logs and operator reads.
+Windows bundle keys are `windows-amd64` and `windows-arm64`; `linux-amd64`
+and `linux-arm64` select Linux, as do the legacy `amd64` and `arm64` keys.
+Approval selects the digest by OS and architecture; cross-OS downloads fail.
 
 Enrollment tickets use the canonical operator service, are single-use and
-last 600 seconds. Optional Hub-issued Tailscale keys are single-use,
+last 600 seconds. Optional Hub-issued Tailscale keys for Linux joins are single-use,
 non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
 OAuth client configuration is optional; without it the machine joins without
 Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,

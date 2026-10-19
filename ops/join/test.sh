@@ -119,3 +119,62 @@ for mode in approved no-tailscale no-fleet rejected expired download-failure che
   [[ -z $(find "$TEST_DIR/tmp" -mindepth 1 -print -quit) ]]
 done
 printf 'join script: approval, optional installer, private files, argv/output secrecy, rejection, expiry and failure cleanup passed\n'
+
+python3 - "$ROOT" <<'PY'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+s = (root/'ops/join/join.ps1').read_text()
+for text in ("[switch]$JobsEnabled", "$jobs = 'false'", "--jobs-enabled $jobs", "--token-file $tokenFile", 'WindowsBuiltInRole]::Administrator', 'Join code:', '/machines/join', 'expires_at', 'poll_seconds', 'Get-FileHash', 'SHA256', 'Unsafe agent archive member.', 'Set-JoinPrivate $work $true', 'Remove-Item -LiteralPath $work'):
+    assert text in s, text
+assert s.index('Get-FileHash') < s.index('Expand-JoinBundle $archive')
+assert s.index('bundle/windows-$arch') < s.index('$Hub/v1/join/poll')
+installer = (root/'ops/install-agent-windows.ps1').read_text()
+for text in ('jobs_enabled', '--monitor-only', 'Register-ScheduledTask', 'enroll --hub $Hub --token-file $TokenFile'):
+    assert text in installer, text
+print('Windows bootstrap: static monitor-only, approval, digest, private-file and cleanup checks passed.')
+PY
+if command -v pwsh >/dev/null 2>&1; then
+  mkdir "$TEST_DIR/powershell"
+  python3 - "$TEST_DIR/powershell" <<'PY'
+import io, pathlib, sys, tarfile
+root = pathlib.Path(sys.argv[1])
+files = ['VERSION', 'clawctl-agent.exe', 'install-agent-windows.ps1', 'clawctl-agent.task.xml']
+for mode in ['valid', 'traversal', 'backslash', 'absolute', 'symlink', 'hardlink', 'duplicate', 'missing', 'truncated']:
+    with tarfile.open(root/f'{mode}.tar.gz', 'w:gz', format=tarfile.USTAR_FORMAT) as t:
+        for name in files[:-1] if mode == 'missing' else files:
+            entry = tarfile.TarInfo(name); entry.size = 4
+            t.addfile(entry, io.BytesIO(b'test'))
+        if mode not in ('valid', 'missing', 'truncated'):
+            names = {'traversal':'../escape', 'backslash':'..\\escape', 'absolute':'C:/escape', 'duplicate':'VERSION'}
+            entry = tarfile.TarInfo(names.get(mode, 'link'))
+            if mode in ('symlink', 'hardlink'):
+                entry.type = tarfile.SYMTYPE if mode == 'symlink' else tarfile.LNKTYPE
+                entry.linkname = '../escape'
+            t.addfile(entry)
+    if mode == 'truncated':
+        (root/f'{mode}.tar.gz').write_bytes(b'not gzip')
+PY
+  pwsh -NoProfile -File "$ROOT/ops/join/test-windows.ps1" -Fixtures "$TEST_DIR/powershell"
+else
+  printf 'skip: pwsh is not available; PowerShell parse/extraction tests not run.\n'
+fi
+
+# The Fly and Compose images share this initializer. Optional OS pairs must
+# survive image-to-volume seeding, including on a rerun of the same release.
+seed="$TEST_DIR/seed/agent-bootstrap/windows-test"
+data="$TEST_DIR/hub-data"
+mkdir -p "$seed"
+for target in linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
+  printf '%s\n' "$target" >"$seed/clawctl-agent-bootstrap-$target.tar.gz"
+done
+printf 'fixture sums\n' >"$seed/SHA256SUMS"
+CLAWCTL_VERSION=windows-test CLAWCTL_DATA="$data" CLAWCTL_SEED="$TEST_DIR/seed" sh "$ROOT/ops/docker/hub-data-init.sh" >"$TEST_DIR/seed-output"
+for target in linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
+  cmp "$seed/clawctl-agent-bootstrap-$target.tar.gz" "$data/agent-bootstrap/windows-test/clawctl-agent-bootstrap-$target.tar.gz"
+done
+CLAWCTL_VERSION=windows-test CLAWCTL_DATA="$data" CLAWCTL_SEED="$TEST_DIR/seed" sh "$ROOT/ops/docker/hub-data-init.sh" >>"$TEST_DIR/seed-output"
+rm "$seed/clawctl-agent-bootstrap-windows-arm64.tar.gz"
+if CLAWCTL_VERSION=windows-test CLAWCTL_DATA="$data" CLAWCTL_SEED="$TEST_DIR/seed" sh "$ROOT/ops/docker/hub-data-init.sh" >"$TEST_DIR/seed-output" 2>&1; then
+  echo 'Incomplete Windows seed accepted' >&2; exit 1
+fi
+printf 'Docker/Fly bootstrap: complete Windows pair is seeded and incomplete pairs are rejected.\n'
