@@ -22,6 +22,7 @@ function Set-PrivateFile([string]$Path) {
   if ($null -eq $user) {
     Fail "Current user security identifier is unavailable"
   }
+  $acl.SetOwner($user)
   $allow = New-Object System.Security.AccessControl.FileSystemAccessRule(
     $user, 'FullControl', 'None', 'None', 'Allow')
   $acl.SetAccessRule($allow)
@@ -37,6 +38,7 @@ $Hub = ''
 $Token = ''
 $TokenFile = ''
 $BinSrc = ''
+$JobsEnabled = $null
 for ($i = 0; $i -lt $args.Count; ) {
   switch ($args[$i]) {
     '--hub' {
@@ -54,13 +56,18 @@ for ($i = 0; $i -lt $args.Count; ) {
       $TokenFile = [string]$args[$i + 1]
       $i += 2
     }
+    '--jobs-enabled' {
+      if ($i + 1 -ge $args.Count -or $args[$i + 1] -notin @('true', 'false')) { Fail '--jobs-enabled requires true or false' }
+      $JobsEnabled = $args[$i + 1] -eq 'true'
+      $i += 2
+    }
     '--binary' {
       if ($i + 1 -ge $args.Count) { Fail "--binary requires a file" }
       $BinSrc = [string]$args[$i + 1]
       $i += 2
     }
     '--help' {
-      Write-Output "Usage: $($MyInvocation.MyCommand.Name) --hub URL [--token TOKEN | --token-file FILE] [--binary FILE]"
+      Write-Output "Usage: $($MyInvocation.MyCommand.Name) --hub URL [--token TOKEN | --token-file FILE] [--binary FILE] [--jobs-enabled true|false]"
       Write-Output "  --hub http://<tailscale-ipv4>:<port>  (same address as the operator UI)"
       Write-Output "  --hub https://<hostname>[:port]       (experimental Cloudflare Tunnel; agent check-in only)"
       exit 0
@@ -122,9 +129,9 @@ function ConvertTo-AgentHubUrl([string]$Raw) {
     }
     if ($port -ne '') {
       if (-not (Test-HubPort $port)) { Fail "--hub https URL must be a DNS hostname and an explicit port" }
-      return "https://${host}:${port}"
+      return "https://${HubHost}:${port}"
     }
-    return "https://${host}"
+    return "https://${HubHost}"
   }
   Fail "--hub must be http://<tailscale-ipv4>:<port> or https://<hostname>"
 }
@@ -249,6 +256,14 @@ try {
   }
 }
 
+if ($null -ne $JobsEnabled) {
+  $cfg = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
+  $cfg | Add-Member -NotePropertyName jobs_enabled -NotePropertyValue ([bool]$JobsEnabled) -Force
+  [IO.File]::WriteAllText($ConfigFile, ($cfg | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+  Set-PrivateFile $ConfigFile
+  $cfg = $null
+}
+
 $Step = 'scheduled task'
 $TaskXml = [IO.File]::ReadAllText($TaskTemplate)
 $TaskXml = $TaskXml.Replace('@@CLAWCTL_AGENT_BIN@@', (XmlEscape $BinFile))
@@ -259,7 +274,9 @@ $ServiceStartedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 
 $Step = 'Hub readiness'
-& $BinFile verify --hub $Hub --since $ServiceStartedAt --timeout 2m --require-platform-evidence
+$VerifyOptions = @()
+if ($JobsEnabled -eq $false) { $VerifyOptions += '--monitor-only' }
+& $BinFile verify --hub $Hub --since $ServiceStartedAt --timeout 2m --require-platform-evidence @VerifyOptions
 if ($LASTEXITCODE -ne 0) { Fail "Hub readiness verification failed" }
 
 Write-Output "Managed: agent=$AgentVersion service=$TaskPath$TaskName config=$ConfigFile"

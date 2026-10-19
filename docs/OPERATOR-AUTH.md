@@ -173,19 +173,19 @@ example.com/cap/clawctl-admin
 
 另外一條 non-operator route 是 opt-in signed chat webhook `POST /v1/channels/{id}/inbound`，有獨立 provider authentication；見 [CHANNELS.md](CHANNELS.md)。
 
-目前 code route manifest 固定為 352 operations：29 條 non-operator，加上 323 條 operator
+目前 code route manifest 固定為 353 operations：30 條 non-operator，加上 323 條 operator
 routes；operator manifest 的 exact capability tally 是 `view=128`、`operate=34`、`admin=161`，
 其中 `/v1/operator/*` JSON routes 共 159 條、HTML/BFF/CSV/download 共 164 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-352-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+353-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies accept boundary-authorized human
 Tailscale admins or local admins with a current session MFA proof, checked before
 idempotency replay. Expired local sessions use the Hub UI step-up flow.
 
 operator route manifest 與實際註冊清單在 Hub 啟動時做雙向比對。繞過 operator
-boundary 的 29 條 route 也有另一份完整 manifest；兩份不能
-重疊。那 29 條是 24 條 machine transport、2 條 verifier transport、`/healthz`、`/version` 與一條 signed chat webhook；其中
+boundary 的 30 條 route 也有另一份完整 manifest；兩份不能
+重疊。那 30 條是 25 條 machine transport、2 條 verifier transport、`/healthz`、`/version` 與一條 signed chat webhook；其中
 `POST /v1/verifications`（write schema v2）與 `GET /v1/verification-assignments` 走的是 verifier bearer 而不是 machine
 bearer，manifest 仍把它們歸在 non-operator，因為它們同樣不經 operator boundary。
 Machine plane 的 `/v1/` 第二段必須是 literal 且不能是 `operator`，所以
@@ -820,7 +820,20 @@ commit atomically. MCP `host_profile_get` is read-only and uses the same read
 API. The root applier's account identity is installed locally, never supplied
 by the Hub profile. See [HOST-PROFILE](HOST-PROFILE.md).
 
-## One-command Linux join
+## One-command Linux and Windows join
+
+Windows `amd64` and `arm64` endpoints can run `irm https://hub.example.com/join.ps1 | iex`
+in an elevated PowerShell session under the intended agent account. The public
+`GET /join.ps1` script templates the same HTTPS Hub URL and prints the join code,
+approval page and expiry. Download it first to pass `-Hub`, `-LogFile` (default
+`%ProgramData%\clawctl\join.log`) or `-JobsEnabled`. Windows defaults to
+monitor-only (`jobs_enabled=false`) and installs a user logon scheduled task.
+It uses the approval's one-time enrollment token, verifies the approved SHA-256,
+rejects archive traversal/links, and deletes temporary secrets. Windows joins
+use public HTTPS without configuring Tailscale; Linux-only jobs remain blocked
+at server dispatch and claim even when jobs are enabled. See the Windows
+commands in [README](../README.md#4-enroll-an-endpoint).
+
 
 Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
 non-root agent account, then match its code at `/machines/join`. The public
@@ -840,11 +853,14 @@ requests globally. IPs use the existing trusted-proxy resolver. Join codes and
 atomically marking the request redeemed. All join responses use no-store.
 The script downloads the bundle while pending, then checks its SHA-256 from
 the approved payload before extraction. Bundle access requires the matching
-pending/approved, unexpired device secret and architecture; redemption ends
+pending/approved, unexpired device secret, OS and architecture; redemption ends
 that authority. Secrets stay out of URLs, argv, logs and operator reads.
+Windows bundle keys are `windows-amd64` and `windows-arm64`; `linux-amd64`
+and `linux-arm64` select Linux, as do the legacy `amd64` and `arm64` keys.
+Approval selects the digest by OS and architecture; cross-OS downloads fail.
 
 Enrollment tickets use the canonical operator service, are single-use and
-last 600 seconds. Optional Hub-issued Tailscale keys are single-use,
+last 600 seconds. Optional Hub-issued Tailscale keys for Linux joins are single-use,
 non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
 OAuth client configuration is optional; without it the machine joins without
 Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,

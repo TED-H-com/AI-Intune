@@ -19,6 +19,7 @@ import (
 var ErrJoinRate = errors.New("too many join requests; try again in a minute")
 var ErrJoinInput = errors.New("invalid machine details")
 var joinHost = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$`)
+var joinWindowsUser = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_. -]{0,62}[a-zA-Z0-9_-]$|^[a-zA-Z0-9_]$`)
 var joinUser = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}\$?$`)
 
 type JoinRequestsResult struct {
@@ -112,7 +113,11 @@ func (s *Service) StartJoin(req JoinStart, ip string) (JoinStarted, error) {
 	}
 	rate.n++
 	j.rates[ip] = rate
-	if !joinHost.MatchString(req.Hostname) || req.OS != "linux" || (req.Arch != "amd64" && req.Arch != "arm64") || !joinUser.MatchString(req.User) || req.User == "root" {
+	validUser := req.OS == "linux" && joinUser.MatchString(req.User) && req.User != "root"
+	if req.OS == "windows" {
+		validUser = joinWindowsUser.MatchString(req.User) && !strings.Contains(req.User, "..")
+	}
+	if !joinHost.MatchString(req.Hostname) || (req.OS != "linux" && req.OS != "windows") || (req.Arch != "amd64" && req.Arch != "arm64") || !validUser {
 		return JoinStarted{}, ErrJoinInput
 	}
 	var secret [32]byte
@@ -209,7 +214,9 @@ func (s *Service) DecideJoin(ctx context.Context, code, name string, approve boo
 		delete(j.payloads, code)
 		return nil
 	}
-	if bundle.SHA256 == "" {
+	expectedBundle := hub + "/v1/join/bundle/" + request.OS + "-" + request.Arch
+	legacyLinuxBundle := request.OS == "linux" && bundle.URL == hub+"/v1/join/bundle/"+request.Arch
+	if bundle.SHA256 == "" || (bundle.URL != expectedBundle && !legacyLinuxBundle) {
 		return errors.New("agent download unavailable")
 	}
 	preview, err := s.PreviewEnrollToken(EnrollTokenPreviewRequest{DisplayName: name, TTLSeconds: 600})
@@ -217,7 +224,7 @@ func (s *Service) DecideJoin(ctx context.Context, code, name string, approve boo
 		return err
 	}
 	var ts *JoinTailnet
-	if j.keys.Configured() {
+	if request.OS == "linux" && j.keys.Configured() {
 		key, err := j.keys.Mint(ctx, code)
 		if err != nil {
 			return err
@@ -286,12 +293,12 @@ func (s *Service) PollJoin(secret string) (JoinPayload, int, error) {
 // Bundle access is separate from payload redemption so the first successful
 // poll ends download authority. The script fetches while pending and verifies
 // the archive against the approved digest before extraction.
-func (s *Service) JoinBundleAuthorized(secret, arch string) bool {
+func (s *Service) JoinBundleAuthorized(secret, os, arch string) bool {
 	if len(secret) != 43 {
 		return false
 	}
 	hash := sha256.Sum256([]byte(secret))
 	now := time.Now()
 	r, err := s.store.LookupJoin(hash[:], now)
-	return err == nil && r.Arch == arch && now.Before(r.ExpiresAt) && (r.State == "pending" || r.State == "approved")
+	return err == nil && r.OS == os && r.Arch == arch && now.Before(r.ExpiresAt) && (r.State == "pending" || r.State == "approved")
 }

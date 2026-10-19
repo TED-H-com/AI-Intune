@@ -92,7 +92,13 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath \
   -ldflags "$ldflags" \
   -o /src/build/clawctl-agent-linux-arm64 ./cmd/clawctl-agent
 
+for arch in amd64 arm64; do
+  CGO_ENABLED=0 GOOS=windows GOARCH="$arch" go build -buildvcs=false -trimpath \
+    -ldflags "$ldflags" -o "/src/build/clawctl-agent-windows-$arch" ./cmd/clawctl-agent
+done
+
 /src/ops/build-agent-bundles.sh "$version" linux
+/src/ops/build-agent-bundles.sh "$version" windows
 
 amd64=clawctl-agent-bootstrap-linux-amd64.tar.gz
 arm64=clawctl-agent-bootstrap-linux-arm64.tar.gz
@@ -102,6 +108,12 @@ install -m 0644 "/src/build/$amd64" "$dest/$amd64"
 install -m 0644 "/src/build/$arm64" "$dest/$arm64"
 : > "$dest/SHA256SUMS"
 for name in "$amd64" "$arm64"; do
+  digest=$(sha256sum "$dest/$name") || exit 1
+  printf '%s  %s\n' "${digest%% *}" "$name" >> "$dest/SHA256SUMS"
+done
+for arch in amd64 arm64; do
+  name="clawctl-agent-bootstrap-windows-$arch.tar.gz"
+  install -m 0644 "/src/build/$name" "$dest/$name"
   digest=$(sha256sum "$dest/$name") || exit 1
   printf '%s  %s\n' "${digest%% *}" "$name" >> "$dest/SHA256SUMS"
 done

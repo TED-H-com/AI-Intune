@@ -230,6 +230,26 @@ Choose one of three deployment targets:
 
 ### 4. Enroll an endpoint
 
+For Windows `amd64` or `arm64`, open **PowerShell as Administrator** under the account that will run the agent, then run (replace the example Hub):
+
+```powershell
+irm https://hub.example.com/join.ps1 | iex
+```
+
+Match the printed `Join code: XXXX-XXXX` at `https://hub.example.com/machines/join` and approve it before the printed expiry. The bootstrap verifies the approved bundle checksum and installs a user logon scheduled task. Windows joins default to **monitor-only** (`jobs_enabled=false`): observations and check-ins continue, while jobs stay disabled. The account must stay logged in for the task to run. Windows joins use the public HTTPS Hub and do not configure Tailscale.
+
+To enable supported Windows jobs, download and run with options instead:
+
+```powershell
+Invoke-WebRequest https://hub.example.com/join.ps1 -OutFile .\join.ps1
+.\join.ps1 -Hub https://hub.example.com -JobsEnabled -LogFile "$env:ProgramData\clawctl\join.log"
+```
+
+`-Hub` overrides the templated Hub URL. `-LogFile` defaults to `%ProgramData%\clawctl\join.log`; progress, code and expiry are written there for detached runs, with credentials excluded. Temporary enrollment secrets are deleted on success and failure. Existing enrolled accounts are preserved; the join command refuses to replace their configuration. Linux-only jobs are blocked server-side even with `-JobsEnabled`.
+
+Join downloads use OS-qualified keys: `/v1/join/bundle/windows-amd64`, `/windows-arm64`, `/linux-amd64`, or `/linux-arm64`. Legacy `/amd64` and `/arm64` remain Linux-only. The device secret authorizes only its requested OS and architecture, until approval is redeemed. Both scripts download while pending and verify the approved SHA-256 before extraction. Docker and Fly images include both Windows bundles; source builds can produce them with `make agent-bundles-windows` and publish alongside the required Linux pair using `ops/publish-agent-bundles.sh`.
+
+
 Open `http://100.x.y.z:8787/machines/enrollment`, create an enrollment for the machine, and download the archive matching its architecture. Extract it on the endpoint and run:
 
 ```bash
