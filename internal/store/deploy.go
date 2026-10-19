@@ -1114,6 +1114,8 @@ func (s *Store) RecordVerification(jobID, machineID, leaseToken, ruleID, command
 			} else if passed {
 				return ErrInvalidJobEvidence
 			}
+		} else if scriptcatalog.IsReadReport(resourceID) && ruleID == scriptcatalog.Kind {
+			stdoutExcerpt = scriptcatalog.RedactReadReportJSON(resourceID, []byte(stdoutExcerpt))
 		} else if scriptcatalog.IsDiskSafe(resourceID) && ruleID == scriptcatalog.Kind {
 			stdoutExcerpt = scriptcatalog.RedactDiskJSON([]byte(stdoutExcerpt))
 		} else {
