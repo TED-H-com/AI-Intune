@@ -1235,6 +1235,14 @@ func (h *hub) buildReport(now, since time.Time) (string, error) {
 		}
 		in.Machines = append(in.Machines, rm)
 	}
+	in.ScheduledChecks, err = h.store.ScheduledChecks(since, now, true)
+	if err != nil {
+		return "", err
+	}
+	in.UntargetedMachines, err = h.store.UntargetedScheduleMachines(ov.Machines, in.ScheduledChecks, now)
+	if err != nil {
+		return "", err
+	}
 	return report.Render(in), nil
 }
 

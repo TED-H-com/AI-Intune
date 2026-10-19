@@ -48,13 +48,18 @@ func (s *Server) checks(w http.ResponseWriter, r *http.Request) {
 			v.Targets = append(v.Targets, scheduleMachine{ID: m.MachineID, Name: m.DisplayName, Selected: r.URL.Query().Get("target") == m.MachineID})
 		}
 	}
+	scheduled, err := s.operator.ScheduledCheckReports(time.Now().UTC())
+	if err != nil {
+		s.scheduleError(w, r, err)
+		return
+	}
 	for _, m := range machines.Items {
 		reports, e := s.operator.MachineReadReports(m.MachineID)
 		if e != nil {
 			s.scheduleError(w, r, e)
 			return
 		}
-		v.Machines = append(v.Machines, checksMachine{m.MachineID, m.DisplayName, reports})
+		v.Machines = append(v.Machines, checksMachine{m.MachineID, m.DisplayName, append(scheduled[m.MachineID], reports...)})
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	s.render(w, r, "checks.html", page{Title: "Checks / 檢查", Nav: "checks", Checks: v, ChecksNext: machines.NextCursor})
