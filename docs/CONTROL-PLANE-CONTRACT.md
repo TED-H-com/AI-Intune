@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-327（24 non-operator＋303 operator；153 operator JSON＋150 HTML/BFF/CSV/download），exact auth tally 是
-`view=120`／`operate=33`／`admin=150`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+334（28 non-operator＋306 operator；154 operator JSON＋152 HTML/BFF/CSV/download），exact auth tally 是
+`view=122`／`operate=33`／`admin=151`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1204,3 +1204,43 @@ A separate root service applies the fixed vocabulary and embedded templates;
 observations relay `host_profile_apply`. This is not an arbitrary job executor,
 and does not relax the observer's privilege boundary or enable root Hub jobs.
 See [HOST-PROFILE](HOST-PROFILE.md) for ownership, validation and evidence limits.
+
+## One-command Linux join
+
+Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
+non-root agent account, then match its code at `/machines/join`. The public
+`GET /join.sh` script uses the validated HTTPS `CLAWCTL_PUBLIC_URL`; `--hub`
+and `--user` are explicit alternatives. Viewers can read waiting requests;
+`POST /machines/join/decide` requires a human Admin and the enrollment MFA
+window. Approve all uses the displayed suggested names. Names capitalise the
+first letter of each dash-separated word, preserving the rest (`host-b` → `Host-B`).
+`GET /v1/operator/joins` and read-only MCP `join_requests_list` return metadata,
+never credentials. There is no MCP join write tool.
+
+Machine routes are `POST /v1/join/start`, `POST /v1/join/poll`, and
+`GET /v1/join/bundle/{arch}`. Start accepts bounded strict JSON, permits five
+requests per client IP per minute, and fails closed at 20 waiting/approved
+requests globally. IPs use the existing trusted-proxy resolver. Join codes and
+256-bit device secrets expire after 15 minutes; poll delivers approval once,
+atomically marking the request redeemed. All join responses use no-store.
+The script downloads the bundle while pending, then checks its SHA-256 from
+the approved payload before extraction. Bundle access requires the matching
+pending/approved, unexpired device secret and architecture; redemption ends
+that authority. Secrets stay out of URLs, argv, logs and operator reads.
+
+Enrollment tickets use the canonical operator service, are single-use and
+last 600 seconds. Optional Hub-issued Tailscale keys are single-use,
+non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
+OAuth client configuration is optional; without it the machine joins without
+Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,
+`CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`, and `CLAWCTL_TAILSCALE_JOIN_TAG`.
+`CLAWCTL_TAILSCALE_API_BASE` is accepted only in test binaries; production
+always uses the official API. The CLI reads its key using `--auth-key=file:...`.
+
+SQLite stores only device-secret hashes and request metadata. Minted credentials
+are held in process memory for at most ten minutes and deleted on redemption.
+Restart or delivery expiry shows “Approval expired”; a human can approve again
+while the request is still valid. An already minted enrollment ticket expires
+naturally and cannot be reconstructed. Join decisions and their secret-free
+`join_approve` / `join_reject` audit rows commit together. Rows older than seven
+days past expiry are pruned lazily on start/list, without changing ledger retention.

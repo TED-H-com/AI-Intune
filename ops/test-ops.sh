@@ -811,7 +811,8 @@ install_ancestor_symlink_fixture() {
 }
 
 agent_installer_complete_fixture() (
-	local fixture="$TMP/agent-installer-complete" mock home token tailscale_key log install_agent system_unit_dir
+	local fixture="$TMP/agent-installer-complete-${1:-account}" mock home token tailscale_key log install_agent system_unit_dir
+	local install_flags=()
 	unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy
 	export CLAWCTL_ETC_ENVIRONMENT="$TMP/agent-installer-environment"
 	: >"$CLAWCTL_ETC_ENVIRONMENT"
@@ -830,6 +831,7 @@ agent_installer_complete_fixture() (
 
 	printf '%s\n' '#!/usr/bin/env bash' \
 		'printf "sudo %s\n" "$*" >>"$AGENT_TEST_LOG"' \
+		'if [[ "$1" == "-H" && "$2" == "-u" ]]; then shift 3; exec "$@"; fi' \
 		'if [[ "$1" == "-n" && "$2" == true ]]; then exit "${FAIL_SUDO_NONINTERACTIVE:-0}"; fi' \
 		'if [[ "$1" == "-v" ]]; then exit 0; fi' \
 		'if [[ "$1" == install ]]; then shift; args=(); while [[ $# -gt 0 ]]; do case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac; done; exec install "${args[@]}"; fi'  \
@@ -898,16 +900,26 @@ agent_installer_complete_fixture() (
 	install_agent="$fixture/install-agent.sh"
 	sed -e "s#/usr/bin/podman#$mock/podman#g" -e "s#/sys/fs/selinux/enforce#$fixture/selinux-enforce#g" "$INSTALL_AGENT" >"$install_agent"
 	chmod 0755 "$install_agent"
+	if [[ ${1:-} == root ]]; then
+		# Exercise root dispatch without requiring root or touching a host account.
+		sed -i 's/\[\[ $EUID == 0 \&\&/[[ 0 == 0 \&\&/' "$install_agent"
+		printf '#!/usr/bin/env bash\nprintf "fixture:x:%%s:%%s::%%s:/bin/bash\\n" "$(id -u)" "$(id -g)" "$AGENT_TEST_HOME"\n' >"$mock/getent"
+		printf '%s\n' '#!/usr/bin/env bash' 'args=(); while (($#)); do case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac; done; exec /usr/bin/install "${args[@]}"' >"$mock/install"
+		printf '%s\n' '#!/usr/bin/env bash' 'if [[ ${1:-} == TARGET_USER=* ]]; then exit 0; fi; exec /usr/bin/env "$@"' >"$mock/env"
+		chmod 0755 "$mock/getent" "$mock/install" "$mock/env"
+		export AGENT_TEST_HOME="$home"
+		install_flags=(--user "$(id -un)")
+	fi
 
 	HOME="$home" USER="fixture-user" AGENT_TEST_LOG="$log" TAILSCALE_TEST_LOG="$log" \
 		TAILSCALE_TEST_STATE="$fixture/tailscale-state" PATH="$mock:$PATH" \
 		CLAWCTL_SYSTEM_BIN_DIR="$fixture/system-bin" CLAWCTL_SYSTEM_UNIT_DIR="$system_unit_dir" AGENT_TEST_SYSTEM_UNIT="$system_unit_dir" \
 		AGENT_TEST_USER="$(id -un)" AGENT_TEST_UID="$EUID" \
-		"$install_agent" --hub http://100.64.0.1:8787 --token-file "$token" \
+		"$install_agent" "${install_flags[@]}" --hub http://100.64.0.1:8787 --token-file "$token" \
 		--tailscale-auth-key-file "$tailscale_key" --binary "$fixture/clawctl-agent" || return
 	[[ -f "$system_unit_dir/clawctl-agent.service" ]] || return 91
 	grep -Fxq "ExecStart=$fixture/system-bin/clawctl-agent" "$system_unit_dir/clawctl-agent.service" || return 91
-	grep -Fxq 'sudo -n true' "$log" || return 91
+	if [[ ${1:-} != root ]]; then grep -Fxq 'sudo -n true' "$log" || return 91; fi
 	! grep -q restorecon "$log" || return 91
 	[[ "$(cat "$home/.local/bin/clawctl-agent")" == legacy-binary ]] || return 91
 	[[ ! -e "$home/.config/systemd/user/clawctl-agent.service" ]] || return 98
@@ -920,6 +932,14 @@ agent_installer_complete_fixture() (
 	grep -Fq 'enroll --hub http://100.64.0.1:8787 --token-file' "$log" || return 93
 	grep -Fq 'verify --hub http://100.64.0.1:8787 --since ' "$log" || return 94
 	grep -Fxq 'tailscale-up' "$log" || return 95
+
+	if [[ ${1:-} == root ]]; then
+		grep -Fq 'sudo -H -u' "$log" || return 96
+		local delivered_token
+		delivered_token=$(sed -n 's/^enroll .*--token-file //p' "$log" | head -1)
+		[[ -n "$delivered_token" && ! -e "$delivered_token" ]] || return 97
+		return 0
+	fi
 
 	# Re-enrollment Case 1: existing config same hub -> skip enroll
 	rm -f "$log"
@@ -1614,7 +1634,7 @@ home_ancestor_symlink_fixture() {
 	: >"$fixture/data/file"
 	ln -s "$fixture/data/file" "$fixture/home/.file"
 	probe() {
-		bash -c 'set -euo pipefail; fail() { echo "$1" >&2; exit 1; }; source "$1"; ensure_home_ancestor "$2"' _ "$fixture/fn.sh" "$1"
+		bash -c 'set -euo pipefail; AGENT_UID=$EUID; AGENT_USER=$(id -un); as_agent() { "$@"; }; fail() { echo "$1" >&2; exit 1; }; source "$1"; ensure_home_ancestor "$2"' _ "$fixture/fn.sh" "$1"
 	}
 	probe "$fixture/home/.cache" || return 11
 	! probe "$fixture/home/.open" 2>/dev/null || return 12
@@ -1638,6 +1658,8 @@ home_ancestor_symlink_fixture() {
 }
 run home_ancestor_symlink_fixture
 expect "install-agent accepts a symlinked home ancestor only when its target is a private user-owned directory" 0 true
+run agent_installer_complete_fixture root
+expect 'root installer drops privileges for enrollment without password prompts' 0 has 'Managed: agent=test-version'
 run agent_installer_complete_fixture
 expect 'agent installer completes Tailscale, enrollment, service and Hub receipt in one run' 0 has 'Managed: agent=test-version tailscale=100.64.0.77 service=active jobs=enabled'
 
@@ -2663,6 +2685,13 @@ else
 fi
 
 # Includes the root applier fixture suite in ops/fleet/applier/test.sh.
+
+if bash "$ROOT/ops/join/test.sh"; then
+ passed=$((passed + 1))
+else
+ failed=$((failed + 1))
+fi
+
 for fleet_test in "$ROOT"/ops/fleet/*/test.sh; do
 	[ -f "$fleet_test" ] || continue
 	if bash "$fleet_test"; then

@@ -150,6 +150,20 @@ Hub pins the operator Host to `CLAWCTL_PUBLIC_URL`. `/` and `/login` return 421 
 
 ### 6. Enroll your first machine
 
+Fastest path: run `curl -fsSL https://hub.example.com/join.sh | sudo bash`
+on the new Linux machine, then match and approve its code at `/machines/join`.
+Set `CLAWCTL_PUBLIC_URL` to the public HTTPS origin and publish agent bundles.
+Optional Fly secret names for Hub-issued Tailscale keys:
+
+- `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`
+- `CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`
+- `CLAWCTL_TAILSCALE_JOIN_TAG`
+
+Use an OAuth client allowed to create auth keys for the chosen tag. Without
+these credentials, join works without Tailscale. See the [new host runbook](runbooks/NEW-HOST.md).
+
+The keyed installer remains available:
+
 In the Hub Web console, register a machine and download its **keyed Linux installer** for amd64 or arm64 from the token result page; the download page offers both architectures. The package contains a one-time enrollment token and the public Hub URL; transfer it privately. If lost, revoke the pending ticket and issue a new one.
 
 On the endpoint, as the non-root account that will run the agent, with sudo available:

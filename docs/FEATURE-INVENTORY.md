@@ -47,17 +47,17 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 327 個 production operations 基線
+## 334 個 production operations 基線
 
-此數字按 HTTP method + route 計數：24 個 non-operator operations、303 個 operator
-operations；其中 153 個為 operator JSON、150 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=120`、`operate=33`、`admin=150`。這組數字由 route/API/service/Web/CLI
-合約測試固定；327-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：28 個 non-operator operations、306 個 operator
+operations；其中 154 個為 operator JSON、152 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=122`、`operate=33`、`admin=151`。這組數字由 route/API/service/Web/CLI
+合約測試固定；334-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
 
-### Machine 與 verifier transport、telemetry（24）
+### Machine 與 verifier transport、telemetry（28）
 
 | # | Method / route | Native source | 人工 action | Operator 呈現方向 |
 |---:|---|---|---|---|
@@ -93,262 +93,266 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 
 | 23 | `POST /v1/channels/{id}/inbound` | Signed provider webhook | Chat commands | Disabled by default; Telegram secret / Discord signature, allowlist, canonical permissions and one-time approvals; see CHANNELS.md |
 | 24 | `GET /version` | JSON | Public | Build version, commit and build time only |
+| 25 | `GET /join.sh` | Embedded public script | 否 | Secret-free Linux join command |
+| 26 | `POST /v1/join/start` | Join service | 否 | Rate limited device request; no operator authority |
+| 27 | `POST /v1/join/poll` | Join service | 否 | Device secret body; single-use approval delivery |
+| 28 | `GET /v1/join/bundle/{arch}` | Join service | 否 | Pending/approved device bearer; expires with request |
 
-### Operator HTML/BFF 與 JSON（303）
+### Operator HTML/BFF 與 JSON（306）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
-| 25 | `GET /metrics` | plain text | 讀取 | Requires the operator view grant. A caller without that grant, including every managed machine, receives 403. `/healthz` stays public. |
-| 26 | `GET /` | HTML | 讀取 | Overview dashboard |
-| 27 | `GET /machines` | HTML | 讀取 | All devices |
-| 28 | `GET /machines/enrollment` | HTML | 讀取／建立入口 | Enrollment 專頁與 Tailnet 候選對照 |
-| 29 | `GET /machines/{id}` | HTML | 讀取 | Device detail；judgement、expectation/artifact/event、monitor/identity/resources/history 與 machine evidence 都由 typed bounded DTO 渲染；pending metadata 讀 dedicated typed operator service；BAT coordinates 讀 `MachineConnect` v1 typed BFF，不再有 raw Store bridge |
-| 30 | `GET /jobs` | HTML | 讀取 | Global Jobs list、filters 與 keyset paging；SSR 共用 in-process operator service |
-| 31 | `GET /jobs/{id}` | HTML | 讀取 | Job detail；desired/verifier evidence 與 rejection detail 改由 typed bounded evidence DTO 渲染（scrub、依欄位 `max_bytes` 截斷、agent/Hub provenance），不再有 raw Store-model bridge；獨立證據分開顯示列數與 distinct live verifier 身分數，同一 verifier 的多條規則／多次重派不冒充多雙眼睛 |
-| 32 | `GET /apps` | HTML | 讀取 | Apps 的概觀／OpenClaw／Store／Profiles／Assignments／Artifacts／Fetch／Operations 八個 submenu；Profiles 每一版說出它現在穿在幾台身上與那一格是什麼，Assignments 名冊上每一台說出它現在穿著哪一版，兩頁與 `/reports/profile` 讀同一份 `ProfileReport` |
-| 33 | `GET /apps/artifacts/{id}` | HTML | 讀取／完整驗證 | Artifact safe detail；完整重算 SHA-256 後才可顯示 `ready` |
-| 34 | `GET /apps/artifact-fetches/{id}` | HTML | 讀取 | Durable fetch operation safe detail |
-| 35 | `GET /deployments` | HTML | 讀取 | Deployment list |
-| 36 | `GET /deployments/{id}` | HTML | 讀取 | Deployment detail；targets 表加一欄跨故障域證據（每個已開單 target 的 verdict、rows、distinct 可用 producer），表頭一行數出「已開單的 N 台中有幾台被第二個 producer 回報通過」。沒開單的 target 留空，不給 verdict |
-| 37 | `GET /updates` | HTML | 讀取／preview | 共用 native Updates model 的 artifacts、channel 成員、最近部署與 rollout gate |
-| 38 | `GET /reports/tickets` | HTML | 讀取 | Ticket ledger |
-| 39 | `GET /reports/tickets.csv` | CSV | 讀取／下載 | Browser export，不是 stable JSON API |
-| 40 | `GET /audit` | HTML | 讀取 | Audit safe ledger；SSR 共用 operator service、完整 filters 與 creation-ceiling paging |
-| 41 | `POST /machines/{id}/connect` | BFF | 是 | Redirect 到 BAT；Web 不代理遠端工作階段 |
-| 42 | `POST /apps/artifact-fetches/preview` | HTML form | 是，preview | 固定 production registry 的 exact-version intake review |
-| 43 | `POST /apps/artifact-fetches` | HTML form | 是 | typed package/version、idempotent durable enqueue 與 atomic audit |
-| 44 | `POST /machines/{id}/retire` | HTML form | 是 | 穩定 Web apply route；現由 canonical lifecycle service 要求 preview/revision/typed confirmation/idempotency |
-| 45 | `POST /machines/{id}/unretire` | HTML form | 是 | 穩定 Web apply route；與 retire 共用同一 atomic lifecycle writer 與完整確認 |
-| 46 | `POST /enrollments/preview` | HTML form | 是，preview | Web adapter 呼叫 canonical operator service |
-| 47 | `POST /enrollments` | HTML form | 是 | 一次性 secret；Web adapter 呼叫 canonical service |
-| 48 | `POST /machines/{id}/revoke-token/preview` | HTML form | 是，preview | 顯示 exact pending-ticket identity 與固定影響 |
-| 49 | `POST /machines/{id}/revoke-token` | HTML form | 是 | **只撤銷 pending enrollment ticket**，不是 active credential |
-| 50 | `POST /machines/{id}/channel` | HTML form | 是 | Web adapter 呼叫 canonical channel service |
-| 51 | `POST /deployments/preview` | HTML form | 是，preview | canonical create preview；固定 artifact、target snapshot、policy digest |
-| 52 | `POST /deployments` | HTML form | 是 | canonical create apply；typed channel/version、idempotency、atomic audit |
-| 53 | `POST /deployments/{id}/continue-preview` | HTML form | 是，preview | canonical；精確下一批或 finish outcome |
-| 54 | `POST /deployments/{id}/continue` | HTML form | 是 | canonical；control revision/opened batch precondition |
-| 55 | `POST /deployments/{id}/retry-preview` | HTML form | 是，preview | canonical；只列 exact terminal-failure targets |
-| 56 | `POST /deployments/{id}/retry` | HTML form | 是 | canonical；建立有 lineage 的新 attempt |
-| 57 | `POST /deployments/{id}/abandon-preview` | HTML form | 是，preview | canonical；列出不再開單的 targets |
-| 58 | `POST /deployments/{id}/abandon` | HTML form | 是 | canonical；full-ID confirmation、terminal-job gate |
-| 59 | `GET /v1/operator/machines/{id}/channel` | JSON | 讀取 | canonical；回 revision / `ETag` |
-| 60 | `PUT /v1/operator/machines/{id}/channel` | JSON | 是 | canonical；typed confirmation + revision + idempotency |
-| 61 | `POST /v1/operator/enrollment-tokens/preview` | JSON | 是，preview | canonical；回 policy-bound preview digest |
-| 62 | `POST /v1/operator/enrollment-tokens` | JSON | 是 | canonical；明文 token 只在 fresh response 回傳一次 |
-| 63 | `GET /v1/operator/machines/{id}/enrollment-token` | JSON | 讀取 | canonical；只回唯一 pending ticket metadata，不回 hash/secret；多張歧義時 fail closed |
-| 64 | `POST /v1/operator/machines/{id}/enrollment-token/revocation-preview` | JSON | 是，preview | canonical；digest 綁 exact ticket 與影響 policy |
-| 65 | `POST /v1/operator/machines/{id}/enrollment-token/revocations` | JSON | 是 | canonical；fresh `201`、redacted replay `200`、atomic audit |
-| 66 | `GET /v1/operator/machines` | JSON | 讀取 | schema v2；safe DTO、machine/display/state/lifecycle/reporting/channel filters、1..100 paging、filter-bound registry-creation ceiling live keyset；分母只看 active/retired，legacy `expected` 不參與重數；不接受 `expected` filter |
-| 67 | `GET /v1/operator/machines/{id}` | JSON | 讀取 | schema v5 typed detail；safe summary＋Hub judgement／100 findings＋最多 50 條 expectation display definitions 與 bounded artifact/event evidence＋monitor/identity/resources/check-ins/state history。保留 clocks、unknown/read-failed/invalid/truncated；artifact freshness 不讀內容、不冒充 outcome，event 只用 operator-declared enums 與 structured counts、不掃關鍵字；connect/pending excluded |
-| 68 | `GET /v1/operator/jobs` | JSON | 讀取 | Jobs list read slice；filters、creation-ceiling live keyset 與 safe DTO |
-| 69 | `GET /v1/operator/jobs/{id}` | JSON | 讀取 | Job safe detail；省略 desired spec、raw event payload 與 verifier command/output（typed evidence 見 85） |
-| 70 | `GET /v1/operator/artifacts` | JSON | 讀取 | Metadata-only catalog list；`available_unverified` 不冒充 byte verification |
-| 71 | `GET /v1/operator/artifacts/{sha256}` | JSON | 讀取／完整驗證 | Safe detail；no-follow descriptor 上完整重算 SHA-256 |
-| 72 | `POST /v1/operator/artifact-fetches/preview` | JSON | 是，preview | exact OpenClaw 固定 npm origin/SHA-512/engine；exact Node runtime 固定 nodejs.org checksums 與 deterministic multiarch bundle；exact Hermes 固定 Docker Hub official image index 與完整 Linux amd64/arm64 OCI closure；exact Claude Code 固定 downloads.claude.ai manifest 與 linux／darwin／windows amd64／arm64 binary SHA-256；exact Codex 固定 releases.openai.com `release.json`、`rust-v<version>`、六份 codex-package archive 與 `codex-package_SHA256SUMS`；exact Antigravity 固定六份 latest-pointer manifest，只接受上游目前發佈的版號 |
-| 73 | `POST /v1/operator/artifact-fetches` | JSON | 是 | durable enqueue；fresh/replay 均為 `202`，replay 另有 header/body evidence；idempotency/audit 同 transaction |
-| 74 | `GET /v1/operator/artifact-fetches` | JSON | 讀取 | Durable operation list；state/name/version filters |
-| 75 | `GET /v1/operator/artifact-fetches/{id}` | JSON | 讀取 | Operation phase/progress/result 或 bounded failure code/detail |
-| 76 | `GET /v1/operator/updates` | JSON | 讀取／preview | `schema_version=5`；Artifacts、channel members、latest deployment、rollout plan，以及逐 canary target 顯示十一種獨立證據狀態與下一步的 stable promotion gate |
-| 77 | `GET /v1/operator/deployments` | JSON | 讀取 | canonical safe list；channel/state/stuck filters、live keyset cursor |
-| 78 | `GET /v1/operator/deployments/{id}` | JSON | 讀取 | canonical safe detail（`schema_version=3`）；targets、material summary、action eligibility；每個已開單 target 帶 `independent`（八種 verdict 之一／rows／distinct live_producers），未開單 target 為 `null`；另有 deployment 層 rollup（opened/passed targets、逐 target live producers 加總、八種 verdict 的 target 計數），由 targets 推導而非另一份真相；不回 raw spec/created_by |
-| 79 | `POST /v1/operator/deployments/preview` | JSON | 是，preview | `schema_version=4`；create preview；重新驗 artifact bytes，固定 targets 與 promote verdict；stable 逐台要求 active fleet peer 在最新派工後送齊三條必要規則，且 `current_release` 的結構化版號等於 canary exact version |
-| 80 | `POST /v1/operator/deployments` | JSON | 是 | create apply；fresh `201`、成功 replay `200`；拒絕 replay 保留原錯誤 status/code |
-| 81 | `POST /v1/operator/deployments/{id}/continuation-preview` | JSON | 是，preview | continue/finish preview |
-| 82 | `POST /v1/operator/deployments/{id}/continuations` | JSON | 是 | optimistic precondition + idempotent apply |
-| 83 | `POST /v1/operator/deployments/{id}/retry-preview` | JSON | 是，preview | exact terminal-failure retry scope |
-| 84 | `POST /v1/operator/deployments/{id}/retries` | JSON | 是 | 新 attempt、fresh `201`、lineage receipt |
-| 85 | `POST /v1/operator/deployments/{id}/abandonment-preview` | JSON | 是，preview | terminal-job gate 與 unopened impact |
-| 86 | `POST /v1/operator/deployments/{id}/abandonments` | JSON | 是 | paused → finished；full-ID confirmation |
-| 87 | `GET /v1/operator/audit-events` | JSON | 讀取 | Safe allowlist audit read；完整 filters、creation-ceiling cursor 與 bounded denial sampling |
-| 88 | `GET /reports/changes` | HTML | 讀取 | Changes typed safe read；SSR 共用 operator service、固定 window/ceilings、coverage 與 paging |
-| 89 | `GET /v1/operator/changes` | JSON | 讀取 | Transition + endpoint-delta safe DTO；Hub clock、bounded filters/window/paging、retention/malformed disclosure |
-| 90 | `GET /machines/lifecycle` | HTML | 讀取／預覽入口 | Devices > Lifecycle 可發現 submenu；顯示 active/retired 與獨立 revision，不再顯示 legacy expected 軸 |
-| 91 | `POST /machines/{id}/lifecycle-preview` | HTML form | 是，preview | Web adapter 呼叫 canonical lifecycle service；retire 確認另列當下開啟的終端工作階段數，並說明套用時仍開啟者會結束；restore 不顯示這項退役影響 |
-| 92 | `GET /v1/operator/machines/{id}/lifecycle` | JSON | 讀取 | Safe current projection；回 `lifecycle_revision` / `ETag`，分母只由 active/retired 決定；不回 legacy `expected` 或 credential/token hash |
-| 93 | `POST /v1/operator/machines/{id}/lifecycle-preview` | JSON | 是，preview | `admin`；另回不綁 digest/receipt 的 `open_agent_session_count` preview-time fact；其餘保留／存取影響綁 exact revision；非終態 job 會阻擋 active→retired |
-| 94 | `PUT /v1/operator/machines/{id}/lifecycle` | JSON | 是 | `admin`；typed name/reason、preview digest、revision、idempotency；retire 結束套用時仍開啟的終端工作階段；projection/event/receipt/audit 原子提交 |
-| 95 | `GET /v1/operator/jobs/{id}/evidence` | JSON | 讀取 | `view`；`schema_version=6` typed bounded evidence：desired spec、event metadata＋payload bytes、最後一筆 rejected code/detail、verification rule/command/stdout/stderr；每欄依自報 `max_bytes` scrub/截斷（16 KiB／256／64）、每段 1..100 筆；event 與 rejection 明列 agent 或 Hub scheduler producer；新 event/verification row 明列 producer/role/authority 與 row provenance，verification 另有 Hub received_at；legacy row 明列未記錄；另有 `independent` 段：八種 verdict、verifier 的 kind／ID／display name／failure domain／撤銷狀態、`verifier_bearer` authority、兩個時鐘與 expected／observed version；digest/version match 都由 Hub 比較，stdout 不參與版號判斷；`independent_verifier` 由該單 live producer 數算出來，不是常數；不回 raw payload／lease token |
-| 96 | `GET /v1/operator/machines/{id}/evidence` | JSON | 讀取 | `view`；`schema_version=6` typed bounded OpenClaw/CLI/credential/occupancy/systemd/run-summary/journal evidence；systemd unit 帶 `measured`／`reason`、CLI tool 帶 `process_scan`，把「問不到」與「確實不存在」分開；版本來源與 conflict 不合併、raw version 只顯示不解析；專用 host path／DB location／PID、credential secret/account 與 occupancy event identity 均結構性排除；各段有 clocks、truthful totals/invalid、producer/relay、redaction 差異及 strict-client coherence |
-| 97 | `GET /machines/diagnostics` | HTML | 讀取／建立入口 | Devices > Diagnostics；列出名冊機器與 noop protocol drill 表單 |
-| 98 | `POST /machines/{id}/diagnostic-noop-preview` | HTML form | 是，preview | `operate`；顯示 timeout、revision、heartbeat execution 狀態、active-job occupancy、固定 impact 與 blockers |
-| 99 | `POST /machines/{id}/diagnostic-noop-jobs` | HTML form | 是 | `operate`；typed machine-name confirm，成功後導向 canonical job detail |
-| 100 | `POST /v1/operator/machines/{id}/diagnostic-noop-preview` | JSON | 是，preview | `operate`；固定 noop spec、machine lifecycle、最新 `jobs_enabled`、active jobs、OpenClaw revision 與 preview digest；execution unknown/false 回 typed blocker |
-| 101 | `POST /v1/operator/machines/{id}/diagnostic-noop-jobs` | JSON | 是 | `operate`；fresh `201`／replay `200`；atomic desired state、job、idempotency receipt 與 audit，回 Location/ETag |
-| 102 | `POST /apps/store/packages/preview` | HTML form | 是，preview | `admin`；從已驗證 artifact 產生 fixed Node/OpenClaw/Hermes manifest review |
-| 103 | `POST /apps/store/packages` | HTML form | 是 | `admin`；canonical token、typed package/version confirm 與 atomic publication/audit |
-| 104 | `POST /apps/profiles/preview` | HTML form | 是，preview | `admin`；選取 exact packages，顯示完整解析結果 |
-| 105 | `POST /apps/profiles` | HTML form | 是 | `admin`；canonical token、typed profile/revision confirm 與 atomic publication/audit |
-| 106 | `POST /apps/profile-assignments/preview` | HTML form | 是，preview | `admin`；顯示 exact machine/profile、dependency order、jobs、prerequisites 與 blockers |
-| 107 | `POST /apps/profile-assignments` | HTML form | 是 | `admin`；typed machine-name confirm，atomic 建立 desired states/jobs/edges/receipt/audit |
-| 108 | `GET /v1/operator/catalog-manifests` | JSON | 讀取 | `view`；safe package/kind filters 與 filter-bound keyset cursor |
-| 109 | `POST /v1/operator/catalog-manifests/standard-preview` | JSON | 是，preview | `admin`；full artifact verification，固定 Node/OpenClaw/Hermes manifest 與 exact dependency/conflict contract |
-| 110 | `POST /v1/operator/catalog-manifests` | JSON | 是 | `admin`；typed package/version/digest confirmation，fresh `201`、replay/already-published `200` |
-| 111 | `GET /v1/operator/machine-profiles` | JSON | 讀取 | `view`；safe profile filter 與 filter-bound keyset cursor |
-| 112 | `POST /v1/operator/machine-profiles/preview` | JSON | 是，preview | `admin`；驗證 selected packages 並固定 canonical profile digest |
-| 113 | `POST /v1/operator/machine-profiles` | JSON | 是 | `admin`；typed profile/revision/digest confirmation，fresh `201`、replay/already-published `200` |
-| 114 | `POST /v1/operator/machines/{id}/profile-assignment-preview` | JSON | 是，preview | `admin`；解析 compatible dependency graph 與 exact job impact |
-| 115 | `POST /v1/operator/machines/{id}/profile-assignments` | JSON | 是 | `admin`；fresh `201`／replay `200`；atomic desired states、dependency-ordered jobs、edges、receipt 與 audit |
-| 116 | `GET /downloads/agent/{arch}` | download | 讀取／下載 | `view`；既有 `amd64`／`arm64` 與 Linux aliases、已發布的 `darwin-amd64`／`darwin-arm64`。每次下載重開 no-follow descriptor 並重驗版本、ELF／Mach-O 架構、archive layout、大小與 SHA-256 |
-| 117 | `GET /settings/tailnet` | HTML | 讀取 | `view`；顯示 source observation time、stable peer identity、未納管／已忽略／在線無心跳／退役仍在線分類 |
-| 118 | `POST /settings/tailnet/peer-ignore-preview` | HTML form | 是，preview | `admin`；固定 peer stable ID、目前 hostname、expiry、reason 與 revision |
-| 119 | `POST /settings/tailnet/peer-ignores` | HTML form | 是 | `admin`；typed hostname confirmation、preview digest、revision、idempotency 與 atomic audit |
-| 120 | `GET /v1/operator/tailnet` | JSON | 讀取 | `view`；canonical reconcile DTO；來源不可用與空清單分開，本地 active ignore rules 仍可讀取，所有 collections 非 null |
-| 121 | `POST /v1/operator/tailnet/peer-ignore-preview` | JSON | 是，preview | `admin`；stable node ID identity、1..366 天 expiry 與 current rule revision |
-| 122 | `PUT /v1/operator/tailnet/peer-ignores/{id}` | JSON | 是 | `admin`；fresh/replay 均為 `200`，replay header/body 一致；domain state、receipt、audit 原子提交 |
-| 123 | `GET /tenant/maintenance` | HTML | 讀取 | `view`；顯示目前 retention policy、revision、上次清理與還原演練狀態 |
-| 124 | `POST /tenant/maintenance/retention/prune-preview` | HTML form | 是，preview | `admin`；以目前 Hub policy 固定 evaluation time、revision、五張表的刪除／保留數與 protected newest evidence |
-| 125 | `POST /tenant/maintenance/retention/prunes` | HTML form | 是 | `admin`；逐字 `DELETE N ROWS`、reason、revision、preview digest 與 idempotency；刪除、retention ledger、receipt、audit 原子提交 |
-| 126 | `GET /v1/operator/maintenance/retention` | JSON | 讀取 | `view`；canonical policy、revision 與 never-run／zero-row-run 可區分的最新狀態 |
-| 127 | `POST /v1/operator/maintenance/retention/prune-preview` | JSON | 是，preview | `admin`；可明示秒級 policy 與 evaluation time，回 exact boundaries/counts/confirmation/digest |
-| 128 | `POST /v1/operator/maintenance/retention/prunes` | JSON | 是 | `admin`；fresh/replay 均 `200`；stale revision/scope fail closed，domain deletion 與證據原子提交 |
-| 129 | `GET /tenant/maintenance/restore-drills/{id}` | HTML | 讀取 | `view`；顯示 queued/running/succeeded/failed、固定備份身分、結果或 typed failure |
-| 130 | `POST /tenant/maintenance/restore-drill-preview` | HTML form | 是，preview | `admin`；固定最新 standalone backup 的 name/size/mtime/SHA-256、live expected 與 `VERIFY filename` |
-| 131 | `POST /tenant/maintenance/restore-drills` | HTML form | 是 | `admin`；確認後 durable enqueue，導向 operation detail；不替換正式資料庫 |
-| 132 | `POST /v1/operator/maintenance/restore-drill-preview` | JSON | 是，preview | `admin`；strict empty object，回 pinned backup identity、live expected、confirmation 與 digest |
-| 133 | `POST /v1/operator/maintenance/restore-drills` | JSON | 是 | `admin`；durable async enqueue，fresh `202`／replay `200`，operation／receipt／audit 原子提交 |
-| 134 | `GET /v1/operator/maintenance/restore-drills` | JSON | 讀取 | `view`；bounded newest-first durable operation ledger |
-| 135 | `GET /v1/operator/maintenance/restore-drills/{id}` | JSON | 讀取 | `view`；safe operation detail，不回 run token、private reason 或 idempotency material |
-| 136 | `GET /v1/operator/tickets` | JSON | 讀取 | `view`；固定 `[from,to]` Hub receive-time snapshot、1..30 天與 opaque provider filter；bounded/scrubbed provider、machine、agent、error evidence |
-| 137 | `POST /v1/operator/verifiers/preview` | JSON | 是 | `admin`；純 preview，回 policy 與綁 kind／name／failure domain 的 `preview_digest`；只有 `fleet_peer_agent` 的 `grants_deployment_gate=true`；零列寫入 |
-| 138 | `POST /v1/operator/verifiers` | JSON | 是 | `admin`；canonical；fresh `201` 只回一次 credential 明文，replay `200` 不含 credential 並回 `revoke_and_register` |
-| 139 | `GET /v1/operator/verifiers` | JSON | 讀取 | `view`；active／revoked 計數與列數一致，沒有 credential 或 hash 欄位 |
-| 140 | `GET /v1/operator/verifiers/{id}` | JSON | 讀取 | `view`；state 與 `revoked_at` 一致，`last_seen_at` 是 Hub 觀測到的寫入時間 |
-| 141 | `POST /v1/operator/verifiers/{id}/revocation-preview` | JSON | 是 | `admin`；exact `{}`；固定影響：registry 列與既有證據都保留 |
-| 142 | `POST /v1/operator/verifiers/{id}/revocations` | JSON | 是 | `admin`；revision CAS＋`Idempotency-Key`；憑證失效但列與證據保留，唯一 producer 的工作單轉 `producer_revoked` |
-| 143 | `POST /v1/operator/verifiers/{id}/assignment-preview` | JSON | 是，preview | `operate`；exact `{"job_id":…}` 純讀；digest 綁兩邊識別與固定 policy（separation rule、kind-specific satisfied_by／gate、發單需終態、Hub 不下發指令），刻意不綁工作單狀態 |
-| 144 | `POST /v1/operator/verifiers/{id}/assignments` | JSON | 是 | `operate`；preview digest＋逐字 `confirm_verifier_name`＋`Idempotency-Key`；派工列、receipt 與 audit 同 transaction；同域以 `409` 擋下。Fleet peer 要同一次派工後三條必要規則全到齊才算完成，其他 kind 一列即可 |
-| 145 | `POST /jobs/{id}/verifier-assignment-preview` | HTML form | 是，preview | `operate`；工作單頁只列出 failure domain 不同的 active verifier；確認頁帶理由與 preview digest |
-| 146 | `POST /jobs/{id}/verifier-assignments` | HTML form | 是 | `operate`；逐字 verifier 名稱確認交由 writer 在同一 transaction 比對；成功 303 回工作單頁，該頁即顯示待回報 |
-| 147 | `GET /machines/configuration` | HTML | 讀取 | `view`；Devices > Configuration 盤面：已發佈原則、目前指派、每台的 effective settings、verdict 與最後回報時間
-| 148 | `POST /machines/configuration/policy-preview` | HTML form | 是，preview | `admin`；純讀；回 current/next revision、canonical settings digest、preview digest 與影響機器數
-| 149 | `POST /machines/configuration/policies` | HTML form | 是 | `admin`；typed policy-id 確認；同值重發不產生新 revision，`expected_revision` 不符回衝突
-| 150 | `POST /machines/configuration/assignment-preview` | HTML form | 是，preview | `admin`；純讀；回目前生效的原則與指派後的值，原則或 revision 不存在回 `404`
-| 151 | `POST /machines/configuration/assignments` | HTML form | 是 | `admin`；typed scope-id 確認；assignment、receipt 與 audit 同 transaction
-| 152 | `GET /v1/operator/settings` | JSON | 讀取 | `view`；與 Web 盤面同一個 operator service；verdict 依 never_reported／unknown／mismatch／pending／applied 優先序取第一個成立者
-| 153 | `POST /v1/operator/setting-policies/preview` | JSON | 是，preview | `admin`；零列寫入；`preview_digest` 綁 canonical settings
-| 154 | `POST /v1/operator/setting-policies` | JSON | 是 | `admin`；fresh `201`、replay/unchanged `200`；policy row、receipt 與 audit 同 transaction
-| 155 | `POST /v1/operator/setting-assignments/preview` | JSON | 是，preview | `admin`；零列寫入；回這個範圍涵蓋的機器數
-| 156 | `POST /v1/operator/setting-assignments` | JSON | 是 | `admin`；scope 只接受 machine（須存在且未退役）或 channel；同 digest 不產生新 assignment revision
-| 157 | `GET /machines/compliance` | HTML | 讀取 | `view`；Devices > 合規性 盤面：四個判決計數、已發佈原則與它們不符合時會做什麼、目前指派，以及每台的判決、推出它的每一條規則結果，與動作現在做到哪一步（未觸發／寬限中／生效中）；有原則帶動作時多一行被停發工作單的台數
-| 158 | `POST /machines/compliance/policy-preview` | HTML form | 是，preview | `admin`；純讀；規則來自一個規則種類一列的 checkbox，動作也是一種一列（checkbox ＋寬限秒數），重複規則或重複動作在這個平面表達不出來
-| 159 | `POST /machines/compliance/policies` | HTML form | 是 | `admin`；typed policy-id 確認；同一組規則與動作換順序寫仍是同一份，不產生新 revision；確認頁無條件帶回每個動作的寬限秒數，因為 0 是「判定不符合就立即生效」而不是沒填
-| 160 | `POST /machines/compliance/assignment-preview` | HTML form | 是，preview | `admin`；純讀；回目前生效的原則與指派後的規則與動作，原則或 revision 不存在回 `404`
-| 161 | `POST /machines/compliance/assignments` | HTML form | 是 | `admin`；typed scope-id 確認；assignment、receipt 與 audit 同 transaction
-| 162 | `GET /v1/operator/compliance` | JSON | 讀取 | `view`；判決與動作狀態現算不落表，回應帶判決時間；每台連同每一條規則的 pass／fail／unmeasured 與每個動作的狀態一起回，另回被停發工作單的台數
-| 163 | `POST /v1/operator/compliance-policies/preview` | JSON | 是，preview | `admin`；零列寫入；`preview_digest` 綁 canonical rules
-| 164 | `POST /v1/operator/compliance-policies` | JSON | 是 | `admin`；fresh `201`、replay/unchanged `200`；policy row、receipt 與 audit 同 transaction
-| 165 | `POST /v1/operator/compliance-assignments/preview` | JSON | 是，preview | `admin`；零列寫入；回這個範圍涵蓋的機器數
-| 166 | `POST /v1/operator/compliance-assignments` | JSON | 是 | `admin`；scope 只接受 machine（須存在且未退役）或 channel；同 digest 不產生新 assignment revision
-| 167 | `GET /v1/operator/machines/{id}/actions` | JSON | 讀取 | `view`；`schema_version=5` 的裝置動作目錄。每個動作帶一個封閉的 `surface`（`operator-api`／`web`）；`web` 的動作沒有 operator API 路徑，`method`／`path` 缺席而不是填一條做不到那件事的路徑。九個具名動作中 retire／restore 只出現會改變狀態的一個方向，因此這台的指派使用者在 Linux 機器上最多八列，其他人最多七列。`connect` 與 `open_terminal` 是兩個 `surface=web` 的動作，`open_terminal` 只出現給這台機器的指派使用者，而且只出現在 Linux 機器上；每個動作的可用與否直接取自守住它寫入路徑的 preview/read contract，目錄不自己再判一次；重新命名與編輯名冊備註對 active／retired 都可用，輸入由各自專用 preview 判；只列出 principal 握有 capability 的動作
-| 168 | `GET /reports` | HTML | 讀取 | `view`；報告落地頁。每一份報告在點進去之前就說出自己回答什麼、範圍多大、看得到多遠、能不能整份匯出；「看得到多遠」取現行保留期與該報告單次讀取上限的較小者；只有在範圍裡完整的報告才給匯出連結
-| 169 | `GET /v1/operator/reports` | JSON | 讀取 | `view`；同一份報告清單的 canonical DTO；不接受任何 query parameter
-| 170 | `GET /machines/{id}/timeline` | HTML | 讀取 | `view`；單機事件時間軸。名冊、健康判定、工作單與操作員動作由新到舊排成一條，每一列都來自那一頁自己在用的讀取器；每個來源各自交代讀到幾列與有沒有讀完；1..30 天，預設 7
-| 171 | `GET /machines/{id}/timeline.csv` | CSV | 讀取／下載 | `view`；匯出的就是畫面上那些列，一列不多一列不少；檔名帶 machine_id 而不是顯示名稱；走與票證匯出同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
-| 172 | `GET /v1/operator/machines/{id}/timeline` | JSON | 讀取 | `view`；同一條時間軸的 canonical DTO；窗的兩端取整秒以對齊稽核的時間篩選，只接受 `days`
-| 173 | `GET /tenant/data` | HTML | 讀取 | `view`；資料揭露面。十四類資料各自交代留的是什麼、誰產生的、含不含自由文字、留多久、退役之後還剩什麼、去哪一頁看；「留多久」讀的是這台 Hub 現行的保留期，而「會不會被清」讀的是真的在刪東西的那張 prune 表
-| 174 | `GET /machines/{id}/data` | HTML | 讀取 | `view`；單機的留存量。同一份目錄加上這台實際的列數、最舊與最新、現在的清除界線；沒有 Hub 時刻的列照樣算進列數，但不進最舊 / 最新
-| 175 | `GET /machines/{id}/data.csv` | CSV | 讀取／下載 | `view`；匯出的就是畫面上那些類，一類不多一類不少；走與票證、時間軸同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
-| 176 | `GET /v1/operator/data-disclosure` | JSON | 讀取 | `view`；`schema_version=1` 的揭露面 canonical DTO；不接受任何 query parameter
-| 177 | `GET /v1/operator/machines/{id}/data` | JSON | 讀取 | `view`；同一份單機留存量的 canonical DTO；不接受任何 query parameter
-| 178 | `GET /reports/enrollment` | HTML | 讀取 | `view`；註冊報告。說好要納管的機器來了沒有；名冊每一列剛好落在一個階段（已納管／拿了憑證沒回來／等它來／票過期沒用／沒有票可以用／已退役），各自附「這是什麼」與「下一步」；還沒到的排在最上面，等最久的排最前面；不接受任何 query parameter
-| 179 | `GET /reports/enrollment.csv` | CSV | 讀取／下載 | `view`；匯出的就是畫面上那些列，一列不多一列不少；走與票證、時間軸、資料揭露同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
-| 180 | `GET /v1/operator/enrollment-report` | JSON | 讀取 | `view`；`schema_version=1` 的註冊報告 canonical DTO；不接受任何 query parameter；名冊超過 2,000 列時拒絕回一份少算的分母
-| 181 | `POST /machines/enrollment/limit-preview` | HTML | 是 | `admin`；改註冊上限的 review 頁。現在的上限、要改成什麼、名冊上幾台三張卡一起講；空白的台數欄位拒收，不讀成 0；比目前台數小的上限明說它退役不了任何一台
-| 182 | `POST /machines/enrollment/limits` | HTML | 是 | `admin`；confirm。要求 preview digest、`expected_revision` 與 idempotency key；取消上限走同一條路，並記下是誰取消的
-| 183 | `GET /v1/operator/enrollment-limit` | JSON | 讀取 | `view`；`schema_version=1` 的註冊上限 canonical DTO；算的台數與註冊報告的分母共用同一條 SQL 判準；沒有設上限回「沒有上限」而不是上限 0；不接受任何 query parameter
-| 184 | `POST /v1/operator/enrollment-limit/preview` | JSON | 是 | `admin`；純 preview，驗 0..10000 台；digest 綁「要改成什麼」，不綁「現在有幾台」
-| 185 | `POST /v1/operator/enrollment-limit` | JSON | 是 | `admin`；fresh/replay 均回 `200`；preview 過期回 `412`，開票撞上限回 `409`；replay 回的是今天的上限，不是當時改成什麼
-| 186 | `GET /reports/software` | HTML | 讀取 | `view`；軟體清查。機隊上裝了什麼、各是哪一版、哪幾台沒有，以及那個版號講的是不是正在跑的那一份；每一台每一個工具一格，六種互斥且窮盡的狀態（跟機隊裡最新的一樣／比機隊裡最新的舊／比不出來／裝了問不到版號／這台上沒有／沒回報過）各自附「這是什麼」與「下一步」；裝著東西的那幾格再帶第二個軸（量的就是跑的／正在跑的是另一個檔案／正在跑的那個檔案已經不在磁碟上／有 process 在跑它但說不出跑的是哪一個／process 偵測沒有跑到底／沒有找到在跑它的 process／這一筆觀測沒有講 process 的事）與它講的那兩個檔案，「正在跑的是另一個檔案」與「已經不在磁碟上」那幾格單獨列一節排在版號不一致前面；「最新」指的是機隊裡看到的最新版，那句限制留在畫面上；不接受任何 query parameter
-| 187 | `GET /reports/software.csv` | CSV | 讀取／下載 | `view`；一列是「一台機器 × 一個工具」，一格不多一格不少，15 欄含「版號講的是哪一份」「量版號的那個檔案」「正在跑的那個檔案」；走與票證、時間軸、資料揭露、註冊報告同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
-| 188 | `GET /v1/operator/software-report` | JSON | 讀取 | `view`；`schema_version=2` 的軟體清查 canonical DTO（`runtime`／`misattributed`／`runtime_states`；加欄位就要把版號 +1，strict decoder 對不認得的欄位整份拒收）；不接受任何 query parameter；分母超過 2,000 台或回報超過 200 個工具時拒絕回一份少算的清查
-| 189 | `GET /reports/install` | HTML | 讀取 | `view`；每機安裝狀態。我叫哪幾台裝什麼、我在它們上面看到什麼；每一台每一個資源一格，十種互斥且窮盡的狀態（指派的跟看到的一樣／指派的比看到的新／指派的比看到的舊／比不出來／指派的那一筆沒講版號／裝了問不到版號／指派了這台上沒有／指派了看不到這個東西／指派了這台沒回報過／沒有被指派過）各自附「這是什麼」與「下一步」；「指派的」取 machine scope 與該台所在 channel scope 裡 revision 最大的那一筆，跟 agent 實際收到的是同一條規則；「指派的比看到的舊」不講成落後或失敗，那句「東西可以從指派以外的路徑裝上去」留在畫面上；這台回報說它上面有的那幾格再答「看到的那個版號量的是不是正在跑的那一份」（跟軟體清查同一份判準與同一組句子），量錯檔案的那幾格單獨一節排在「指派的跟看到的不一樣」前面、也標在資源 × 機器那張表的每一格上，摘要卡與報告那一行字都帶著那個數字；不接受任何 query parameter
-| 190 | `GET /reports/install.csv` | CSV | 讀取／下載 | `view`；一列是「一台機器 × 一個資源」，一格不多一格不少；走與票證、時間軸、資料揭露、註冊報告、軟體清查同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）；`版號講的是哪一份`／`量版號的那個檔案`／`正在跑的那個檔案` 三欄各自佔一欄，因為照「看到的版號」排序的人只能從那兩欄看出這一列量錯了檔案
-| 191 | `GET /v1/operator/install-report` | JSON | 讀取 | `view`；`schema_version=2` 的每機安裝狀態 canonical DTO（`misattributed`、`runtime_states`、每一列的 `runtime`、每一個資源的 `misattributed_on`）；不接受任何 query parameter；分母超過 2,000 台或超過 200 個資源時拒絕回一份少算的報告
-| 192 | `GET /reports/profile` | HTML | 讀取 | `view`；發佈與指派。這份 profile 發佈了然後呢；每一個已發佈的 revision 四種狀態（有機器穿著／只有已退役的還穿著／已發佈到更新的版本／發佈了一台都沒指派），它點名的每一個（套件, 版本）四種狀態（指派過也看得到／指派過但沒一台回報／沒指派過但看得到／沒指派過也沒看到過）；「發佈了一台都沒指派」與「點名了一個這個 Hub 沒見過的版本」各自有自己的一節，不埋在大表裡；看得到的版號量在沒人跑的那份檔案上的格子另有一節，排在「一台都沒指派」前面，逐版表也列出其中幾台量錯；不接受任何 query parameter
-| 193 | `GET /reports/profile.csv` | CSV | 讀取／下載 | `view`；一列是「一份已發佈的 revision × 它點名的一個套件版本」，一列不多一列不少——改成一台機器一列的話，一份一台都沒指派的 profile 在檔案裡一列都沒有；穿著它的機器擠在一格裡並標出已退役；`其中版號不是跑的那一份的台數` 獨立成欄，量錯檔案的機器仍算進看到幾台；走與票證、時間軸、註冊、軟體清查、安裝狀態同一條匯出管線（BOM、公式中和、UTC、那句限制當最後一欄）
-| 194 | `GET /v1/operator/profile-report` | JSON | 讀取 | `view`；`schema_version=2` 的發佈與指派對照 canonical DTO；每一個已發佈的 profile revision 四種狀態，它點名的每一個（套件, 版本）四種狀態；每格的 `seen_misattributed_on` 是 `seen_on` 的子集，整份的 `seen_misattributed` 按格數計，兩者都不另造第五種狀態；有量錯檔案的那一格，下一步改成到每機安裝狀態核對執行檔與其版號；「指派過沒有」讀整條 `desired_state` 歷史，不是現行意圖；不接受任何 query parameter；分母超過 2,000 台或發佈超過 500 版時拒絕回一份少算的報告
-| 195 | `POST /machines/{id}/display-name-preview` | HTML | 是，preview | `admin`；單機動作的重新命名 review。明列目前名稱、新名稱、immutable machine ID、名稱型 expectations 的 key 變更，以及 pending enrollment ticket 標籤是否一併更新；要求理由但不寫入
-| 196 | `POST /machines/{id}/display-name` | HTML | 是 | `admin`；逐字確認目前名稱後經 canonical service 套用，成功仍以 machine ID 導回 detail；replay 不再次改名
-| 197 | `POST /v1/operator/machines/{id}/display-name-preview` | JSON | 是，preview | `admin`；只讀、no-store；驗新名稱格式與跨名冊重複，digest 綁目前名稱與固定影響
-| 198 | `PUT /v1/operator/machines/{id}/display-name` | JSON | 是 | `admin`；名冊名稱、未兌換 ticket 標籤、immutable receipt 與 audit 同 transaction；machine ID、agent credential、token/hash、hostname、channel 與 lifecycle 不變；stale preview `412`，確認缺失／不符 `428`，重複名稱 `409`
-| 199 | `POST /machines/{id}/notes-preview` | HTML | 是，preview | `admin`；單機動作的名冊備註 review；顯示舊值、新值、理由與固定影響，要求理由但不寫入
-| 200 | `POST /machines/{id}/notes` | HTML | 是 | `admin`；逐字確認目前 display name 後經 canonical service 套用；成功與 replay 都以 machine ID 導回動作區
-| 201 | `POST /v1/operator/machines/{id}/notes-preview` | JSON | 是，preview | `admin`；只讀、no-store；空字串表示清除，其餘備註限 1000 bytes UTF-8 且不收邊界空白／digest 綁舊值與新值
-| 202 | `PUT /v1/operator/machines/{id}/notes` | JSON | 是 | `admin`；備註 CAS、immutable receipt 與 audit 同 transaction；receipt/audit 不複製 free text；machine ID、機器設定與 agent 不變；stale preview `412`，preview 缺失／名稱不符 `428`
-| 203 | `GET /v1/operator/daily-report` | JSON | 讀取 | `view`；`schema_version=1`；running Hub 以自己的 expectations、public URL 與還原演練章產生 exact notification body；1 秒至 30 天，預設 24 小時；不送出、不寫 notification receipt；`clawctl-hub report` 正常模式只走這條 API，明示 `--db` 才進 stopped-service fence
-| 204 | `POST /preferences/navigation-language` | HTML form | 是，browser preference | `view`；右上角在 `en`／`zh-Hant` 間切換管理中心外框與導覽；同源 form 恰好一個 `locale` 與一個 `return_to`，cross-site POST 以 `CROSS_ORIGIN_REQUEST` 拒絕；HttpOnly SameSite=Lax cookie、同站 bounded `return_to`、不寫 Store／audit；尚未翻譯的證據內容保留 `lang="zh-Hant"`
-| 205 | `GET /v1/operator/machines/{id}/assigned-user` | JSON | 讀取 | `view`；使用者識別碼、登入名稱、版本與 `ETag` |
-| 206 | `PUT /v1/operator/machines/{id}/assigned-user` | JSON | 是 | `admin`；核對 Tailnet 使用者名冊、名稱確認、版本檢查、請求重放與稽核；`none` 取消指派 |
-| 207 | `POST /machines/{id}/assigned-user-preview` | HTML form | 讀取／預覽 | `admin`；顯示目前與目標使用者，保留預期版本；要求輸入機器名稱 |
-| 208 | `POST /machines/{id}/assigned-user` | HTML form | 是 | `admin`；套用指派或取消指派後回機器明細；來源不可用與空名冊分別顯示 |
-| 209 | `GET /machines/{id}/terminals/{session}` | HTML | 讀取／輸入 | `operate`；這位操作員在這台機器上已開啟的終端，到達時顯示輸出並接受輸入。機器頁的「開啟終端」貼到列 204 |
-| 210 | `POST /machines/{id}/terminals` | HTML | 是 | `operate`；機器頁的「開啟終端」貼到這裡，開啟這台機器的終端，成功後前往該終端頁；重送同一組開啟請求回到同一個終端 |
-| 211 | `GET /machines/{id}/terminals/{session}/socket` | HTML | 讀取／輸入 | `operate`；終端連線。這位操作員的終端頁用這條連線收發這個工作階段的輸入與輸出。機器頁的「開啟終端」貼到列 204 |
-| 212 | `POST /deployments/{id}/skip-failed-batch-preview` | HTML form | 是，preview | `operate`；單獨標示的 skip failed batch。空理由在進 review 前拒絕。digest 與 Continue 不同 |
-| 213 | `POST /deployments/{id}/skip-failed-batch` | HTML form | 是 | `operate`；確認 channel。理由寫進稽核與 Hub event。失敗的工作單不重開。不能把最後一批收成 finished |
-| 214 | `POST /v1/operator/deployments/{id}/skip-failed-batch-preview` | JSON | 是，preview | `operate`；與 HTML 同一份 eligibility。opened batch 沒有失敗終態，或沒有下一批，則不可執行 |
-| 215 | `POST /v1/operator/deployments/{id}/skip-failed-batches` | JSON | 是 | `operate`；plain Continue 在失敗批次回 `DEPLOYMENT_CONTINUE_REFUSED`。MCP 不呼叫這條 |
-| 216 | `GET /v1/operator/disk-clean/summaries` | JSON | 讀取 | `view`；已指派或已回報的 disk-clean 摘要。Hub 判決、過期、digest、disk_free_min_percent 與 attention。不接受 query |
-| 217 | `GET /v1/operator/disk-clean/summaries/{id}` | JSON | 讀取 | `view`；單機。名冊沒有這台回 404。已註冊未指派仍回 stale |
-| 218 | `POST /v1/operator/disk-clean/profile-preview` | JSON | 是，preview | `admin`；渲染 conf 與 digest，不寫 revision |
-| 219 | `POST /v1/operator/disk-clean/profiles` | JSON | 是 | `admin`；expected_revision、preview_digest、Idempotency-Key。同一份 conf 不產生新 revision。fresh 201，replay 或 unchanged 200 |
-| 220 | `POST /v1/operator/disk-clean/dry-run-preview` | JSON | 是，preview | `admin`；點名 dry-run 目標。blocker 不進 digest |
-| 221 | `POST /v1/operator/disk-clean/dry-runs` | JSON | 是 | `admin`；每台一張可逆工作單。fresh 201，replay 200 |
-| 222 | `POST /v1/operator/disk-clean/canary-preview` | JSON | 是，preview | `admin`；canary 恰好一台 |
-| 223 | `POST /v1/operator/disk-clean/canaries` | JSON | 是 | `admin`；只開第一批。continue 之前不對其餘機器建立工作單 |
-| 224 | `POST /v1/operator/disk-clean/continuation-preview` | JSON | 是，preview | `admin`；digest 含目前 state |
-| 225 | `POST /v1/operator/disk-clean/continuations` | JSON | 是 | `admin`；paused 且 canary 成功後才打開其餘機器 |
-| 226 | `POST /v1/operator/disk-clean/abandonment-preview` | JSON | 是，preview | `admin`；放棄不開新工作單 |
-| 227 | `POST /v1/operator/disk-clean/abandonments` | JSON | 是 | `admin`；進行中的工作單還沒結束時拒絕。指派留著 |
-| 228 | `POST /machines/{id}/keyed-installer` | download | Read / download | `admin`; verified Linux bootstrap plus Hub URL and one-time enrollment token; no redemption; no-store |
+| 29 | `GET /metrics` | plain text | 讀取 | Requires the operator view grant. A caller without that grant, including every managed machine, receives 403. `/healthz` stays public. |
+| 30 | `GET /` | HTML | 讀取 | Overview dashboard |
+| 31 | `GET /machines` | HTML | 讀取 | All devices |
+| 32 | `GET /machines/enrollment` | HTML | 讀取／建立入口 | Enrollment 專頁與 Tailnet 候選對照 |
+| 33 | `GET /machines/{id}` | HTML | 讀取 | Device detail；judgement、expectation/artifact/event、monitor/identity/resources/history 與 machine evidence 都由 typed bounded DTO 渲染；pending metadata 讀 dedicated typed operator service；BAT coordinates 讀 `MachineConnect` v1 typed BFF，不再有 raw Store bridge |
+| 34 | `GET /jobs` | HTML | 讀取 | Global Jobs list、filters 與 keyset paging；SSR 共用 in-process operator service |
+| 35 | `GET /jobs/{id}` | HTML | 讀取 | Job detail；desired/verifier evidence 與 rejection detail 改由 typed bounded evidence DTO 渲染（scrub、依欄位 `max_bytes` 截斷、agent/Hub provenance），不再有 raw Store-model bridge；獨立證據分開顯示列數與 distinct live verifier 身分數，同一 verifier 的多條規則／多次重派不冒充多雙眼睛 |
+| 36 | `GET /apps` | HTML | 讀取 | Apps 的概觀／OpenClaw／Store／Profiles／Assignments／Artifacts／Fetch／Operations 八個 submenu；Profiles 每一版說出它現在穿在幾台身上與那一格是什麼，Assignments 名冊上每一台說出它現在穿著哪一版，兩頁與 `/reports/profile` 讀同一份 `ProfileReport` |
+| 37 | `GET /apps/artifacts/{id}` | HTML | 讀取／完整驗證 | Artifact safe detail；完整重算 SHA-256 後才可顯示 `ready` |
+| 38 | `GET /apps/artifact-fetches/{id}` | HTML | 讀取 | Durable fetch operation safe detail |
+| 39 | `GET /deployments` | HTML | 讀取 | Deployment list |
+| 40 | `GET /deployments/{id}` | HTML | 讀取 | Deployment detail；targets 表加一欄跨故障域證據（每個已開單 target 的 verdict、rows、distinct 可用 producer），表頭一行數出「已開單的 N 台中有幾台被第二個 producer 回報通過」。沒開單的 target 留空，不給 verdict |
+| 41 | `GET /updates` | HTML | 讀取／preview | 共用 native Updates model 的 artifacts、channel 成員、最近部署與 rollout gate |
+| 42 | `GET /reports/tickets` | HTML | 讀取 | Ticket ledger |
+| 43 | `GET /reports/tickets.csv` | CSV | 讀取／下載 | Browser export，不是 stable JSON API |
+| 44 | `GET /audit` | HTML | 讀取 | Audit safe ledger；SSR 共用 operator service、完整 filters 與 creation-ceiling paging |
+| 45 | `POST /machines/{id}/connect` | BFF | 是 | Redirect 到 BAT；Web 不代理遠端工作階段 |
+| 46 | `POST /apps/artifact-fetches/preview` | HTML form | 是，preview | 固定 production registry 的 exact-version intake review |
+| 47 | `POST /apps/artifact-fetches` | HTML form | 是 | typed package/version、idempotent durable enqueue 與 atomic audit |
+| 48 | `POST /machines/{id}/retire` | HTML form | 是 | 穩定 Web apply route；現由 canonical lifecycle service 要求 preview/revision/typed confirmation/idempotency |
+| 49 | `POST /machines/{id}/unretire` | HTML form | 是 | 穩定 Web apply route；與 retire 共用同一 atomic lifecycle writer 與完整確認 |
+| 50 | `POST /enrollments/preview` | HTML form | 是，preview | Web adapter 呼叫 canonical operator service |
+| 51 | `POST /enrollments` | HTML form | 是 | 一次性 secret；Web adapter 呼叫 canonical service |
+| 52 | `POST /machines/{id}/revoke-token/preview` | HTML form | 是，preview | 顯示 exact pending-ticket identity 與固定影響 |
+| 53 | `POST /machines/{id}/revoke-token` | HTML form | 是 | **只撤銷 pending enrollment ticket**，不是 active credential |
+| 54 | `POST /machines/{id}/channel` | HTML form | 是 | Web adapter 呼叫 canonical channel service |
+| 55 | `POST /deployments/preview` | HTML form | 是，preview | canonical create preview；固定 artifact、target snapshot、policy digest |
+| 56 | `POST /deployments` | HTML form | 是 | canonical create apply；typed channel/version、idempotency、atomic audit |
+| 57 | `POST /deployments/{id}/continue-preview` | HTML form | 是，preview | canonical；精確下一批或 finish outcome |
+| 58 | `POST /deployments/{id}/continue` | HTML form | 是 | canonical；control revision/opened batch precondition |
+| 59 | `POST /deployments/{id}/retry-preview` | HTML form | 是，preview | canonical；只列 exact terminal-failure targets |
+| 60 | `POST /deployments/{id}/retry` | HTML form | 是 | canonical；建立有 lineage 的新 attempt |
+| 61 | `POST /deployments/{id}/abandon-preview` | HTML form | 是，preview | canonical；列出不再開單的 targets |
+| 62 | `POST /deployments/{id}/abandon` | HTML form | 是 | canonical；full-ID confirmation、terminal-job gate |
+| 63 | `GET /v1/operator/machines/{id}/channel` | JSON | 讀取 | canonical；回 revision / `ETag` |
+| 64 | `PUT /v1/operator/machines/{id}/channel` | JSON | 是 | canonical；typed confirmation + revision + idempotency |
+| 65 | `POST /v1/operator/enrollment-tokens/preview` | JSON | 是，preview | canonical；回 policy-bound preview digest |
+| 66 | `POST /v1/operator/enrollment-tokens` | JSON | 是 | canonical；明文 token 只在 fresh response 回傳一次 |
+| 67 | `GET /v1/operator/machines/{id}/enrollment-token` | JSON | 讀取 | canonical；只回唯一 pending ticket metadata，不回 hash/secret；多張歧義時 fail closed |
+| 68 | `POST /v1/operator/machines/{id}/enrollment-token/revocation-preview` | JSON | 是，preview | canonical；digest 綁 exact ticket 與影響 policy |
+| 69 | `POST /v1/operator/machines/{id}/enrollment-token/revocations` | JSON | 是 | canonical；fresh `201`、redacted replay `200`、atomic audit |
+| 70 | `GET /v1/operator/machines` | JSON | 讀取 | schema v2；safe DTO、machine/display/state/lifecycle/reporting/channel filters、1..100 paging、filter-bound registry-creation ceiling live keyset；分母只看 active/retired，legacy `expected` 不參與重數；不接受 `expected` filter |
+| 71 | `GET /v1/operator/machines/{id}` | JSON | 讀取 | schema v5 typed detail；safe summary＋Hub judgement／100 findings＋最多 50 條 expectation display definitions 與 bounded artifact/event evidence＋monitor/identity/resources/check-ins/state history。保留 clocks、unknown/read-failed/invalid/truncated；artifact freshness 不讀內容、不冒充 outcome，event 只用 operator-declared enums 與 structured counts、不掃關鍵字；connect/pending excluded |
+| 72 | `GET /v1/operator/jobs` | JSON | 讀取 | Jobs list read slice；filters、creation-ceiling live keyset 與 safe DTO |
+| 73 | `GET /v1/operator/jobs/{id}` | JSON | 讀取 | Job safe detail；省略 desired spec、raw event payload 與 verifier command/output（typed evidence 見 85） |
+| 74 | `GET /v1/operator/artifacts` | JSON | 讀取 | Metadata-only catalog list；`available_unverified` 不冒充 byte verification |
+| 75 | `GET /v1/operator/artifacts/{sha256}` | JSON | 讀取／完整驗證 | Safe detail；no-follow descriptor 上完整重算 SHA-256 |
+| 76 | `POST /v1/operator/artifact-fetches/preview` | JSON | 是，preview | exact OpenClaw 固定 npm origin/SHA-512/engine；exact Node runtime 固定 nodejs.org checksums 與 deterministic multiarch bundle；exact Hermes 固定 Docker Hub official image index 與完整 Linux amd64/arm64 OCI closure；exact Claude Code 固定 downloads.claude.ai manifest 與 linux／darwin／windows amd64／arm64 binary SHA-256；exact Codex 固定 releases.openai.com `release.json`、`rust-v<version>`、六份 codex-package archive 與 `codex-package_SHA256SUMS`；exact Antigravity 固定六份 latest-pointer manifest，只接受上游目前發佈的版號 |
+| 77 | `POST /v1/operator/artifact-fetches` | JSON | 是 | durable enqueue；fresh/replay 均為 `202`，replay 另有 header/body evidence；idempotency/audit 同 transaction |
+| 78 | `GET /v1/operator/artifact-fetches` | JSON | 讀取 | Durable operation list；state/name/version filters |
+| 79 | `GET /v1/operator/artifact-fetches/{id}` | JSON | 讀取 | Operation phase/progress/result 或 bounded failure code/detail |
+| 80 | `GET /v1/operator/updates` | JSON | 讀取／preview | `schema_version=5`；Artifacts、channel members、latest deployment、rollout plan，以及逐 canary target 顯示十一種獨立證據狀態與下一步的 stable promotion gate |
+| 81 | `GET /v1/operator/deployments` | JSON | 讀取 | canonical safe list；channel/state/stuck filters、live keyset cursor |
+| 82 | `GET /v1/operator/deployments/{id}` | JSON | 讀取 | canonical safe detail（`schema_version=3`）；targets、material summary、action eligibility；每個已開單 target 帶 `independent`（八種 verdict 之一／rows／distinct live_producers），未開單 target 為 `null`；另有 deployment 層 rollup（opened/passed targets、逐 target live producers 加總、八種 verdict 的 target 計數），由 targets 推導而非另一份真相；不回 raw spec/created_by |
+| 83 | `POST /v1/operator/deployments/preview` | JSON | 是，preview | `schema_version=4`；create preview；重新驗 artifact bytes，固定 targets 與 promote verdict；stable 逐台要求 active fleet peer 在最新派工後送齊三條必要規則，且 `current_release` 的結構化版號等於 canary exact version |
+| 84 | `POST /v1/operator/deployments` | JSON | 是 | create apply；fresh `201`、成功 replay `200`；拒絕 replay 保留原錯誤 status/code |
+| 85 | `POST /v1/operator/deployments/{id}/continuation-preview` | JSON | 是，preview | continue/finish preview |
+| 86 | `POST /v1/operator/deployments/{id}/continuations` | JSON | 是 | optimistic precondition + idempotent apply |
+| 87 | `POST /v1/operator/deployments/{id}/retry-preview` | JSON | 是，preview | exact terminal-failure retry scope |
+| 88 | `POST /v1/operator/deployments/{id}/retries` | JSON | 是 | 新 attempt、fresh `201`、lineage receipt |
+| 89 | `POST /v1/operator/deployments/{id}/abandonment-preview` | JSON | 是，preview | terminal-job gate 與 unopened impact |
+| 90 | `POST /v1/operator/deployments/{id}/abandonments` | JSON | 是 | paused → finished；full-ID confirmation |
+| 91 | `GET /v1/operator/audit-events` | JSON | 讀取 | Safe allowlist audit read；完整 filters、creation-ceiling cursor 與 bounded denial sampling |
+| 92 | `GET /reports/changes` | HTML | 讀取 | Changes typed safe read；SSR 共用 operator service、固定 window/ceilings、coverage 與 paging |
+| 93 | `GET /v1/operator/changes` | JSON | 讀取 | Transition + endpoint-delta safe DTO；Hub clock、bounded filters/window/paging、retention/malformed disclosure |
+| 94 | `GET /machines/lifecycle` | HTML | 讀取／預覽入口 | Devices > Lifecycle 可發現 submenu；顯示 active/retired 與獨立 revision，不再顯示 legacy expected 軸 |
+| 95 | `POST /machines/{id}/lifecycle-preview` | HTML form | 是，preview | Web adapter 呼叫 canonical lifecycle service；retire 確認另列當下開啟的終端工作階段數，並說明套用時仍開啟者會結束；restore 不顯示這項退役影響 |
+| 96 | `GET /v1/operator/machines/{id}/lifecycle` | JSON | 讀取 | Safe current projection；回 `lifecycle_revision` / `ETag`，分母只由 active/retired 決定；不回 legacy `expected` 或 credential/token hash |
+| 97 | `POST /v1/operator/machines/{id}/lifecycle-preview` | JSON | 是，preview | `admin`；另回不綁 digest/receipt 的 `open_agent_session_count` preview-time fact；其餘保留／存取影響綁 exact revision；非終態 job 會阻擋 active→retired |
+| 98 | `PUT /v1/operator/machines/{id}/lifecycle` | JSON | 是 | `admin`；typed name/reason、preview digest、revision、idempotency；retire 結束套用時仍開啟的終端工作階段；projection/event/receipt/audit 原子提交 |
+| 99 | `GET /v1/operator/jobs/{id}/evidence` | JSON | 讀取 | `view`；`schema_version=6` typed bounded evidence：desired spec、event metadata＋payload bytes、最後一筆 rejected code/detail、verification rule/command/stdout/stderr；每欄依自報 `max_bytes` scrub/截斷（16 KiB／256／64）、每段 1..100 筆；event 與 rejection 明列 agent 或 Hub scheduler producer；新 event/verification row 明列 producer/role/authority 與 row provenance，verification 另有 Hub received_at；legacy row 明列未記錄；另有 `independent` 段：八種 verdict、verifier 的 kind／ID／display name／failure domain／撤銷狀態、`verifier_bearer` authority、兩個時鐘與 expected／observed version；digest/version match 都由 Hub 比較，stdout 不參與版號判斷；`independent_verifier` 由該單 live producer 數算出來，不是常數；不回 raw payload／lease token |
+| 100 | `GET /v1/operator/machines/{id}/evidence` | JSON | 讀取 | `view`；`schema_version=6` typed bounded OpenClaw/CLI/credential/occupancy/systemd/run-summary/journal evidence；systemd unit 帶 `measured`／`reason`、CLI tool 帶 `process_scan`，把「問不到」與「確實不存在」分開；版本來源與 conflict 不合併、raw version 只顯示不解析；專用 host path／DB location／PID、credential secret/account 與 occupancy event identity 均結構性排除；各段有 clocks、truthful totals/invalid、producer/relay、redaction 差異及 strict-client coherence |
+| 101 | `GET /machines/diagnostics` | HTML | 讀取／建立入口 | Devices > Diagnostics；列出名冊機器與 noop protocol drill 表單 |
+| 102 | `POST /machines/{id}/diagnostic-noop-preview` | HTML form | 是，preview | `operate`；顯示 timeout、revision、heartbeat execution 狀態、active-job occupancy、固定 impact 與 blockers |
+| 103 | `POST /machines/{id}/diagnostic-noop-jobs` | HTML form | 是 | `operate`；typed machine-name confirm，成功後導向 canonical job detail |
+| 104 | `POST /v1/operator/machines/{id}/diagnostic-noop-preview` | JSON | 是，preview | `operate`；固定 noop spec、machine lifecycle、最新 `jobs_enabled`、active jobs、OpenClaw revision 與 preview digest；execution unknown/false 回 typed blocker |
+| 105 | `POST /v1/operator/machines/{id}/diagnostic-noop-jobs` | JSON | 是 | `operate`；fresh `201`／replay `200`；atomic desired state、job、idempotency receipt 與 audit，回 Location/ETag |
+| 106 | `POST /apps/store/packages/preview` | HTML form | 是，preview | `admin`；從已驗證 artifact 產生 fixed Node/OpenClaw/Hermes manifest review |
+| 107 | `POST /apps/store/packages` | HTML form | 是 | `admin`；canonical token、typed package/version confirm 與 atomic publication/audit |
+| 108 | `POST /apps/profiles/preview` | HTML form | 是，preview | `admin`；選取 exact packages，顯示完整解析結果 |
+| 109 | `POST /apps/profiles` | HTML form | 是 | `admin`；canonical token、typed profile/revision confirm 與 atomic publication/audit |
+| 110 | `POST /apps/profile-assignments/preview` | HTML form | 是，preview | `admin`；顯示 exact machine/profile、dependency order、jobs、prerequisites 與 blockers |
+| 111 | `POST /apps/profile-assignments` | HTML form | 是 | `admin`；typed machine-name confirm，atomic 建立 desired states/jobs/edges/receipt/audit |
+| 112 | `GET /v1/operator/catalog-manifests` | JSON | 讀取 | `view`；safe package/kind filters 與 filter-bound keyset cursor |
+| 113 | `POST /v1/operator/catalog-manifests/standard-preview` | JSON | 是，preview | `admin`；full artifact verification，固定 Node/OpenClaw/Hermes manifest 與 exact dependency/conflict contract |
+| 114 | `POST /v1/operator/catalog-manifests` | JSON | 是 | `admin`；typed package/version/digest confirmation，fresh `201`、replay/already-published `200` |
+| 115 | `GET /v1/operator/machine-profiles` | JSON | 讀取 | `view`；safe profile filter 與 filter-bound keyset cursor |
+| 116 | `POST /v1/operator/machine-profiles/preview` | JSON | 是，preview | `admin`；驗證 selected packages 並固定 canonical profile digest |
+| 117 | `POST /v1/operator/machine-profiles` | JSON | 是 | `admin`；typed profile/revision/digest confirmation，fresh `201`、replay/already-published `200` |
+| 118 | `POST /v1/operator/machines/{id}/profile-assignment-preview` | JSON | 是，preview | `admin`；解析 compatible dependency graph 與 exact job impact |
+| 119 | `POST /v1/operator/machines/{id}/profile-assignments` | JSON | 是 | `admin`；fresh `201`／replay `200`；atomic desired states、dependency-ordered jobs、edges、receipt 與 audit |
+| 120 | `GET /downloads/agent/{arch}` | download | 讀取／下載 | `view`；既有 `amd64`／`arm64` 與 Linux aliases、已發布的 `darwin-amd64`／`darwin-arm64`。每次下載重開 no-follow descriptor 並重驗版本、ELF／Mach-O 架構、archive layout、大小與 SHA-256 |
+| 121 | `GET /settings/tailnet` | HTML | 讀取 | `view`；顯示 source observation time、stable peer identity、未納管／已忽略／在線無心跳／退役仍在線分類 |
+| 122 | `POST /settings/tailnet/peer-ignore-preview` | HTML form | 是，preview | `admin`；固定 peer stable ID、目前 hostname、expiry、reason 與 revision |
+| 123 | `POST /settings/tailnet/peer-ignores` | HTML form | 是 | `admin`；typed hostname confirmation、preview digest、revision、idempotency 與 atomic audit |
+| 124 | `GET /v1/operator/tailnet` | JSON | 讀取 | `view`；canonical reconcile DTO；來源不可用與空清單分開，本地 active ignore rules 仍可讀取，所有 collections 非 null |
+| 125 | `POST /v1/operator/tailnet/peer-ignore-preview` | JSON | 是，preview | `admin`；stable node ID identity、1..366 天 expiry 與 current rule revision |
+| 126 | `PUT /v1/operator/tailnet/peer-ignores/{id}` | JSON | 是 | `admin`；fresh/replay 均為 `200`，replay header/body 一致；domain state、receipt、audit 原子提交 |
+| 127 | `GET /tenant/maintenance` | HTML | 讀取 | `view`；顯示目前 retention policy、revision、上次清理與還原演練狀態 |
+| 128 | `POST /tenant/maintenance/retention/prune-preview` | HTML form | 是，preview | `admin`；以目前 Hub policy 固定 evaluation time、revision、五張表的刪除／保留數與 protected newest evidence |
+| 129 | `POST /tenant/maintenance/retention/prunes` | HTML form | 是 | `admin`；逐字 `DELETE N ROWS`、reason、revision、preview digest 與 idempotency；刪除、retention ledger、receipt、audit 原子提交 |
+| 130 | `GET /v1/operator/maintenance/retention` | JSON | 讀取 | `view`；canonical policy、revision 與 never-run／zero-row-run 可區分的最新狀態 |
+| 131 | `POST /v1/operator/maintenance/retention/prune-preview` | JSON | 是，preview | `admin`；可明示秒級 policy 與 evaluation time，回 exact boundaries/counts/confirmation/digest |
+| 132 | `POST /v1/operator/maintenance/retention/prunes` | JSON | 是 | `admin`；fresh/replay 均 `200`；stale revision/scope fail closed，domain deletion 與證據原子提交 |
+| 133 | `GET /tenant/maintenance/restore-drills/{id}` | HTML | 讀取 | `view`；顯示 queued/running/succeeded/failed、固定備份身分、結果或 typed failure |
+| 134 | `POST /tenant/maintenance/restore-drill-preview` | HTML form | 是，preview | `admin`；固定最新 standalone backup 的 name/size/mtime/SHA-256、live expected 與 `VERIFY filename` |
+| 135 | `POST /tenant/maintenance/restore-drills` | HTML form | 是 | `admin`；確認後 durable enqueue，導向 operation detail；不替換正式資料庫 |
+| 136 | `POST /v1/operator/maintenance/restore-drill-preview` | JSON | 是，preview | `admin`；strict empty object，回 pinned backup identity、live expected、confirmation 與 digest |
+| 137 | `POST /v1/operator/maintenance/restore-drills` | JSON | 是 | `admin`；durable async enqueue，fresh `202`／replay `200`，operation／receipt／audit 原子提交 |
+| 138 | `GET /v1/operator/maintenance/restore-drills` | JSON | 讀取 | `view`；bounded newest-first durable operation ledger |
+| 139 | `GET /v1/operator/maintenance/restore-drills/{id}` | JSON | 讀取 | `view`；safe operation detail，不回 run token、private reason 或 idempotency material |
+| 140 | `GET /v1/operator/tickets` | JSON | 讀取 | `view`；固定 `[from,to]` Hub receive-time snapshot、1..30 天與 opaque provider filter；bounded/scrubbed provider、machine、agent、error evidence |
+| 141 | `POST /v1/operator/verifiers/preview` | JSON | 是 | `admin`；純 preview，回 policy 與綁 kind／name／failure domain 的 `preview_digest`；只有 `fleet_peer_agent` 的 `grants_deployment_gate=true`；零列寫入 |
+| 142 | `POST /v1/operator/verifiers` | JSON | 是 | `admin`；canonical；fresh `201` 只回一次 credential 明文，replay `200` 不含 credential 並回 `revoke_and_register` |
+| 143 | `GET /v1/operator/verifiers` | JSON | 讀取 | `view`；active／revoked 計數與列數一致，沒有 credential 或 hash 欄位 |
+| 144 | `GET /v1/operator/verifiers/{id}` | JSON | 讀取 | `view`；state 與 `revoked_at` 一致，`last_seen_at` 是 Hub 觀測到的寫入時間 |
+| 145 | `POST /v1/operator/verifiers/{id}/revocation-preview` | JSON | 是 | `admin`；exact `{}`；固定影響：registry 列與既有證據都保留 |
+| 146 | `POST /v1/operator/verifiers/{id}/revocations` | JSON | 是 | `admin`；revision CAS＋`Idempotency-Key`；憑證失效但列與證據保留，唯一 producer 的工作單轉 `producer_revoked` |
+| 147 | `POST /v1/operator/verifiers/{id}/assignment-preview` | JSON | 是，preview | `operate`；exact `{"job_id":…}` 純讀；digest 綁兩邊識別與固定 policy（separation rule、kind-specific satisfied_by／gate、發單需終態、Hub 不下發指令），刻意不綁工作單狀態 |
+| 148 | `POST /v1/operator/verifiers/{id}/assignments` | JSON | 是 | `operate`；preview digest＋逐字 `confirm_verifier_name`＋`Idempotency-Key`；派工列、receipt 與 audit 同 transaction；同域以 `409` 擋下。Fleet peer 要同一次派工後三條必要規則全到齊才算完成，其他 kind 一列即可 |
+| 149 | `POST /jobs/{id}/verifier-assignment-preview` | HTML form | 是，preview | `operate`；工作單頁只列出 failure domain 不同的 active verifier；確認頁帶理由與 preview digest |
+| 150 | `POST /jobs/{id}/verifier-assignments` | HTML form | 是 | `operate`；逐字 verifier 名稱確認交由 writer 在同一 transaction 比對；成功 303 回工作單頁，該頁即顯示待回報 |
+| 151 | `GET /machines/configuration` | HTML | 讀取 | `view`；Devices > Configuration 盤面：已發佈原則、目前指派、每台的 effective settings、verdict 與最後回報時間
+| 152 | `POST /machines/configuration/policy-preview` | HTML form | 是，preview | `admin`；純讀；回 current/next revision、canonical settings digest、preview digest 與影響機器數
+| 153 | `POST /machines/configuration/policies` | HTML form | 是 | `admin`；typed policy-id 確認；同值重發不產生新 revision，`expected_revision` 不符回衝突
+| 154 | `POST /machines/configuration/assignment-preview` | HTML form | 是，preview | `admin`；純讀；回目前生效的原則與指派後的值，原則或 revision 不存在回 `404`
+| 155 | `POST /machines/configuration/assignments` | HTML form | 是 | `admin`；typed scope-id 確認；assignment、receipt 與 audit 同 transaction
+| 156 | `GET /v1/operator/settings` | JSON | 讀取 | `view`；與 Web 盤面同一個 operator service；verdict 依 never_reported／unknown／mismatch／pending／applied 優先序取第一個成立者
+| 157 | `POST /v1/operator/setting-policies/preview` | JSON | 是，preview | `admin`；零列寫入；`preview_digest` 綁 canonical settings
+| 158 | `POST /v1/operator/setting-policies` | JSON | 是 | `admin`；fresh `201`、replay/unchanged `200`；policy row、receipt 與 audit 同 transaction
+| 159 | `POST /v1/operator/setting-assignments/preview` | JSON | 是，preview | `admin`；零列寫入；回這個範圍涵蓋的機器數
+| 160 | `POST /v1/operator/setting-assignments` | JSON | 是 | `admin`；scope 只接受 machine（須存在且未退役）或 channel；同 digest 不產生新 assignment revision
+| 161 | `GET /machines/compliance` | HTML | 讀取 | `view`；Devices > 合規性 盤面：四個判決計數、已發佈原則與它們不符合時會做什麼、目前指派，以及每台的判決、推出它的每一條規則結果，與動作現在做到哪一步（未觸發／寬限中／生效中）；有原則帶動作時多一行被停發工作單的台數
+| 162 | `POST /machines/compliance/policy-preview` | HTML form | 是，preview | `admin`；純讀；規則來自一個規則種類一列的 checkbox，動作也是一種一列（checkbox ＋寬限秒數），重複規則或重複動作在這個平面表達不出來
+| 163 | `POST /machines/compliance/policies` | HTML form | 是 | `admin`；typed policy-id 確認；同一組規則與動作換順序寫仍是同一份，不產生新 revision；確認頁無條件帶回每個動作的寬限秒數，因為 0 是「判定不符合就立即生效」而不是沒填
+| 164 | `POST /machines/compliance/assignment-preview` | HTML form | 是，preview | `admin`；純讀；回目前生效的原則與指派後的規則與動作，原則或 revision 不存在回 `404`
+| 165 | `POST /machines/compliance/assignments` | HTML form | 是 | `admin`；typed scope-id 確認；assignment、receipt 與 audit 同 transaction
+| 166 | `GET /v1/operator/compliance` | JSON | 讀取 | `view`；判決與動作狀態現算不落表，回應帶判決時間；每台連同每一條規則的 pass／fail／unmeasured 與每個動作的狀態一起回，另回被停發工作單的台數
+| 167 | `POST /v1/operator/compliance-policies/preview` | JSON | 是，preview | `admin`；零列寫入；`preview_digest` 綁 canonical rules
+| 168 | `POST /v1/operator/compliance-policies` | JSON | 是 | `admin`；fresh `201`、replay/unchanged `200`；policy row、receipt 與 audit 同 transaction
+| 169 | `POST /v1/operator/compliance-assignments/preview` | JSON | 是，preview | `admin`；零列寫入；回這個範圍涵蓋的機器數
+| 170 | `POST /v1/operator/compliance-assignments` | JSON | 是 | `admin`；scope 只接受 machine（須存在且未退役）或 channel；同 digest 不產生新 assignment revision
+| 171 | `GET /v1/operator/machines/{id}/actions` | JSON | 讀取 | `view`；`schema_version=5` 的裝置動作目錄。每個動作帶一個封閉的 `surface`（`operator-api`／`web`）；`web` 的動作沒有 operator API 路徑，`method`／`path` 缺席而不是填一條做不到那件事的路徑。九個具名動作中 retire／restore 只出現會改變狀態的一個方向，因此這台的指派使用者在 Linux 機器上最多八列，其他人最多七列。`connect` 與 `open_terminal` 是兩個 `surface=web` 的動作，`open_terminal` 只出現給這台機器的指派使用者，而且只出現在 Linux 機器上；每個動作的可用與否直接取自守住它寫入路徑的 preview/read contract，目錄不自己再判一次；重新命名與編輯名冊備註對 active／retired 都可用，輸入由各自專用 preview 判；只列出 principal 握有 capability 的動作
+| 172 | `GET /reports` | HTML | 讀取 | `view`；報告落地頁。每一份報告在點進去之前就說出自己回答什麼、範圍多大、看得到多遠、能不能整份匯出；「看得到多遠」取現行保留期與該報告單次讀取上限的較小者；只有在範圍裡完整的報告才給匯出連結
+| 173 | `GET /v1/operator/reports` | JSON | 讀取 | `view`；同一份報告清單的 canonical DTO；不接受任何 query parameter
+| 174 | `GET /machines/{id}/timeline` | HTML | 讀取 | `view`；單機事件時間軸。名冊、健康判定、工作單與操作員動作由新到舊排成一條，每一列都來自那一頁自己在用的讀取器；每個來源各自交代讀到幾列與有沒有讀完；1..30 天，預設 7
+| 175 | `GET /machines/{id}/timeline.csv` | CSV | 讀取／下載 | `view`；匯出的就是畫面上那些列，一列不多一列不少；檔名帶 machine_id 而不是顯示名稱；走與票證匯出同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
+| 176 | `GET /v1/operator/machines/{id}/timeline` | JSON | 讀取 | `view`；同一條時間軸的 canonical DTO；窗的兩端取整秒以對齊稽核的時間篩選，只接受 `days`
+| 177 | `GET /tenant/data` | HTML | 讀取 | `view`；資料揭露面。十四類資料各自交代留的是什麼、誰產生的、含不含自由文字、留多久、退役之後還剩什麼、去哪一頁看；「留多久」讀的是這台 Hub 現行的保留期，而「會不會被清」讀的是真的在刪東西的那張 prune 表
+| 178 | `GET /machines/{id}/data` | HTML | 讀取 | `view`；單機的留存量。同一份目錄加上這台實際的列數、最舊與最新、現在的清除界線；沒有 Hub 時刻的列照樣算進列數，但不進最舊 / 最新
+| 179 | `GET /machines/{id}/data.csv` | CSV | 讀取／下載 | `view`；匯出的就是畫面上那些類，一類不多一類不少；走與票證、時間軸同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
+| 180 | `GET /v1/operator/data-disclosure` | JSON | 讀取 | `view`；`schema_version=1` 的揭露面 canonical DTO；不接受任何 query parameter
+| 181 | `GET /v1/operator/machines/{id}/data` | JSON | 讀取 | `view`；同一份單機留存量的 canonical DTO；不接受任何 query parameter
+| 182 | `GET /reports/enrollment` | HTML | 讀取 | `view`；註冊報告。說好要納管的機器來了沒有；名冊每一列剛好落在一個階段（已納管／拿了憑證沒回來／等它來／票過期沒用／沒有票可以用／已退役），各自附「這是什麼」與「下一步」；還沒到的排在最上面，等最久的排最前面；不接受任何 query parameter
+| 183 | `GET /reports/enrollment.csv` | CSV | 讀取／下載 | `view`；匯出的就是畫面上那些列，一列不多一列不少；走與票證、時間軸、資料揭露同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
+| 184 | `GET /v1/operator/enrollment-report` | JSON | 讀取 | `view`；`schema_version=1` 的註冊報告 canonical DTO；不接受任何 query parameter；名冊超過 2,000 列時拒絕回一份少算的分母
+| 185 | `POST /machines/enrollment/limit-preview` | HTML | 是 | `admin`；改註冊上限的 review 頁。現在的上限、要改成什麼、名冊上幾台三張卡一起講；空白的台數欄位拒收，不讀成 0；比目前台數小的上限明說它退役不了任何一台
+| 186 | `POST /machines/enrollment/limits` | HTML | 是 | `admin`；confirm。要求 preview digest、`expected_revision` 與 idempotency key；取消上限走同一條路，並記下是誰取消的
+| 187 | `GET /v1/operator/enrollment-limit` | JSON | 讀取 | `view`；`schema_version=1` 的註冊上限 canonical DTO；算的台數與註冊報告的分母共用同一條 SQL 判準；沒有設上限回「沒有上限」而不是上限 0；不接受任何 query parameter
+| 188 | `POST /v1/operator/enrollment-limit/preview` | JSON | 是 | `admin`；純 preview，驗 0..10000 台；digest 綁「要改成什麼」，不綁「現在有幾台」
+| 189 | `POST /v1/operator/enrollment-limit` | JSON | 是 | `admin`；fresh/replay 均回 `200`；preview 過期回 `412`，開票撞上限回 `409`；replay 回的是今天的上限，不是當時改成什麼
+| 190 | `GET /reports/software` | HTML | 讀取 | `view`；軟體清查。機隊上裝了什麼、各是哪一版、哪幾台沒有，以及那個版號講的是不是正在跑的那一份；每一台每一個工具一格，六種互斥且窮盡的狀態（跟機隊裡最新的一樣／比機隊裡最新的舊／比不出來／裝了問不到版號／這台上沒有／沒回報過）各自附「這是什麼」與「下一步」；裝著東西的那幾格再帶第二個軸（量的就是跑的／正在跑的是另一個檔案／正在跑的那個檔案已經不在磁碟上／有 process 在跑它但說不出跑的是哪一個／process 偵測沒有跑到底／沒有找到在跑它的 process／這一筆觀測沒有講 process 的事）與它講的那兩個檔案，「正在跑的是另一個檔案」與「已經不在磁碟上」那幾格單獨列一節排在版號不一致前面；「最新」指的是機隊裡看到的最新版，那句限制留在畫面上；不接受任何 query parameter
+| 191 | `GET /reports/software.csv` | CSV | 讀取／下載 | `view`；一列是「一台機器 × 一個工具」，一格不多一格不少，15 欄含「版號講的是哪一份」「量版號的那個檔案」「正在跑的那個檔案」；走與票證、時間軸、資料揭露、註冊報告同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）
+| 192 | `GET /v1/operator/software-report` | JSON | 讀取 | `view`；`schema_version=2` 的軟體清查 canonical DTO（`runtime`／`misattributed`／`runtime_states`；加欄位就要把版號 +1，strict decoder 對不認得的欄位整份拒收）；不接受任何 query parameter；分母超過 2,000 台或回報超過 200 個工具時拒絕回一份少算的清查
+| 193 | `GET /reports/install` | HTML | 讀取 | `view`；每機安裝狀態。我叫哪幾台裝什麼、我在它們上面看到什麼；每一台每一個資源一格，十種互斥且窮盡的狀態（指派的跟看到的一樣／指派的比看到的新／指派的比看到的舊／比不出來／指派的那一筆沒講版號／裝了問不到版號／指派了這台上沒有／指派了看不到這個東西／指派了這台沒回報過／沒有被指派過）各自附「這是什麼」與「下一步」；「指派的」取 machine scope 與該台所在 channel scope 裡 revision 最大的那一筆，跟 agent 實際收到的是同一條規則；「指派的比看到的舊」不講成落後或失敗，那句「東西可以從指派以外的路徑裝上去」留在畫面上；這台回報說它上面有的那幾格再答「看到的那個版號量的是不是正在跑的那一份」（跟軟體清查同一份判準與同一組句子），量錯檔案的那幾格單獨一節排在「指派的跟看到的不一樣」前面、也標在資源 × 機器那張表的每一格上，摘要卡與報告那一行字都帶著那個數字；不接受任何 query parameter
+| 194 | `GET /reports/install.csv` | CSV | 讀取／下載 | `view`；一列是「一台機器 × 一個資源」，一格不多一格不少；走與票證、時間軸、資料揭露、註冊報告、軟體清查同一份 CSV 契約（BOM、UTC RFC 3339 奈秒時間、逐格試算表公式防護）；`版號講的是哪一份`／`量版號的那個檔案`／`正在跑的那個檔案` 三欄各自佔一欄，因為照「看到的版號」排序的人只能從那兩欄看出這一列量錯了檔案
+| 195 | `GET /v1/operator/install-report` | JSON | 讀取 | `view`；`schema_version=2` 的每機安裝狀態 canonical DTO（`misattributed`、`runtime_states`、每一列的 `runtime`、每一個資源的 `misattributed_on`）；不接受任何 query parameter；分母超過 2,000 台或超過 200 個資源時拒絕回一份少算的報告
+| 196 | `GET /reports/profile` | HTML | 讀取 | `view`；發佈與指派。這份 profile 發佈了然後呢；每一個已發佈的 revision 四種狀態（有機器穿著／只有已退役的還穿著／已發佈到更新的版本／發佈了一台都沒指派），它點名的每一個（套件, 版本）四種狀態（指派過也看得到／指派過但沒一台回報／沒指派過但看得到／沒指派過也沒看到過）；「發佈了一台都沒指派」與「點名了一個這個 Hub 沒見過的版本」各自有自己的一節，不埋在大表裡；看得到的版號量在沒人跑的那份檔案上的格子另有一節，排在「一台都沒指派」前面，逐版表也列出其中幾台量錯；不接受任何 query parameter
+| 197 | `GET /reports/profile.csv` | CSV | 讀取／下載 | `view`；一列是「一份已發佈的 revision × 它點名的一個套件版本」，一列不多一列不少——改成一台機器一列的話，一份一台都沒指派的 profile 在檔案裡一列都沒有；穿著它的機器擠在一格裡並標出已退役；`其中版號不是跑的那一份的台數` 獨立成欄，量錯檔案的機器仍算進看到幾台；走與票證、時間軸、註冊、軟體清查、安裝狀態同一條匯出管線（BOM、公式中和、UTC、那句限制當最後一欄）
+| 198 | `GET /v1/operator/profile-report` | JSON | 讀取 | `view`；`schema_version=2` 的發佈與指派對照 canonical DTO；每一個已發佈的 profile revision 四種狀態，它點名的每一個（套件, 版本）四種狀態；每格的 `seen_misattributed_on` 是 `seen_on` 的子集，整份的 `seen_misattributed` 按格數計，兩者都不另造第五種狀態；有量錯檔案的那一格，下一步改成到每機安裝狀態核對執行檔與其版號；「指派過沒有」讀整條 `desired_state` 歷史，不是現行意圖；不接受任何 query parameter；分母超過 2,000 台或發佈超過 500 版時拒絕回一份少算的報告
+| 199 | `POST /machines/{id}/display-name-preview` | HTML | 是，preview | `admin`；單機動作的重新命名 review。明列目前名稱、新名稱、immutable machine ID、名稱型 expectations 的 key 變更，以及 pending enrollment ticket 標籤是否一併更新；要求理由但不寫入
+| 200 | `POST /machines/{id}/display-name` | HTML | 是 | `admin`；逐字確認目前名稱後經 canonical service 套用，成功仍以 machine ID 導回 detail；replay 不再次改名
+| 201 | `POST /v1/operator/machines/{id}/display-name-preview` | JSON | 是，preview | `admin`；只讀、no-store；驗新名稱格式與跨名冊重複，digest 綁目前名稱與固定影響
+| 202 | `PUT /v1/operator/machines/{id}/display-name` | JSON | 是 | `admin`；名冊名稱、未兌換 ticket 標籤、immutable receipt 與 audit 同 transaction；machine ID、agent credential、token/hash、hostname、channel 與 lifecycle 不變；stale preview `412`，確認缺失／不符 `428`，重複名稱 `409`
+| 203 | `POST /machines/{id}/notes-preview` | HTML | 是，preview | `admin`；單機動作的名冊備註 review；顯示舊值、新值、理由與固定影響，要求理由但不寫入
+| 204 | `POST /machines/{id}/notes` | HTML | 是 | `admin`；逐字確認目前 display name 後經 canonical service 套用；成功與 replay 都以 machine ID 導回動作區
+| 205 | `POST /v1/operator/machines/{id}/notes-preview` | JSON | 是，preview | `admin`；只讀、no-store；空字串表示清除，其餘備註限 1000 bytes UTF-8 且不收邊界空白／digest 綁舊值與新值
+| 206 | `PUT /v1/operator/machines/{id}/notes` | JSON | 是 | `admin`；備註 CAS、immutable receipt 與 audit 同 transaction；receipt/audit 不複製 free text；machine ID、機器設定與 agent 不變；stale preview `412`，preview 缺失／名稱不符 `428`
+| 207 | `GET /v1/operator/daily-report` | JSON | 讀取 | `view`；`schema_version=1`；running Hub 以自己的 expectations、public URL 與還原演練章產生 exact notification body；1 秒至 30 天，預設 24 小時；不送出、不寫 notification receipt；`clawctl-hub report` 正常模式只走這條 API，明示 `--db` 才進 stopped-service fence
+| 208 | `POST /preferences/navigation-language` | HTML form | 是，browser preference | `view`；右上角在 `en`／`zh-Hant` 間切換管理中心外框與導覽；同源 form 恰好一個 `locale` 與一個 `return_to`，cross-site POST 以 `CROSS_ORIGIN_REQUEST` 拒絕；HttpOnly SameSite=Lax cookie、同站 bounded `return_to`、不寫 Store／audit；尚未翻譯的證據內容保留 `lang="zh-Hant"`
+| 209 | `GET /v1/operator/machines/{id}/assigned-user` | JSON | 讀取 | `view`；使用者識別碼、登入名稱、版本與 `ETag` |
+| 210 | `PUT /v1/operator/machines/{id}/assigned-user` | JSON | 是 | `admin`；核對 Tailnet 使用者名冊、名稱確認、版本檢查、請求重放與稽核；`none` 取消指派 |
+| 211 | `POST /machines/{id}/assigned-user-preview` | HTML form | 讀取／預覽 | `admin`；顯示目前與目標使用者，保留預期版本；要求輸入機器名稱 |
+| 212 | `POST /machines/{id}/assigned-user` | HTML form | 是 | `admin`；套用指派或取消指派後回機器明細；來源不可用與空名冊分別顯示 |
+| 213 | `GET /machines/{id}/terminals/{session}` | HTML | 讀取／輸入 | `operate`；這位操作員在這台機器上已開啟的終端，到達時顯示輸出並接受輸入。機器頁的「開啟終端」貼到列 204 |
+| 214 | `POST /machines/{id}/terminals` | HTML | 是 | `operate`；機器頁的「開啟終端」貼到這裡，開啟這台機器的終端，成功後前往該終端頁；重送同一組開啟請求回到同一個終端 |
+| 215 | `GET /machines/{id}/terminals/{session}/socket` | HTML | 讀取／輸入 | `operate`；終端連線。這位操作員的終端頁用這條連線收發這個工作階段的輸入與輸出。機器頁的「開啟終端」貼到列 204 |
+| 216 | `POST /deployments/{id}/skip-failed-batch-preview` | HTML form | 是，preview | `operate`；單獨標示的 skip failed batch。空理由在進 review 前拒絕。digest 與 Continue 不同 |
+| 217 | `POST /deployments/{id}/skip-failed-batch` | HTML form | 是 | `operate`；確認 channel。理由寫進稽核與 Hub event。失敗的工作單不重開。不能把最後一批收成 finished |
+| 218 | `POST /v1/operator/deployments/{id}/skip-failed-batch-preview` | JSON | 是，preview | `operate`；與 HTML 同一份 eligibility。opened batch 沒有失敗終態，或沒有下一批，則不可執行 |
+| 219 | `POST /v1/operator/deployments/{id}/skip-failed-batches` | JSON | 是 | `operate`；plain Continue 在失敗批次回 `DEPLOYMENT_CONTINUE_REFUSED`。MCP 不呼叫這條 |
+| 220 | `GET /v1/operator/disk-clean/summaries` | JSON | 讀取 | `view`；已指派或已回報的 disk-clean 摘要。Hub 判決、過期、digest、disk_free_min_percent 與 attention。不接受 query |
+| 221 | `GET /v1/operator/disk-clean/summaries/{id}` | JSON | 讀取 | `view`；單機。名冊沒有這台回 404。已註冊未指派仍回 stale |
+| 222 | `POST /v1/operator/disk-clean/profile-preview` | JSON | 是，preview | `admin`；渲染 conf 與 digest，不寫 revision |
+| 223 | `POST /v1/operator/disk-clean/profiles` | JSON | 是 | `admin`；expected_revision、preview_digest、Idempotency-Key。同一份 conf 不產生新 revision。fresh 201，replay 或 unchanged 200 |
+| 224 | `POST /v1/operator/disk-clean/dry-run-preview` | JSON | 是，preview | `admin`；點名 dry-run 目標。blocker 不進 digest |
+| 225 | `POST /v1/operator/disk-clean/dry-runs` | JSON | 是 | `admin`；每台一張可逆工作單。fresh 201，replay 200 |
+| 226 | `POST /v1/operator/disk-clean/canary-preview` | JSON | 是，preview | `admin`；canary 恰好一台 |
+| 227 | `POST /v1/operator/disk-clean/canaries` | JSON | 是 | `admin`；只開第一批。continue 之前不對其餘機器建立工作單 |
+| 228 | `POST /v1/operator/disk-clean/continuation-preview` | JSON | 是，preview | `admin`；digest 含目前 state |
+| 229 | `POST /v1/operator/disk-clean/continuations` | JSON | 是 | `admin`；paused 且 canary 成功後才打開其餘機器 |
+| 230 | `POST /v1/operator/disk-clean/abandonment-preview` | JSON | 是，preview | `admin`；放棄不開新工作單 |
+| 231 | `POST /v1/operator/disk-clean/abandonments` | JSON | 是 | `admin`；進行中的工作單還沒結束時拒絕。指派留著 |
+| 232 | `POST /machines/{id}/keyed-installer` | download | Read / download | `admin`; verified Linux bootstrap plus Hub URL and one-time enrollment token; no redemption; no-store |
 
-| 229 | `GET /account/security` | HTML | Read | `admin`; local sessions only; Tailscale principals receive 404 |
-| 230 | `POST /account/security/totp/begin` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
-| 231 | `POST /account/security/totp/confirm` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
-| 232 | `POST /account/security/totp/disable` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
-| 233 | `POST /account/security/password` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
-| 234 | `POST /account/security/recovery-codes/regenerate` | HTML | Mutation | `admin`; local sessions only; password plus authenticator required; replaces ten codes, shown once; shared lockout and audit without codes; host alternative `regenerate-recovery-codes` |
-| 235 | `GET /account/users` | HTML | Read | `admin`; active local session only; password and current TOTP for mutations |
-| 236 | `POST /account/users/create` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
-| 237 | `POST /account/users/disable` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
-| 238 | `POST /account/users/enable` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
-| 239 | `POST /account/users/email` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
-| 240 | `POST /account/users/rename` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
-| 241 | `GET /v1/operator/script-catalog` | JSON | Read | `view`; embedded catalog metadata and closed args schema |
-| 242 | `POST /v1/operator/script-runs/preview` | JSON | Preview | `operate` for read scripts; validated explicit targets and audit |
-| 243 | `POST /v1/operator/script-runs` | JSON | Mutation | Matching preview digest, idempotency key; atomic catalog job fanout and audit |
-| 244 | `GET /v1/operator/schedules` | JSON | Read | `view`; bounded schedule list with revision, next run, pause reason and last jobs |
-| 245 | `GET /v1/operator/schedules/{id}` | JSON | Read | `view`; stored schedule configuration and run metadata |
-| 246 | `POST /v1/operator/schedules/{operation}/{phase}` | JSON | Preview / Mutation | `operate` for read scripts, `admin` for write scripts; `upsert` / `set-enabled`, `preview` / `apply`; apply binds preview digest, expected revision and idempotency key |
-| 247 | `POST /v1/operator/schedules/{id}/run-now` | JSON | Mutation | `operate` for read scripts, `admin` for write scripts; required Idempotency-Key, saved job-ID replay, approved hash and overlap guard |
-| 248 | `GET /v1/operator/jobs-summary` | JSON | 讀取 | `view`; bounded supervision counts, latency and Hub threshold flags |
-| 249 | `GET /v1/operator/approvals-summary` | JSON | 讀取 | `view`; observed approvals; disk_ops ledger counts/oldest pending age; legacy unpersisted preview metrics remain null |
-| 250 | `GET /v1/operator/hub-status` | JSON | 讀取 | `view`; uptime, storage sizes, restore evidence and machine coverage; no paths or secrets |
+| 233 | `GET /account/security` | HTML | Read | `admin`; local sessions only; Tailscale principals receive 404 |
+| 234 | `POST /account/security/totp/begin` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
+| 235 | `POST /account/security/totp/confirm` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
+| 236 | `POST /account/security/totp/disable` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
+| 237 | `POST /account/security/password` | HTML | Mutation | `admin`; local sessions only; Tailscale principals receive 404 |
+| 238 | `POST /account/security/recovery-codes/regenerate` | HTML | Mutation | `admin`; local sessions only; password plus authenticator required; replaces ten codes, shown once; shared lockout and audit without codes; host alternative `regenerate-recovery-codes` |
+| 239 | `GET /account/users` | HTML | Read | `admin`; active local session only; password and current TOTP for mutations |
+| 240 | `POST /account/users/create` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
+| 241 | `POST /account/users/disable` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
+| 242 | `POST /account/users/enable` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
+| 243 | `POST /account/users/email` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
+| 244 | `POST /account/users/rename` | HTML | Mutation | `admin`; active local session only; password and current TOTP for mutations |
+| 245 | `GET /v1/operator/script-catalog` | JSON | Read | `view`; embedded catalog metadata and closed args schema |
+| 246 | `POST /v1/operator/script-runs/preview` | JSON | Preview | `operate` for read scripts; validated explicit targets and audit |
+| 247 | `POST /v1/operator/script-runs` | JSON | Mutation | Matching preview digest, idempotency key; atomic catalog job fanout and audit |
+| 248 | `GET /v1/operator/schedules` | JSON | Read | `view`; bounded schedule list with revision, next run, pause reason and last jobs |
+| 249 | `GET /v1/operator/schedules/{id}` | JSON | Read | `view`; stored schedule configuration and run metadata |
+| 250 | `POST /v1/operator/schedules/{operation}/{phase}` | JSON | Preview / Mutation | `operate` for read scripts, `admin` for write scripts; `upsert` / `set-enabled`, `preview` / `apply`; apply binds preview digest, expected revision and idempotency key |
+| 251 | `POST /v1/operator/schedules/{id}/run-now` | JSON | Mutation | `operate` for read scripts, `admin` for write scripts; required Idempotency-Key, saved job-ID replay, approved hash and overlap guard |
+| 252 | `GET /v1/operator/jobs-summary` | JSON | 讀取 | `view`; bounded supervision counts, latency and Hub threshold flags |
+| 253 | `GET /v1/operator/approvals-summary` | JSON | 讀取 | `view`; observed approvals; disk_ops ledger counts/oldest pending age; legacy unpersisted preview metrics remain null |
+| 254 | `GET /v1/operator/hub-status` | JSON | 讀取 | `view`; uptime, storage sizes, restore evidence and machine coverage; no paths or secrets |
 
-| 251 | `GET /account/service-tokens` | HTML | Admin | Local human session and MFA; service token management |
-| 252 | `POST /account/service-tokens/create` | HTML | Admin | Local human session and MFA; service token management |
-| 253 | `POST /account/service-tokens/revoke` | HTML | Admin | Local human session and MFA; service token management |
-| 254 | `GET /v1/operator/service-tokens/self` | JSON | Read | Service token only; own metadata, no allowlist requirement |
-| 255 | `POST /v1/operator/service-tokens/rotate` | JSON | Yes | Service token only; newest chain token; 10-minute overlap |
-| 256 | `GET /v1/operator/disk-ops/policies` | JSON | Read | Human view; immutable disk policy history; paths included, token-ineligible |
-| 257 | `GET /v1/operator/disk-ops/policies/{id}` | JSON | Read | Human view; latest revision; token-ineligible |
-| 258 | `POST /v1/operator/disk-ops/policies/preview` | JSON | Preview / Mutation | Human admin; normalized policy/revision/digest/30-minute expiry |
-| 259 | `POST /v1/operator/disk-ops/policies` | JSON | Preview / Mutation | Human admin; default-off flag, preview binding, idempotency and atomic audit |
-| 260 | `GET /v1/operator/disk-ops/approvals` | JSON | Read | View; path-free ledger, exact view-token allowlist eligible |
-| 261 | `GET /tenant/disk-policies` | HTML | Read | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
-| 262 | `GET /tenant/disk-policies/{id}` | HTML | Read | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
-| 263 | `POST /tenant/disk-policies/preview` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
-| 264 | `POST /tenant/disk-policies/apply` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
-| 265 | `GET /tenant/approvals` | HTML | Read | Human view; state/machine/operation filters; decisions visible to admins only |
-| 266 | `POST /tenant/approvals/preview` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
-| 267 | `POST /tenant/approvals/apply` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
-| 268 | `POST /v1/operator/disk-ops/approvals/{id}/decision/preview` | JSON | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
-| 269 | `POST /v1/operator/disk-ops/approvals/{id}/decision` | JSON | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 255 | `GET /account/service-tokens` | HTML | Admin | Local human session and MFA; service token management |
+| 256 | `POST /account/service-tokens/create` | HTML | Admin | Local human session and MFA; service token management |
+| 257 | `POST /account/service-tokens/revoke` | HTML | Admin | Local human session and MFA; service token management |
+| 258 | `GET /v1/operator/service-tokens/self` | JSON | Read | Service token only; own metadata, no allowlist requirement |
+| 259 | `POST /v1/operator/service-tokens/rotate` | JSON | Yes | Service token only; newest chain token; 10-minute overlap |
+| 260 | `GET /v1/operator/disk-ops/policies` | JSON | Read | Human view; immutable disk policy history; paths included, token-ineligible |
+| 261 | `GET /v1/operator/disk-ops/policies/{id}` | JSON | Read | Human view; latest revision; token-ineligible |
+| 262 | `POST /v1/operator/disk-ops/policies/preview` | JSON | Preview / Mutation | Human admin; normalized policy/revision/digest/30-minute expiry |
+| 263 | `POST /v1/operator/disk-ops/policies` | JSON | Preview / Mutation | Human admin; default-off flag, preview binding, idempotency and atomic audit |
+| 264 | `GET /v1/operator/disk-ops/approvals` | JSON | Read | View; path-free ledger, exact view-token allowlist eligible |
+| 265 | `GET /tenant/disk-policies` | HTML | Read | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 266 | `GET /tenant/disk-policies/{id}` | HTML | Read | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 267 | `POST /tenant/disk-policies/preview` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 268 | `POST /tenant/disk-policies/apply` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 269 | `GET /tenant/approvals` | HTML | Read | Human view; state/machine/operation filters; decisions visible to admins only |
+| 270 | `POST /tenant/approvals/preview` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 271 | `POST /tenant/approvals/apply` | HTML | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 272 | `POST /v1/operator/disk-ops/approvals/{id}/decision/preview` | JSON | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
+| 273 | `POST /v1/operator/disk-ops/approvals/{id}/decision` | JSON | Preview / Mutation | Human admin; canonical service, no integration required; preview binding and reauthentication on UI apply |
 
-| 270 | `GET /v1/operator/disk-ops/status/{machine_id}` | JSON | Read | Human view; path-bearing status; token-ineligible |
-| 271 | `GET /machines/{id}/disk` | HTML | Read | Human view; status, previews, safe cleanup and schedules |
-| 272 | `POST /machines/{id}/disk/actions` | HTML | Preview / Mutation | Human admin; CSRF, preview binding, apply reauthentication and audit |
+| 274 | `GET /v1/operator/disk-ops/status/{machine_id}` | JSON | Read | Human view; path-bearing status; token-ineligible |
+| 275 | `GET /machines/{id}/disk` | HTML | Read | Human view; status, previews, safe cleanup and schedules |
+| 276 | `POST /machines/{id}/disk/actions` | HTML | Preview / Mutation | Human admin; CSRF, preview binding, apply reauthentication and audit |
 
 The inventory excludes six public account routes; API-SURFACE includes them.
 
@@ -356,7 +360,7 @@ HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `internal/web/terminal_open.go`、
 `internal/web/verifier_assignment_actions.go`、`internal/web/assigned_user.go`；
 終端連線見 `cmd/clawctl-hub/operator_terminal_socket.go`；
-153 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
+154 條 operator JSON 路由（Secrets 狀態由 `internal/web/secrets.go` 提供）見 `cmd/clawctl-hub/operator_api.go`、`cmd/clawctl-hub/operator_disk_clean_api.go`、
 `cmd/clawctl-hub/operator_assigned_user_api.go`、
 `cmd/clawctl-hub/operator_deployment_api.go`、`cmd/clawctl-hub/operator_artifact_api.go`、
 `cmd/clawctl-hub/operator_artifact_fetch_api.go`、`cmd/clawctl-hub/operator_update_api.go` 與
@@ -370,62 +374,65 @@ HTML/BFF handlers 見 `internal/web/web.go`、`internal/web/actions.go`、
 `cmd/clawctl-hub/operator_verification_assignment_api.go`，共用
 domain service 見 `internal/operator/`。
 
-| 273 | `GET /v1/operator/disk-ops/reports` | operator.DiskReports | 否 | View; finalized summaries, no private paths |
-| 274 | `GET /v1/operator/disk-ops/reports/{id}` | operator.DiskReport | 否 | View; cursor/limit <=100; sanitized display paths |
-| 275 | `GET /disk-reports/{id}` | operator.DiskReportHuman | 否 | Human viewer; admin may see full paths; exact human decisions, quarantine and restore available |
-| 276 | `POST /v1/operator/disk-ops/actions/preview` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
-| 277 | `POST /v1/operator/disk-ops/actions/decide` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
-| 278 | `GET /v1/operator/disk-ops/quarantine/{machine_id}` | JSON | 讀取 | P2-04 human-only quarantine / restore |
-| 279 | `POST /v1/operator/disk-ops/restores/preview` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
-| 280 | `POST /v1/operator/disk-ops/restores` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
-| 281 | `POST /disk-reports/{id}/actions` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
-| 282 | `POST /disk-actions/apply` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
-| 283 | `GET /machines/{id}/quarantine` | HTML | 讀取 | P2-04 human-only quarantine / restore |
-| 284 | `POST /machines/{id}/quarantine/restore` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+| 277 | `GET /v1/operator/disk-ops/reports` | operator.DiskReports | 否 | View; finalized summaries, no private paths |
+| 278 | `GET /v1/operator/disk-ops/reports/{id}` | operator.DiskReport | 否 | View; cursor/limit <=100; sanitized display paths |
+| 279 | `GET /disk-reports/{id}` | operator.DiskReportHuman | 否 | Human viewer; admin may see full paths; exact human decisions, quarantine and restore available |
+| 280 | `POST /v1/operator/disk-ops/actions/preview` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+| 281 | `POST /v1/operator/disk-ops/actions/decide` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+| 282 | `GET /v1/operator/disk-ops/quarantine/{machine_id}` | JSON | 讀取 | P2-04 human-only quarantine / restore |
+| 283 | `POST /v1/operator/disk-ops/restores/preview` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+| 284 | `POST /v1/operator/disk-ops/restores` | JSON | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+| 285 | `POST /disk-reports/{id}/actions` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+| 286 | `POST /disk-actions/apply` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
+| 287 | `GET /machines/{id}/quarantine` | HTML | 讀取 | P2-04 human-only quarantine / restore |
+| 288 | `POST /machines/{id}/quarantine/restore` | HTML form | Human admin + fresh reauth | P2-04 human-only quarantine / restore |
 
-| 285 | `GET /v1/operator/disk-ops/alerts` | JSON | No | P2-05; exact view permission; shared operator service and audited human mutations |
-| 286 | `GET /v1/operator/disk-ops/ownership/{machine_id}/{scope}` | JSON | No | P2-05; exact view permission; shared operator service and audited human mutations |
-| 287 | `POST /v1/operator/disk-ops/ownership/preview` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
-| 288 | `POST /v1/operator/disk-ops/ownership` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
-| 289 | `POST /v1/operator/disk-ops/alerts/ack/preview` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
-| 290 | `POST /v1/operator/disk-ops/alerts/ack` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
-| 291 | `GET /tenant/disk-alerts` | HTML | No | P2-05; exact view permission; shared operator service and audited human mutations |
-| 292 | `POST /tenant/disk-alerts/ack/preview` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
-| 293 | `POST /tenant/disk-alerts/ack` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
-| 294 | `POST /machines/{id}/disk/ownership` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
-| 295 | `GET /tenant/schedules` | HTML | 否 | `view`；schedule list |
-| 296 | `GET /tenant/schedules/new` | HTML | 否 | `operate`；new schedule form |
-| 297 | `GET /tenant/schedules/{id}` | HTML | 否 | `view`；schedule detail |
-| 298 | `GET /tenant/schedules/{id}/edit` | HTML | 否 | `operate`；edit schedule form |
-| 299 | `POST /tenant/schedules/preview` | HTML | 是，preview | `operate`；upsert/set-enabled preview; write catalog scripts require admin |
-| 300 | `POST /tenant/schedules/apply` | HTML | 是 | `operate`；digest-bound, idempotent upsert/set-enabled apply; write catalog scripts require admin |
-| 301 | `POST /tenant/schedules/{id}/run-now` | HTML | 是 | `operate`；idempotent manual run; write catalog scripts require admin |
-| 302 | `GET /secrets` | HTML | 讀取 | `admin`；read-only secret reference status; never values |
-| 303 | `GET /v1/operator/secrets` | JSON | 讀取 | `admin`；name/ref/status only; never values |
-| 304 | `GET /channels` | HTML | 讀取 | `view`；channel health and metadata bindings |
-| 305 | `GET /v1/operator/channels` | JSON | 讀取 | `view`；safe channel inventory |
-| 306 | `POST /channels/{operation}` | HTML | 寫入 | `admin`；save/remove/test/bind/unbind; audited and same-origin |
-| 307 | `POST /secrets/test` | HTML form | 寫入 | `admin`；configured ref test fetch; audited and same-origin; status only |
-| 308 | `POST /account/service-tokens/routes` | HTML form | Human admin + fresh MFA | Exact manifest route edits; per-route old-to-new audit diff |
-| 309 | `GET /attention/loops` | HTML | 讀取 | `view`；loop episode list, policy, coverage and actionable empty state |
-| 310 | `POST /attention/loops` | HTML form | 寫入 | `admin`；policy update and acknowledge/resolve actions |
-| 311 | `GET /v1/operator/loops` | JSON | 讀取 | `view`；bounded agent-reported loop evidence; optional machine filter |
-| 312 | `GET /tenant/certificates` | HTML | 是 | View; TLS evidence, empty state and next actions |
-| 313 | `POST /tenant/certificates` | HTML form | 是 | Human Admin; audited add/edit/remove/queued probe |
-| 314 | `GET /v1/operator/certificates` | JSON | 是 | View; sorted certificate inventory |
-| 315 | `GET /v1/operator/certificates/{id}` | JSON | 是 | View; certificate configuration and latest evidence |
-| 316 | `POST /v1/operator/certificates` | JSON | 是 | Human Admin; create certificate monitor |
-| 317 | `PUT /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked configuration replacement |
-| 318 | `DELETE /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked removal |
-| 319 | `POST /v1/operator/certificates/{id}/probe` | JSON | 是 | Human Admin; revision-checked queued probe |
-| 320 | `GET /v1/operator/machines/{id}/oom-kills` | JSON | Read | `view`; recent typed OOM attribution; machine detail UI and MCP |
-| 321 | `GET /readiness` | HTML | Read | View; grouped Needs you / Fixing itself / Done, fleet defaults and next actions |
-| 322 | `POST /readiness` | HTML | Yes | Human Admin; configure machine targets or audited fleet defaults |
-| 323 | `GET /v1/operator/machines/{id}/readiness` | JSON | Read | View; same checklist as UI and MCP |
-| 324 | `GET /v1/operator/machines/{id}/safe` | JSON | Read | `view`; opt-in service-token route and MCP `machine_safe_detail`; recursive secret-shape/high-entropy scrub with counts and flags; machine detail Bot view renders the same projection; excluded from Hermes defaults |
-| 325 | `GET /machines/host-profile` | HTML | Read | View; Linux host setup profile and status |
-| 326 | `POST /machines/host-profile` | HTML form | Yes | Human Admin; audited fleet host profile |
-| 327 | `GET /v1/operator/host-profile` | JSON | Read | View; same profile and host reports; MCP `host_profile_get` |
+| 289 | `GET /v1/operator/disk-ops/alerts` | JSON | No | P2-05; exact view permission; shared operator service and audited human mutations |
+| 290 | `GET /v1/operator/disk-ops/ownership/{machine_id}/{scope}` | JSON | No | P2-05; exact view permission; shared operator service and audited human mutations |
+| 291 | `POST /v1/operator/disk-ops/ownership/preview` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 292 | `POST /v1/operator/disk-ops/ownership` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 293 | `POST /v1/operator/disk-ops/alerts/ack/preview` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 294 | `POST /v1/operator/disk-ops/alerts/ack` | JSON | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 295 | `GET /tenant/disk-alerts` | HTML | No | P2-05; exact view permission; shared operator service and audited human mutations |
+| 296 | `POST /tenant/disk-alerts/ack/preview` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 297 | `POST /tenant/disk-alerts/ack` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 298 | `POST /machines/{id}/disk/ownership` | HTML | Yes | P2-05; exact admin permission; shared operator service and audited human mutations |
+| 299 | `GET /tenant/schedules` | HTML | 否 | `view`；schedule list |
+| 300 | `GET /tenant/schedules/new` | HTML | 否 | `operate`；new schedule form |
+| 301 | `GET /tenant/schedules/{id}` | HTML | 否 | `view`；schedule detail |
+| 302 | `GET /tenant/schedules/{id}/edit` | HTML | 否 | `operate`；edit schedule form |
+| 303 | `POST /tenant/schedules/preview` | HTML | 是，preview | `operate`；upsert/set-enabled preview; write catalog scripts require admin |
+| 304 | `POST /tenant/schedules/apply` | HTML | 是 | `operate`；digest-bound, idempotent upsert/set-enabled apply; write catalog scripts require admin |
+| 305 | `POST /tenant/schedules/{id}/run-now` | HTML | 是 | `operate`；idempotent manual run; write catalog scripts require admin |
+| 306 | `GET /secrets` | HTML | 讀取 | `admin`；read-only secret reference status; never values |
+| 307 | `GET /v1/operator/secrets` | JSON | 讀取 | `admin`；name/ref/status only; never values |
+| 308 | `GET /channels` | HTML | 讀取 | `view`；channel health and metadata bindings |
+| 309 | `GET /v1/operator/channels` | JSON | 讀取 | `view`；safe channel inventory |
+| 310 | `POST /channels/{operation}` | HTML | 寫入 | `admin`；save/remove/test/bind/unbind; audited and same-origin |
+| 311 | `POST /secrets/test` | HTML form | 寫入 | `admin`；configured ref test fetch; audited and same-origin; status only |
+| 312 | `POST /account/service-tokens/routes` | HTML form | Human admin + fresh MFA | Exact manifest route edits; per-route old-to-new audit diff |
+| 313 | `GET /attention/loops` | HTML | 讀取 | `view`；loop episode list, policy, coverage and actionable empty state |
+| 314 | `POST /attention/loops` | HTML form | 寫入 | `admin`；policy update and acknowledge/resolve actions |
+| 315 | `GET /v1/operator/loops` | JSON | 讀取 | `view`；bounded agent-reported loop evidence; optional machine filter |
+| 316 | `GET /tenant/certificates` | HTML | 是 | View; TLS evidence, empty state and next actions |
+| 317 | `POST /tenant/certificates` | HTML form | 是 | Human Admin; audited add/edit/remove/queued probe |
+| 318 | `GET /v1/operator/certificates` | JSON | 是 | View; sorted certificate inventory |
+| 319 | `GET /v1/operator/certificates/{id}` | JSON | 是 | View; certificate configuration and latest evidence |
+| 320 | `POST /v1/operator/certificates` | JSON | 是 | Human Admin; create certificate monitor |
+| 321 | `PUT /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked configuration replacement |
+| 322 | `DELETE /v1/operator/certificates/{id}` | JSON | 是 | Human Admin; revision-checked removal |
+| 323 | `POST /v1/operator/certificates/{id}/probe` | JSON | 是 | Human Admin; revision-checked queued probe |
+| 324 | `GET /v1/operator/machines/{id}/oom-kills` | JSON | Read | `view`; recent typed OOM attribution; machine detail UI and MCP |
+| 325 | `GET /readiness` | HTML | Read | View; grouped Needs you / Fixing itself / Done, fleet defaults and next actions |
+| 326 | `POST /readiness` | HTML | Yes | Human Admin; configure machine targets or audited fleet defaults |
+| 327 | `GET /v1/operator/machines/{id}/readiness` | JSON | Read | View; same checklist as UI and MCP |
+| 328 | `GET /v1/operator/machines/{id}/safe` | JSON | Read | `view`; opt-in service-token route and MCP `machine_safe_detail`; recursive secret-shape/high-entropy scrub with counts and flags; machine detail Bot view renders the same projection; excluded from Hermes defaults |
+| 329 | `GET /machines/join` | HTML | 讀取 | View: waiting machines and join command |
+| 330 | `POST /machines/join/decide` | HTML form | 是 | Human Admin and fresh MFA; approve/reject, including approve all |
+| 331 | `GET /v1/operator/joins` | JSON | 讀取 | View: pending metadata only; read MCP join_requests_list |
+| 332 | `GET /machines/host-profile` | HTML | Read | View; Linux host setup profile and status |
+| 333 | `POST /machines/host-profile` | HTML form | Yes | Human Admin; audited fleet host profile |
+| 334 | `GET /v1/operator/host-profile` | JSON | Read | View; same profile and host reports; MCP `host_profile_get` |
 
 ## Workload / submenu parity matrix
 
@@ -920,3 +927,43 @@ scope or unit-file edits. Profile changes carry an atomic audit entry.
   applier consumes data from the unprivileged agent and repairs drift. The same
   profile and per-host reports are readable through the operator API and MCP
   `host_profile_get`. No managed defaults. See [HOST-PROFILE](HOST-PROFILE.md).
+
+## One-command Linux join
+
+Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
+non-root agent account, then match its code at `/machines/join`. The public
+`GET /join.sh` script uses the validated HTTPS `CLAWCTL_PUBLIC_URL`; `--hub`
+and `--user` are explicit alternatives. Viewers can read waiting requests;
+`POST /machines/join/decide` requires a human Admin and the enrollment MFA
+window. Approve all uses the displayed suggested names. Names capitalise the
+first letter of each dash-separated word, preserving the rest (`host-b` → `Host-B`).
+`GET /v1/operator/joins` and read-only MCP `join_requests_list` return metadata,
+never credentials. There is no MCP join write tool.
+
+Machine routes are `POST /v1/join/start`, `POST /v1/join/poll`, and
+`GET /v1/join/bundle/{arch}`. Start accepts bounded strict JSON, permits five
+requests per client IP per minute, and fails closed at 20 waiting/approved
+requests globally. IPs use the existing trusted-proxy resolver. Join codes and
+256-bit device secrets expire after 15 minutes; poll delivers approval once,
+atomically marking the request redeemed. All join responses use no-store.
+The script downloads the bundle while pending, then checks its SHA-256 from
+the approved payload before extraction. Bundle access requires the matching
+pending/approved, unexpired device secret and architecture; redemption ends
+that authority. Secrets stay out of URLs, argv, logs and operator reads.
+
+Enrollment tickets use the canonical operator service, are single-use and
+last 600 seconds. Optional Hub-issued Tailscale keys are single-use,
+non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
+OAuth client configuration is optional; without it the machine joins without
+Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,
+`CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`, and `CLAWCTL_TAILSCALE_JOIN_TAG`.
+`CLAWCTL_TAILSCALE_API_BASE` is accepted only in test binaries; production
+always uses the official API. The CLI reads its key using `--auth-key=file:...`.
+
+SQLite stores only device-secret hashes and request metadata. Minted credentials
+are held in process memory for at most ten minutes and deleted on redemption.
+Restart or delivery expiry shows “Approval expired”; a human can approve again
+while the request is still valid. An already minted enrollment ticket expires
+naturally and cannot be reconstructed. Join decisions and their secret-free
+`join_approve` / `join_reject` audit rows commit together. Rows older than seven
+days past expiry are pruned lazily on start/list, without changing ledger retention.

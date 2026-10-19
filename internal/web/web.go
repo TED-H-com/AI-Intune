@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/chat"
+	"github.com/teddashh/AI-Intune/internal/clientip"
 	"github.com/teddashh/AI-Intune/internal/compliance"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/diskreport"
@@ -52,6 +53,7 @@ type TerminalLinks interface {
 }
 
 type Server struct {
+	joinClientIP              clientip.Resolver
 	buildVersion, buildCommit string
 
 	inbound           *chat.Engine
@@ -268,6 +270,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[37], s.setNavigationLanguage)
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
+	patterns = append(patterns, s.joinRoutes(mux)...)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
 	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), s.hostProfileRoutes(mux)...)...)...)...)
 }
@@ -387,7 +390,9 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
-	HostProfile               *hostProfilePage
+	HostProfile *hostProfilePage
+
+	Join                      *joinView
 	Readiness                 *readinessPage
 	BuildVersion, BuildCommit string
 
@@ -1686,6 +1691,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1699,6 +1705,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1712,6 +1719,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1725,6 +1733,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1738,6 +1747,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},

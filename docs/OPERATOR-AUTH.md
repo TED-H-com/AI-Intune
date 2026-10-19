@@ -173,19 +173,19 @@ example.com/cap/clawctl-admin
 
 另外一條 non-operator route 是 opt-in signed chat webhook `POST /v1/channels/{id}/inbound`，有獨立 provider authentication；見 [CHANNELS.md](CHANNELS.md)。
 
-目前 code route manifest 固定為 327 operations：24 條 non-operator，加上 303 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=120`、`operate=33`、`admin=150`，
-其中 `/v1/operator/*` JSON routes 共 153 條、HTML/BFF/CSV/download 共 150 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 334 operations：28 條 non-operator，加上 306 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=122`、`operate=33`、`admin=151`，
+其中 `/v1/operator/*` JSON routes 共 154 條、HTML/BFF/CSV/download 共 152 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-327-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+334-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies accept boundary-authorized human
 Tailscale admins or local admins with a current session MFA proof, checked before
 idempotency replay. Expired local sessions use the Hub UI step-up flow.
 
 operator route manifest 與實際註冊清單在 Hub 啟動時做雙向比對。繞過 operator
-boundary 的 24 條 route 也有另一份完整 manifest；兩份不能
-重疊。那 24 條是 19 條 machine transport、2 條 verifier transport、`/healthz`、`/version` 與一條 signed chat webhook；其中
+boundary 的 28 條 route 也有另一份完整 manifest；兩份不能
+重疊。那 28 條是 23 條 machine transport、2 條 verifier transport、`/healthz`、`/version` 與一條 signed chat webhook；其中
 `POST /v1/verifications`（write schema v2）與 `GET /v1/verification-assignments` 走的是 verifier bearer 而不是 machine
 bearer，manifest 仍把它們歸在 non-operator，因為它們同樣不經 operator boundary。
 Machine plane 的 `/v1/` 第二段必須是 literal 且不能是 `operator`，所以
@@ -819,3 +819,43 @@ are service-token ineligible. The single-row save and `fleet_host_profile` audit
 commit atomically. MCP `host_profile_get` is read-only and uses the same read
 API. The root applier's account identity is installed locally, never supplied
 by the Hub profile. See [HOST-PROFILE](HOST-PROFILE.md).
+
+## One-command Linux join
+
+Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
+non-root agent account, then match its code at `/machines/join`. The public
+`GET /join.sh` script uses the validated HTTPS `CLAWCTL_PUBLIC_URL`; `--hub`
+and `--user` are explicit alternatives. Viewers can read waiting requests;
+`POST /machines/join/decide` requires a human Admin and the enrollment MFA
+window. Approve all uses the displayed suggested names. Names capitalise the
+first letter of each dash-separated word, preserving the rest (`host-b` → `Host-B`).
+`GET /v1/operator/joins` and read-only MCP `join_requests_list` return metadata,
+never credentials. There is no MCP join write tool.
+
+Machine routes are `POST /v1/join/start`, `POST /v1/join/poll`, and
+`GET /v1/join/bundle/{arch}`. Start accepts bounded strict JSON, permits five
+requests per client IP per minute, and fails closed at 20 waiting/approved
+requests globally. IPs use the existing trusted-proxy resolver. Join codes and
+256-bit device secrets expire after 15 minutes; poll delivers approval once,
+atomically marking the request redeemed. All join responses use no-store.
+The script downloads the bundle while pending, then checks its SHA-256 from
+the approved payload before extraction. Bundle access requires the matching
+pending/approved, unexpired device secret and architecture; redemption ends
+that authority. Secrets stay out of URLs, argv, logs and operator reads.
+
+Enrollment tickets use the canonical operator service, are single-use and
+last 600 seconds. Optional Hub-issued Tailscale keys are single-use,
+non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
+OAuth client configuration is optional; without it the machine joins without
+Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,
+`CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`, and `CLAWCTL_TAILSCALE_JOIN_TAG`.
+`CLAWCTL_TAILSCALE_API_BASE` is accepted only in test binaries; production
+always uses the official API. The CLI reads its key using `--auth-key=file:...`.
+
+SQLite stores only device-secret hashes and request metadata. Minted credentials
+are held in process memory for at most ten minutes and deleted on redemption.
+Restart or delivery expiry shows “Approval expired”; a human can approve again
+while the request is still valid. An already minted enrollment ticket expires
+naturally and cannot be reconstructed. Join decisions and their secret-free
+`join_approve` / `join_reject` audit rows commit together. Rows older than seven
+days past expiry are pruned lazily on start/list, without changing ledger retention.

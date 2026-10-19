@@ -112,6 +112,7 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 	h := &hub{store: st}
 	nonOperatorMux := http.NewServeMux()
 	nonOperatorRegistered := h.machineAndPublicRoutes(nonOperatorMux)
+	nonOperatorRegistered = append(nonOperatorRegistered, ui.JoinPublicRoutes(nonOperatorMux)...)
 	nonOperatorRegistered = append(nonOperatorRegistered, ui.InboundRoutes(nonOperatorMux)...)
 	nonOperatorRegistered = append(nonOperatorRegistered, registerAccountRoutes(nonOperatorMux, st, ui, testOperatorAuthority, clientip.Resolver{})...)
 	operatorMux := http.NewServeMux()
@@ -123,16 +124,16 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		t.Fatal(err)
 	}
-	if len(nonOperatorRegistered) != 30 || len(nonOperatorRoutePolicies) != 30 {
-		t.Fatalf("non-operator registered=%d policies=%d, want 30/30",
+	if len(nonOperatorRegistered) != 34 || len(nonOperatorRoutePolicies) != 34 {
+		t.Fatalf("non-operator registered=%d policies=%d, want 34/34",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 303 || len(operatorRoutePolicies) != 303 {
-		t.Fatalf("operator registered=%d policies=%d, want 303/303",
+	if len(operatorRegistered) != 306 || len(operatorRoutePolicies) != 306 {
+		t.Fatalf("operator registered=%d policies=%d, want 306/306",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 333 {
-		t.Fatalf("all registered routes=%d, 預期 333", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 340 {
+		t.Fatalf("all registered routes=%d, 預期 340", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -142,14 +143,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 120 || counts[operatorauth.Operate] != 33 || counts[operatorauth.Admin] != 150 {
-		t.Fatalf("permission counts=%v, want view=120 operate=33 admin=150", counts)
+	if counts[operatorauth.View] != 122 || counts[operatorauth.Operate] != 33 || counts[operatorauth.Admin] != 151 {
+		t.Fatalf("permission counts=%v, want view=122 operate=33 admin=151", counts)
 	}
-	if representations[operatorJSON] != 153 || representations[operatorHTML] != 149 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=153 HTML=149 plain=1", representations)
+	if representations[operatorJSON] != 154 || representations[operatorHTML] != 151 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=154 HTML=151 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 302 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=302 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 305 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=305 terminal=1", profiles)
 	}
 }
 
@@ -265,6 +266,9 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"GET /machines/host-profile", "/machines/host-profile", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /machines/host-profile", "/machines/host-profile", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/host-profile", "/v1/operator/host-profile", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"GET /machines/join", "/machines/join", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /machines/join/decide", "/machines/join/decide", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"GET /v1/operator/joins", "/v1/operator/joins", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /readiness", "/readiness", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"POST /readiness", "/readiness", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/machines/{id}/readiness", "/v1/operator/machines/example/readiness", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
