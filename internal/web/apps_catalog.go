@@ -159,7 +159,7 @@ func (s *Server) catalogAssignmentsSurface(now time.Time) (*catalogAssignmentsVi
 	}
 	view := &catalogAssignmentsView{Report: report, Machines: make([]catalogMachineOption, 0, len(machines))}
 	for _, machine := range machines {
-		if machine.RetiredAt != nil {
+		if machine.RetiredAt != nil || s.store.MachineExecutionAllowed(machine.MachineID) != nil {
 			continue
 		}
 		option := catalogMachineOption{

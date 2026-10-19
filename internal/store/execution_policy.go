@@ -195,7 +195,7 @@ func (s *Store) ManageExecutionPolicy(req ExecutionPolicyRequest, apply bool) (o
 		}
 		out.Revision++
 		if req.Mode == model.ExecutionMonitorOnly {
-			out.ClosedSessions, err = closeOpenAgentSessionsForMachine(tx, req.MachineID, a.At, "monitor_only")
+			out.ClosedSessions, err = closeOpenAgentSessionsForMachine(tx, req.MachineID, a.At, "Machine changed to monitor only")
 			if err != nil {
 				return out, err
 			}

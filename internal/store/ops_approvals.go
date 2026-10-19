@@ -148,6 +148,9 @@ func (s *Store) createOpsApproval(a OpsApproval, audit AuditEntry) (OpsApproval,
 		return a, err
 	}
 	defer tx.Rollback()
+	if err = executionAllowedTx(tx, a.MachineID); err != nil {
+		return a, err
+	}
 	var n int
 	if err = tx.QueryRow(`SELECT COUNT(*) FROM ops_policies WHERE id=? AND revision=? AND digest=? AND superseded_at IS NULL AND kind=?`, a.PolicyID, a.PolicyRevision, a.PolicyDigest, opsOperationPolicyKind(a.Operation)).Scan(&n); err != nil {
 		return a, err
@@ -216,6 +219,9 @@ func (s *Store) decideOpsApproval(binding OpsApproval, approve bool, audit Audit
 	defer tx.Rollback()
 	a, err := scanOpsApproval(tx.QueryRow(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE id=?`, binding.ID))
 	if err != nil {
+		return a, err
+	}
+	if err = executionAllowedTx(tx, a.MachineID); err != nil {
 		return a, err
 	}
 	now := s.now().UTC().Truncate(time.Second)

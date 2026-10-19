@@ -158,6 +158,17 @@ func (s *Store) opsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 		return out, err
 	}
 	defer tx.Rollback()
+	a, err := scanOpsApproval(tx.QueryRow(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE id=?`, req.ID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, operatorError(OperatorCodeMaintenanceNotFound, "approval not found")
+	}
+	if err != nil {
+		return out, err
+	}
+	audit.MachineID = a.MachineID
+	if err = executionAllowedTx(tx, a.MachineID); err != nil {
+		return out, err
+	}
 	now := s.now().UTC().Truncate(time.Second)
 	requestDigest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(struct {
 		Actor   string
@@ -191,13 +202,6 @@ func (s *Store) opsApprovalDecision(req OpsApprovalDecisionRequest, apply bool, 
 		if !errors.Is(e, sql.ErrNoRows) {
 			return out, e
 		}
-	}
-	a, err := scanOpsApproval(tx.QueryRow(`SELECT `+opsApprovalColumns+` FROM ops_approvals WHERE id=?`, req.ID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return out, operatorError(OperatorCodeMaintenanceNotFound, "approval not found")
-	}
-	if err != nil {
-		return out, err
 	}
 	if a.State != "pending" || !a.Deadline.After(now) {
 		return out, operatorError("PRECONDITION_FAILED", "approval is no longer pending or has expired")

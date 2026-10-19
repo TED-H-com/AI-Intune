@@ -246,6 +246,38 @@ func TestMonitorOnlyRefusesTerminalAndSigninCodeRelay(t *testing.T) {
 	}
 }
 
+func TestMonitorOnlyRefusesRootApprovalAndTimerHandoff(t *testing.T) {
+	st, approval, _ := approvalFixture(t)
+	preview, err := st.OpsApprovalDecision(OpsApprovalDecisionRequest{ID: approval.ID, Decision: "approved", Reason: "review exact operation"}, false, "", diskAdmin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.DB().Exec(`UPDATE machine_registry SET execution_policy='monitor_only' WHERE machine_id=?`, approval.MachineID); err != nil {
+		t.Fatal(err)
+	}
+	for _, apply := range []bool{false, true} {
+		if _, err = st.OpsApprovalDecision(preview.Request, apply, "blocked-approval", diskAdmin()); err == nil || !strings.Contains(err.Error(), "monitor only") {
+			t.Fatalf("approval apply=%v err=%v", apply, err)
+		}
+	}
+	if _, err = st.DecideOpsApproval(approval, true, diskAdmin()); err == nil || !strings.Contains(err.Error(), "monitor only") {
+		t.Fatal("trusted approval accepted", err)
+	}
+	approval.ID = "blocked-approval"
+	if _, err = st.CreateOpsApproval(approval, diskAdmin()); err == nil || !strings.Contains(err.Error(), "monitor only") {
+		t.Fatal("approval creation accepted", err)
+	}
+	for _, action := range []string{"handoff", "rollback"} {
+		if _, err = st.DiskOwnershipManage(DiskOwnershipRequest{MachineID: approval.MachineID, Scope: "user", Action: action, Reason: "review timer ownership"}, false, "", diskAdmin()); err == nil || !strings.Contains(err.Error(), "monitor only") {
+			t.Fatal("timer operation accepted", action, err)
+		}
+	}
+	var state string
+	if err = st.DB().QueryRow(`SELECT state FROM ops_approvals WHERE id='approval-1'`).Scan(&state); err != nil || state != "pending" {
+		t.Fatal("approval changed", state, err)
+	}
+}
+
 func TestExecutionPolicyMigrationKeepsExistingMachineManaged(t *testing.T) {
 	st := newTestStore(t)
 	id := mustEnroll(t, st, "legacy-profile-machine", time.Now().UTC())

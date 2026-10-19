@@ -91,3 +91,46 @@ func TestMonitorOnlySigninsHideIndividualAndBulkFlows(t *testing.T) {
 		t.Fatal("monitor sign-in controls exposed")
 	}
 }
+
+func TestMonitorOnlyPausedSchedulesExplainProfile(t *testing.T) {
+	s, st := newServer(t)
+	id := onlineMachine(t, st, "Protected appliance")
+	enabled := true
+	now := time.Now().UTC()
+	if err := st.RecordCheckin(id, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: now, JobsEnabled: &enabled, ScriptV1: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	p := scheduleWebPrincipal()
+	w := diskWebRequest(t, s, "POST", schedulesBack+"/preview", scheduleTestForm(id), p, false)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	form := diskWebHidden(t, w.Body.String(), "request", "operation", "preview_digest", "idempotency_key", "expected_revision", "confirm")
+	w = diskWebRequest(t, s, "POST", schedulesBack+"/apply", form, p, false)
+	if w.Code != 303 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if _, err := st.DB().Exec(`UPDATE schedules SET enabled=0,paused_reason='machine_monitor_only'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`UPDATE machine_registry SET execution_policy='monitor_only' WHERE machine_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{schedulesBack, w.Header().Get("Location")} {
+		body := diskWebRequest(t, s, "GET", path, nil, p, false).Body.String()
+		if !strings.Contains(body, "目標機器已改為只監控，排程已停用。") || strings.Contains(body, "machine_monitor_only") {
+			t.Fatal("missing profile explanation", path)
+		}
+		if strings.Contains(body, "/run-now\"") || strings.Contains(body, `name="operation" value="set-enabled"`) {
+			t.Fatal("monitor schedule exposes execution controls", path)
+		}
+	}
+	view, err := s.scheduleEditView(store.ScheduleRequest{})
+	if err != nil || len(view.Machines) != 0 {
+		t.Fatal("monitor schedule target offered", view, err)
+	}
+	assignments, err := s.catalogAssignmentsSurface(now)
+	if err != nil || len(assignments.Machines) != 0 {
+		t.Fatal("monitor profile target offered", assignments, err)
+	}
+}
