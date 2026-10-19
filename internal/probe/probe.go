@@ -291,6 +291,7 @@ func identity(ctx context.Context) model.Identity {
 		id.Hostname = h
 	}
 	id.Kernel, id.Arch = kernelAndArch()
+	id.LANIPv4 = lanIPv4()
 	// tailscale 不在也無所謂，拿不到就是空字串（欄位是 omitempty）。
 	if out, _, err := run(ctx, quickTimeout, "tailscale", "ip", "-4"); err == nil {
 		if lines := strings.Fields(out); len(lines) > 0 {

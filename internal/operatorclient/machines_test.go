@@ -84,7 +84,7 @@ func validMachineDetailJSON(item string) string {
 	displayName, _ := json.Marshal(identity.DisplayName)
 	affectsFleetState := identity.RetiredAt == nil
 	return fmt.Sprintf(`{
-	"schema_version":6,
+	"schema_version":7,
   "evaluated_at":"2026-09-07T12:02:30.987654321Z",
   "item":%s,
   "judgement":{

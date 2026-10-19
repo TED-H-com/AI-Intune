@@ -1389,3 +1389,15 @@ fresh local MFA and same-origin form checks. `POST /v1/agent/signins` accepts
 machine-bearer sanitized results bound to that machine. All Sign-ins responses
 are no-store. Start, code submission, cancel, result, and preference changes
 are audited atomically with their durable state.
+
+### LAN IPv4 identity evidence
+
+Machine detail schema v7 adds `identity.value.lan_ipv4` with `items`, `total`,
+`invalid` (including duplicates), and `truncated`. At most 16 canonical unicast
+IPv4 addresses are disclosed; loopback, link-local, multicast and Tailscale
+100.64.0.0/10 are excluded. Invalid strings never leave the projection. Interface
+names are excluded. The observer selects up interfaces excluding Tailscale,
+Docker, virbr, bridge and container/tunnel interfaces. This is agent-measured
+identity evidence with the existing agent/Hub clocks, not a connectivity test.
+Older agents omit `lan_ipv4` and the Hub projects an empty list (UI: 未回報).
+The list, changes, service-token eligibility and BAT coordinate rules are unchanged.
