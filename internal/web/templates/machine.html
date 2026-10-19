@@ -1,5 +1,6 @@
 {{define "machine.html"}}{{template "head" .}}
-<p><a href="/signins">Manage CLI sign-ins</a></p>
+{{if not .ExecutionPolicy.MonitorOnly}}<p><a href="/signins">Manage CLI sign-ins</a></p>{{end}}
+{{template "execution-policy-panel" .ExecutionPolicy}}
 {{$md := .MachineDetail}}{{$m := .Machine}}{{$c := .MachineConnect}}{{$mon := $md.Monitor}}
 
 <div class="page-heading section-anchor" id="machine-overview" tabindex="-1"><div>
@@ -717,6 +718,7 @@
 {{if $md.StateHistory.Invalid}}<p class="small dim">{{$md.StateHistory.Invalid}} 段狀態歷史無效。</p>{{end}}
 </div>
 
+{{if not .ExecutionPolicy.MonitorOnly}}
 {{with .MachineActions}}
 <h2 id="actions" class="section-anchor" tabindex="-1">動作</h2>
 <div class="panel" style="padding:4px 6px;overflow-x:auto">
@@ -933,4 +935,5 @@
   </p>
 </div>
 
+{{end}}
 {{template "foot" .}}{{end}}

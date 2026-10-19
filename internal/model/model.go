@@ -26,6 +26,8 @@ const SchemaVersion = 1
 
 // EnrollRequest 是機器第一次向 Hub 報到。用一次性 token 換一個長期身分。
 type EnrollRequest struct {
+	MonitorOnlySupported bool `json:"monitor_only_supported,omitempty"`
+	ExecutionPolicyV1 bool `json:"execution_policy_v1,omitempty"`
 	SchemaVersion int    `json:"schema_version"`
 	EnrollToken   string `json:"enroll_token"`
 	Hostname      string `json:"hostname"`
@@ -40,9 +42,10 @@ type EnrollRequest struct {
 }
 
 type EnrollResponse struct {
-	SchemaVersion int    `json:"schema_version"`
-	MachineID     string `json:"machine_id"`
-	AgentToken    string `json:"agent_token"` // Phase 1 用 bearer token，見 docs/SPEC.md §5.1 的偏離說明
+	ExecutionPolicy *ExecutionPolicy `json:"execution_policy,omitempty"`
+	SchemaVersion   int              `json:"schema_version"`
+	MachineID       string           `json:"machine_id"`
+	AgentToken      string           `json:"agent_token"` // Phase 1 用 bearer token，見 docs/SPEC.md §5.1 的偏離說明
 	// CheckinInterval 由 Hub 指派，Agent 不自己決定 —— 這樣調整節奏不用重裝 agent。
 	CheckinIntervalSeconds     int `json:"checkin_interval_seconds"`
 	ObservationIntervalSeconds int `json:"observation_interval_seconds"`
@@ -68,10 +71,13 @@ type CallActivity struct {
 // observation 連續失敗時心跳仍要能送達，否則 Hub 分不出「機器死了」與
 // 「只是狀態檔過期」。
 type Checkin struct {
-	CallActivity  []CallActivity `json:"call_activity,omitempty"`
-	SchemaVersion int            `json:"schema_version"`
-	SentAt        time.Time      `json:"sent_at"`
-	AgentVersion  string         `json:"agent_version"`
+	MonitorOnlySupported bool             `json:"monitor_only_supported,omitempty"`
+	ExecutionPolicyV1    bool             `json:"execution_policy_v1,omitempty"`
+	ExecutionPolicy      *ExecutionPolicy `json:"execution_policy,omitempty"`
+	CallActivity         []CallActivity   `json:"call_activity,omitempty"`
+	SchemaVersion        int              `json:"schema_version"`
+	SentAt               time.Time        `json:"sent_at"`
+	AgentVersion         string           `json:"agent_version"`
 
 	// BootID 是**機器**的開機 ID（/proc/sys/kernel/random/boot_id），
 	// 只有機器重開機才會變。
@@ -131,6 +137,7 @@ type Checkin struct {
 }
 
 type CheckinResponse struct {
+	ExecutionPolicy      *ExecutionPolicy               `json:"execution_policy,omitempty"`
 	DiskJobs             []DiskJob                      `json:"disk_jobs,omitempty"`
 	HostProfile          *HostProfile                   `json:"host_profile,omitempty"`
 	HostProfileDigest    string                         `json:"host_profile_digest,omitempty"`
@@ -166,17 +173,18 @@ type CheckinResponse struct {
 // IdentityMeasuredAt uses the agent's clock; IdentityReceivedAt uses the Hub's.
 // Both timestamps describe the same stored identity evidence.
 type AgentReadinessResponse struct {
-	MachineID              string     `json:"machine_id"`
-	LastCheckinReceivedAt  *time.Time `json:"last_checkin_received_at"`
-	AgentStartedAt         *time.Time `json:"agent_started_at"`
-	AgentVersion           string     `json:"agent_version,omitempty"`
-	JobsEnabled            *bool      `json:"jobs_enabled,omitempty"`
-	DeviceSyncV1           *bool      `json:"device_sync_v1,omitempty"`
-	MaintenanceDiskCleanV1 *bool      `json:"maintenance_disk_clean_v1,omitempty"`
-	IdentityReceivedAt     *time.Time `json:"identity_received_at"`
-	IdentityMeasuredAt     *time.Time `json:"identity_measured_at"`
-	IdentityOS             string     `json:"identity_os,omitempty"`
-	IdentityArch           string     `json:"identity_arch,omitempty"`
+	ExecutionPolicy        *ExecutionPolicy `json:"execution_policy,omitempty"`
+	MachineID              string           `json:"machine_id"`
+	LastCheckinReceivedAt  *time.Time       `json:"last_checkin_received_at"`
+	AgentStartedAt         *time.Time       `json:"agent_started_at"`
+	AgentVersion           string           `json:"agent_version,omitempty"`
+	JobsEnabled            *bool            `json:"jobs_enabled,omitempty"`
+	DeviceSyncV1           *bool            `json:"device_sync_v1,omitempty"`
+	MaintenanceDiskCleanV1 *bool            `json:"maintenance_disk_clean_v1,omitempty"`
+	IdentityReceivedAt     *time.Time       `json:"identity_received_at"`
+	IdentityMeasuredAt     *time.Time       `json:"identity_measured_at"`
+	IdentityOS             string           `json:"identity_os,omitempty"`
+	IdentityArch           string           `json:"identity_arch,omitempty"`
 }
 
 // ---------------------------------------------------------------- 工作單

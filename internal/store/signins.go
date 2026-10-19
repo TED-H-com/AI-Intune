@@ -74,6 +74,9 @@ func (s *Store) StartSignin(ctx context.Context, machine, cli string, slot int, 
 		return v, e
 	}
 	defer tx.Rollback()
+	if e := executionAllowedTx(tx, machine); e != nil {
+		return v, e
+	}
 	var osname string
 	if e = tx.QueryRow(`SELECT os FROM machine_registry WHERE machine_id=? AND retired_at IS NULL`, machine).Scan(&osname); e != nil {
 		return v, e
@@ -175,6 +178,9 @@ func (s *Store) SigninAction(ctx context.Context, id, op, code string, a AuditEn
 	if e = tx.QueryRow(`SELECT state,machine_id,expires_at FROM signin_sessions WHERE id=?`, id).Scan(&state, &machine, &expiry); e != nil {
 		return e
 	}
+	if e = executionAllowedTx(tx, machine); e != nil {
+		return e
+	}
 	until, _ := time.Parse(time.RFC3339Nano, expiry)
 	if !activeSignin(state) || !until.After(s.now()) {
 		return errors.New("sign-in has ended")
@@ -221,6 +227,9 @@ func (s *Store) SigninAction(ctx context.Context, id, op, code string, a AuditEn
 // SigninCommands claims pending work and consumes pasted codes exactly once.
 // No code appears in SQL, audit, disk queues, or retry payloads.
 func (s *Store) SigninCommands(machine string) []model.SigninCommand {
+	if s.MachineExecutionAllowed(machine) != nil {
+		return nil
+	}
 	_ = s.ExpireSignins()
 	s.signins.Lock()
 	defer s.signins.Unlock()
@@ -265,6 +274,9 @@ func (s *Store) SigninCommands(machine string) []model.SigninCommand {
 	return out
 }
 func (s *Store) DispatchSignins(machine string) {
+	if s.MachineExecutionAllowed(machine) != nil {
+		return
+	}
 	s.signins.Lock()
 	send := s.signins.send
 	s.signins.Unlock()
@@ -296,6 +308,9 @@ func (s *Store) UpdateSignin(machine string, u model.SigninUpdate) error {
 	defer tx.Rollback()
 	var state, cli, expiry string
 	if e = tx.QueryRow(`SELECT state,cli,expires_at FROM signin_sessions WHERE id=? AND machine_id=?`, u.ID, machine).Scan(&state, &cli, &expiry); e != nil {
+		return e
+	}
+	if e = executionAllowedTx(tx, machine); e != nil {
 		return e
 	}
 	until, _ := time.Parse(time.RFC3339Nano, expiry)
@@ -349,6 +364,7 @@ func (s *Store) UpdateSignin(machine string, u model.SigninUpdate) error {
 type SigninHost struct {
 	MachineID   string `json:"machine_id"`
 	DisplayName string `json:"display_name"`
+	MonitorOnly bool   `json:"monitor_only,omitempty"`
 	model.AuthHealth
 }
 type SigninGroup struct {
@@ -360,7 +376,7 @@ type SigninGroup struct {
 }
 
 func (s *Store) Signins() ([]SigninGroup, error) {
-	rows, e := s.rdb.Query(`SELECT o.machine_id,m.display_name,o.payload FROM observed_state o JOIN machine_registry m ON m.machine_id=o.machine_id WHERE o.kind='auth_health' AND m.retired_at IS NULL AND o.rowid=(SELECT x.rowid FROM observed_state x WHERE x.machine_id=o.machine_id AND x.kind=o.kind AND x.subject=o.subject ORDER BY x.received_at DESC,x.rowid DESC LIMIT 1) ORDER BY m.display_name`)
+	rows, e := s.rdb.Query(`SELECT o.machine_id,m.display_name,m.execution_policy<>'managed',o.payload FROM observed_state o JOIN machine_registry m ON m.machine_id=o.machine_id WHERE o.kind='auth_health' AND m.retired_at IS NULL AND o.rowid=(SELECT x.rowid FROM observed_state x WHERE x.machine_id=o.machine_id AND x.kind=o.kind AND x.subject=o.subject ORDER BY x.received_at DESC,x.rowid DESC LIMIT 1) ORDER BY m.display_name`)
 	if e != nil {
 		return nil, e
 	}
@@ -369,7 +385,7 @@ func (s *Store) Signins() ([]SigninGroup, error) {
 	for rows.Next() {
 		var h SigninHost
 		var payload string
-		if e = rows.Scan(&h.MachineID, &h.DisplayName, &payload); e != nil {
+		if e = rows.Scan(&h.MachineID, &h.DisplayName, &h.MonitorOnly, &payload); e != nil {
 			return nil, e
 		}
 		if json.Unmarshal([]byte(payload), &h.AuthHealth) != nil {

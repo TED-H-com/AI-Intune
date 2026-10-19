@@ -129,11 +129,13 @@ type MachineChannelResponse struct {
 // digest must be carried into CreateEnrollToken. TTLSeconds is deliberately an
 // integer on the wire: clients must not disagree about duration spelling.
 type EnrollmentTokenPreviewRequest struct {
+	MonitorOnly bool   `json:"monitor_only,omitempty"`
 	DisplayName string `json:"display_name"`
 	TTLSeconds  int64  `json:"ttl_seconds"`
 }
 
 type EnrollmentTokenPreviewResponse struct {
+	MonitorOnly                bool      `json:"monitor_only,omitempty"`
 	DisplayName                string    `json:"display_name"`
 	TTLSeconds                 int64     `json:"ttl_seconds"`
 	PreviewedAt                time.Time `json:"previewed_at"`
@@ -155,6 +157,7 @@ type EnrollmentTokenPreviewResponse struct {
 }
 
 type EnrollmentTokenCreateRequest struct {
+	MonitorOnly   bool   `json:"monitor_only,omitempty"`
 	DisplayName   string `json:"display_name"`
 	TTLSeconds    int64  `json:"ttl_seconds"`
 	PreviewDigest string `json:"preview_digest"`
@@ -162,6 +165,7 @@ type EnrollmentTokenCreateRequest struct {
 }
 
 type EnrollmentTokenResponse struct {
+	MonitorOnly      bool      `json:"monitor_only,omitempty"`
 	DisplayName      string    `json:"display_name"`
 	MachineID        string    `json:"machine_id"`
 	TTLSeconds       int64     `json:"ttl_seconds"`
@@ -601,6 +605,7 @@ func validateJSONNoStoreResponse(header http.Header) error {
 func decodeEnrollmentTokenPreviewResponse(raw []byte) (EnrollmentTokenPreviewResponse, error) {
 	var result EnrollmentTokenPreviewResponse
 	seen, err := decodeExactJSONObject(raw, "enrollment token preview", map[string]any{
+		"monitor_only":                  &result.MonitorOnly,
 		"display_name":                  &result.DisplayName,
 		"ttl_seconds":                   &result.TTLSeconds,
 		"previewed_at":                  &result.PreviewedAt,
@@ -630,6 +635,9 @@ func decodeEnrollmentTokenPreviewResponse(raw []byte) (EnrollmentTokenPreviewRes
 }
 
 func validateEnrollmentTokenPreviewResponse(result EnrollmentTokenPreviewResponse, request EnrollmentTokenPreviewRequest) error {
+	if result.MonitorOnly != request.MonitorOnly {
+		return errors.New("operator client: enrollment monitoring policy does not match request")
+	}
 	if result.DisplayName != request.DisplayName {
 		return errors.New("operator client: enrollment token preview display_name does not match request")
 	}
@@ -672,6 +680,7 @@ func validateEnrollmentTokenPreviewResponse(result EnrollmentTokenPreviewRespons
 func decodeEnrollmentTokenResponse(raw []byte) (EnrollmentTokenResponse, bool, error) {
 	var result EnrollmentTokenResponse
 	seen, err := decodeExactJSONObject(raw, "enrollment token create", map[string]any{
+		"monitor_only":      &result.MonitorOnly,
 		"machine_id":        &result.MachineID,
 		"display_name":      &result.DisplayName,
 		"created_at":        &result.CreatedAt,
@@ -699,6 +708,9 @@ func decodeEnrollmentTokenResponse(raw []byte) (EnrollmentTokenResponse, bool, e
 func validateEnrollmentTokenResponse(result EnrollmentTokenResponse, tokenFieldPresent bool,
 	status int, request EnrollmentTokenCreateRequest,
 ) error {
+	if result.MonitorOnly != request.MonitorOnly {
+		return errors.New("operator client: enrollment monitoring policy does not match request")
+	}
 	if result.DisplayName != request.DisplayName {
 		return errors.New("operator client: enrollment token response display_name does not match request")
 	}

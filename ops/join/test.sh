@@ -68,6 +68,7 @@ case "${0##*/}" in
 import hashlib,json,sys
 d=dict(state='approved',display_name='Host-B',hub_url='https://hub.example.com',enroll_token='fixture-enrollment-secret',bundle=dict(sha256=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()),tailscale=dict(auth_key='fixture-tailscale-secret',tags=['tag:fleet'],hostname='host-b'))
 import os
+if os.environ['JOIN_TEST_MODE']=='monitor-only': d['monitor_only']=True
 if os.environ['JOIN_TEST_MODE']=='no-tailscale': d.pop('tailscale')
 if os.environ['JOIN_TEST_MODE']=='checksum-failure': d['bundle']['sha256']='0'*64
 json.dump(d,sys.stdout)
@@ -83,7 +84,7 @@ chmod +x "$TEST_DIR/bin/stub"
 for tool in uname id hostname systemctl sshd chown sleep sudo tailscale curl; do ln -s stub "$TEST_DIR/bin/$tool"; done
 export PATH="$TEST_DIR/bin:$PATH"
 runs=0
-for mode in approved no-tailscale no-fleet rejected expired download-failure checksum-failure installer-failure; do
+for mode in approved monitor-only no-tailscale no-fleet rejected expired download-failure checksum-failure installer-failure; do
   rm -f "$TEST_DIR/installed" "$TEST_DIR/applied"
   if [[ $mode == no-fleet ]]; then
     tar -czf "$TEST_DIR/bundle.tar.gz" -C "$TEST_DIR/stage" install-agent.sh
@@ -99,6 +100,7 @@ for mode in approved no-tailscale no-fleet rejected expired download-failure che
   TMPDIR="$TEST_DIR/tmp" SUDO_USER='' bash "$ROOT/ops/join/join.sh" --user operator --hub https://hub.example.com --root-prefix "$TEST_DIR/root" >"$TEST_DIR/output" 2>&1 || rc=$?
   case "$mode" in
     approved|no-tailscale) if [[ $rc != 0 ]]; then cat "$TEST_DIR/output"; fi; [[ $rc == 0 && -f $TEST_DIR/installed && -f $TEST_DIR/applied ]]; grep -q 'Joined as Host-B' "$TEST_DIR/output" ;;
+    monitor-only) [[ $rc == 0 && -f $TEST_DIR/installed && ! -f $TEST_DIR/applied ]] ;;
     no-fleet) [[ $rc == 0 && -f $TEST_DIR/installed && ! -f $TEST_DIR/applied ]] ;;
     rejected) [[ $rc == 3 ]];grep -q 'Join rejected' "$TEST_DIR/output" ;;
     expired) [[ $rc == 4 ]];grep -q 'Join expired' "$TEST_DIR/output" ;;

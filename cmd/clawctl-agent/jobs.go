@@ -521,6 +521,7 @@ func saveJournal(path string, watermarks deploy.Watermarks) error {
 }
 
 type jobsOptions struct {
+	Guard        *executionGuard
 	HubURL       string
 	Token        string
 	JournalPath  string
@@ -534,6 +535,7 @@ type jobsOptions struct {
 }
 
 type jobsRunner struct {
+	guard        *executionGuard
 	hubURL       string
 	token        string
 	journalPath  string
@@ -551,7 +553,7 @@ type jobsRunner struct {
 }
 
 func startJobs(ctx context.Context, cfg config, nudge chan<- struct{}) {
-	if !cfg.JobsEnabled {
+	if !cfg.executionAllowed() || !cfg.JobsEnabled {
 		log.Printf("job runner loop disabled (jobs_enabled=false)")
 		return
 	}
@@ -565,7 +567,7 @@ func startJobs(ctx context.Context, cfg config, nudge chan<- struct{}) {
 		return sweepOrphanStaging(sweepCtx, home, "", realSystemctl)
 	}
 	launchJobs(ctx, sweep, jobsOptions{
-		HubURL:       cfg.HubURL,
+		Guard: cfg.execution, HubURL: cfg.HubURL,
 		Token:        cfg.AgentToken,
 		JournalPath:  journalPath(),
 		PollInterval: dur(cfg.JobsPollIntervalSeconds, 30*time.Second),
@@ -627,11 +629,14 @@ func newJobsRunner(opts jobsOptions) (*jobsRunner, error) {
 		opts.Executor = newKindExecutor(noopExecutor{now: opts.Now}, deviceSyncExecutor{now: opts.Now},
 			openclaw, nodeRuntime, hermes).withKind(agentadapter.ExecutorKindClaudeCode, claude).withKind(agentadapter.ExecutorKindCodex, codex).withKind(agentadapter.ExecutorKindGrok, grok).withKind(agentadapter.ExecutorKindBATServer, batServer).withKind(agentadapter.ExecutorKindAntigravity, antigravity).withKind(maintenance.JobKind, maintenanceExecutor{}).withKind(scriptcatalog.Kind, scriptExecutor{hubURL: opts.HubURL, token: opts.Token})
 	}
+	if opts.Guard != nil {
+		opts.Executor = policyExecutor{inner: opts.Executor, guard: opts.Guard}
+	}
 	w, err := loadWatermarkJournal(opts.JournalPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read watermark journal %s: %w", opts.JournalPath, err)
 	}
-	return &jobsRunner{
+	return &jobsRunner{guard: opts.Guard,
 		hubURL:       strings.TrimRight(opts.HubURL, "/"),
 		token:        opts.Token,
 		journalPath:  opts.JournalPath,
@@ -727,6 +732,9 @@ func (r *jobsRunner) pollAfterError(ctx context.Context, err error) error {
 }
 
 func (r *jobsRunner) next(ctx context.Context) (model.JobResponse, bool, error) {
+	if !r.guard.Allowed() {
+		return model.JobResponse{}, false, errExecutionBlocked
+	}
 	var job model.JobResponse
 	status, err := doJSONStatus(ctx, http.MethodGet, r.hubURL+"/v1/jobs/next", r.token, nil, &job)
 	if err != nil {
@@ -804,6 +812,9 @@ func validateJobLeaseReceipt(receipt model.JobLeaseResponse, expectedToken strin
 }
 
 func (r *jobsRunner) process(ctx context.Context, job model.JobResponse, lease model.JobLeaseResponse) {
+	if !r.guard.Allowed() {
+		return
+	}
 	scope := resourceScope{Kind: job.ResourceKind, ID: job.ResourceID}
 	if !validResourceScope(scope) {
 		r.reject(ctx, job.JobID, lease.LeaseToken, 1, deploy.PreconditionFailed,

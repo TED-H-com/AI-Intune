@@ -28,14 +28,16 @@ import (
 type AuditAction string
 
 const (
-	AuditSigninStart         AuditAction = "signin_start"
-	AuditSigninCodeSubmitted AuditAction = "signin_code_submitted"
-	AuditSigninCancel        AuditAction = "signin_cancel"
-	AuditSigninResult        AuditAction = "signin_result"
-	AuditSigninNotifications AuditAction = "signin_notifications"
-	AuditChannelManage       AuditAction = "channel-manage"
-	AuditChannelTest         AuditAction = "channel-test"
-	AuditSecretTest          AuditAction = "secret-test"
+	AuditMachineExecutionPolicyPreview AuditAction = "machine-execution-policy-preview"
+	AuditMachineExecutionPolicyApply   AuditAction = "machine-execution-policy-apply"
+	AuditSigninStart                   AuditAction = "signin_start"
+	AuditSigninCodeSubmitted           AuditAction = "signin_code_submitted"
+	AuditSigninCancel                  AuditAction = "signin_cancel"
+	AuditSigninResult                  AuditAction = "signin_result"
+	AuditSigninNotifications           AuditAction = "signin_notifications"
+	AuditChannelManage                 AuditAction = "channel-manage"
+	AuditChannelTest                   AuditAction = "channel-test"
+	AuditSecretTest                    AuditAction = "secret-test"
 )
 
 const (

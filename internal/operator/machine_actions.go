@@ -337,7 +337,14 @@ func (s *Service) MachineActions(req MachineActionsRequest) (MachineActionCatalo
 	if err != nil {
 		return MachineActionCatalogue{}, err
 	}
+	policy, err := s.store.MachineExecutionPolicy(machineID)
+	if err != nil {
+		return MachineActionCatalogue{}, err
+	}
 	for _, kind := range MachineActionKinds() {
+		if policy.Mode != "managed" && (kind == MachineActionConnect || kind == MachineActionOpenTerminal || kind == MachineActionDiagnosticNoop || kind == MachineActionChannel) {
+			continue
+		}
 		verdict, present := verdicts[kind]
 		shape := machineActionShapes[kind]
 		if !present || !req.Granted.holds(shape.capability) {

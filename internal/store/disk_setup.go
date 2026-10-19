@@ -71,6 +71,9 @@ func (s *Store) ApproveDiskSetup(machine string, j model.DiskJob, a AuditEntry) 
 		return "", e
 	}
 	defer tx.Rollback()
+	if e := executionAllowedTx(tx, machine); e != nil {
+		return "", e
+	}
 	var osName string
 	if e = tx.QueryRow(`SELECT os FROM machine_registry WHERE machine_id=?`, machine).Scan(&osName); e != nil || osName != "linux" {
 		return "", fmt.Errorf("Disk setup requires a Linux machine")
@@ -133,6 +136,9 @@ func (s *Store) CancelDiskSetup(machine, id string, a AuditEntry) error {
 	return tx.Commit()
 }
 func (s *Store) DeliverDiskJobs(machine string) ([]model.DiskJob, error) {
+	if err := s.MachineExecutionAllowed(machine); err != nil {
+		return nil, err
+	}
 	out := []model.DiskJob{}
 	tx, e := s.beginWrite(context.Background(), "disk_setup_delivery")
 	if e != nil {

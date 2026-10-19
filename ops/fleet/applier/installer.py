@@ -50,6 +50,10 @@ else:
     uid, home = record.pw_uid, record.pw_dir
 if uid == 0 or not re.fullmatch(r'/[A-Za-z0-9_./-]+', home) or '..' in Path(home).parts:
     p.error('requires a non-root account with a safe absolute home')
+try:
+    a.execution_allowed(home, uid)
+except (OSError, ValueError, KeyError, StopIteration, TypeError):
+    p.error('Agent policy refuses host changes; enroll a managed agent before installing the applier')
 maintenance = BASE / 'maintenance'
 if not maintenance.exists():
     maintenance = BASE.parent.parent / 'maintenance'
@@ -71,6 +75,7 @@ state = a.path('/var/lib/clawctl-fleet-apply')
 a.safe(state)
 state.mkdir(parents=True, exist_ok=True, mode=0o755)
 state.chmod(0o755)
+a.execution_allowed(home, uid)
 if not args.root_prefix:
     subprocess.run(['systemctl', 'daemon-reload'], check=True)
     subprocess.run(['systemctl', 'enable', '--now', 'clawctl-fleet-apply.timer', 'clawctl-fleet-apply.path'], check=True)

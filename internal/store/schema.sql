@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS machine_registry (
   machine_id      TEXT PRIMARY KEY,
   display_name    TEXT NOT NULL,          -- 人講的名字：samplehub1 / sampleagent1
   channel         TEXT,                   -- NULL＝未指派；只准 canary | stable
+  execution_policy TEXT NOT NULL DEFAULT 'managed' CHECK(execution_policy IN ('managed','monitor_only')),
+  execution_policy_revision INTEGER NOT NULL DEFAULT 1,
+  execution_policy_supported INTEGER NOT NULL DEFAULT 0,
+  execution_policy_observed_revision INTEGER NOT NULL DEFAULT 0,
   channel_revision INTEGER NOT NULL DEFAULT 0, -- operator optimistic concurrency token
   lifecycle_revision INTEGER NOT NULL DEFAULT 0, -- active/retired optimistic concurrency token
   assigned_user_id TEXT,                  -- tailnet 使用者的穩定 ID；NULL＝未指派。login 可以改成跟別人一樣，配對只認這個 ID

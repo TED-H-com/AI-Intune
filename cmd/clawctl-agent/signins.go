@@ -12,8 +12,13 @@ import (
 )
 
 var agentSignins atomic.Pointer[signin.Runner]
+var agentSigninPolicy atomic.Pointer[executionGuard]
 
 func startSignins(ctx context.Context, cfg config) {
+	agentSigninPolicy.Store(cfg.execution)
+	if !cfg.executionAllowed() {
+		return
+	}
 	home, e := os.UserHomeDir()
 	if e != nil {
 		return
@@ -28,6 +33,9 @@ func startSignins(ctx context.Context, cfg config) {
 	go func() { <-ctx.Done(); runner.Shutdown() }()
 }
 func handleSigninCommand(ctx context.Context, c model.SigninCommand) {
+	if !agentSigninPolicy.Load().Allowed() {
+		return
+	}
 	if runner := agentSignins.Load(); runner != nil {
 		runner.Handle(ctx, c)
 	}

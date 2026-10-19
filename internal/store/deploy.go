@@ -353,6 +353,9 @@ func createManagedJobTx(tx dbTx, machineID, desiredID string, revision deploy.Re
 func createJobTxWithPolicy(tx dbTx, machineID, desiredID string, revision deploy.Revision,
 	n NewJob, now time.Time, managedAdapter bool,
 ) (string, error) {
+	if err := executionAllowedTx(tx, machineID); err != nil {
+		return "", err
+	}
 	if n.ExecutionTimeout <= 0 {
 		n.ExecutionTimeout = 900
 	}
@@ -713,6 +716,9 @@ SELECT j.job_id, j.machine_id, j.desired_id, j.revision, j.state,
 }
 
 func (s *Store) NextJobForMachine(machineID string) (Job, bool, error) {
+	if err := s.MachineExecutionAllowed(machineID); err != nil {
+		return Job{}, false, err
+	}
 	// The common poll (every agent, every ~30s) only reads. BEGIN IMMEDIATE on
 	// the single writer would reserve it for a SELECT. A read-only snapshot on
 	// the reader pool answers "is there a dependency-blocked child, and what is
@@ -893,6 +899,9 @@ func (s *Store) ClaimJob(jobID, machineID string, now time.Time, lease time.Dura
 		return "", err
 	}
 	defer tx.Rollback()
+	if err := executionAllowedTx(tx, machineID); err != nil {
+		return "", err
+	}
 	var specRaw, kind string
 	err = tx.QueryRow(`SELECT d.spec,d.resource_kind FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=?`, jobID, machineID).Scan(&specRaw, &kind)
 	if err != nil {

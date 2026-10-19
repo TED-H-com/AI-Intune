@@ -72,6 +72,8 @@ class Applier:
                     raise ValueError('untrusted system directory')
 
     def run(self, *argv, query=False, allow_failure=False):
+        if not query and hasattr(self, 'policy_identity'):
+            self.execution_allowed(*self.policy_identity)
         if self.args.dry_run and not query:
             self.changed = True
             return ''
@@ -83,6 +85,8 @@ class Applier:
         return r.stdout[:4096].decode('utf-8', errors='replace').strip()
 
     def atomic(self, path, body, mode=0o644):
+        if hasattr(self, 'policy_identity'):
+            self.execution_allowed(*self.policy_identity)
         self.safe(path)
         if self.args.dry_run:
             return
@@ -107,6 +111,8 @@ class Applier:
                 os.unlink(tmp)
 
     def drop(self, name, body, enabled=True, sudoers=False):
+        if hasattr(self, 'policy_identity'):
+            self.execution_allowed(*self.policy_identity)
         path = self.path(name)
         self.safe(path)
         old = path.read_bytes() if path.exists() else None
@@ -142,6 +148,51 @@ class Applier:
                 self.atomic(path, want, 0o440 if sudoers else 0o644)
         self.changed = True
 
+    def execution_allowed(self, home=None, uid=None):
+        # Only this fixed agent file supplies policy; never accept profile text.
+        if home is None and hasattr(self, 'policy_identity'):
+            home, uid = self.policy_identity
+        if home is None:
+            conf = self.path('/etc/clawctl/fleet-apply.conf')
+            self.safe(conf)
+            c = json.loads(conf.read_text(), object_pairs_hook=strict)
+            user = c['agent_user']
+            if not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_-]{0,31}', user):
+                raise ValueError('invalid service user')
+            if self.prefix:
+                r = next(l.split(':') for l in self.path('/etc/passwd').read_text().splitlines() if l.split(':')[0] == user)
+                uid, home = int(r[2]), r[5]
+            else:
+                r = pwd.getpwnam(user)
+                uid, home = r.pw_uid, r.pw_dir
+        if uid == 0 or not home.startswith('/') or '..' in Path(home).parts:
+            raise ValueError('invalid service home')
+        path = self.path(home + '/.config/clawctl/agent.json')
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for component in path.parts[1:-1]:
+                nxt = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = nxt
+            f = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(f, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_size > 65536:
+                    raise ValueError('untrusted agent policy')
+                config = json.loads(stream.read(65537), object_pairs_hook=strict)
+            policy = config.get('execution_policy')
+            # Legacy agents have no profile. Explicit unknown/malformed profiles refuse.
+            if 'execution_policy' not in config:
+                self.policy_identity = (home, uid)
+                return
+            if (type(policy) is not dict or set(policy) != {'mode', 'revision'}
+                    or policy.get('mode') != 'managed' or type(policy.get('revision')) is not int
+                    or policy['revision'] < 1):
+                raise ValueError('machine execution is blocked by policy')
+            self.policy_identity = (home, uid)
+        finally:
+            os.close(fd)
+
     def read_input(self):
         conf = self.path('/etc/clawctl/fleet-apply.conf')
         self.safe(conf)
@@ -164,6 +215,7 @@ class Applier:
         self.agent_uid, self.agent_home = uid, home
         # Traverse all user-controlled directories using dirfds and O_NOFOLLOW.
         # Holding each descriptor prevents symlink swaps between stat and read.
+        self.execution_allowed(home, uid)
         profile = self.path(home + '/.config/clawctl/host-profile.json')
         fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -184,6 +236,7 @@ class Applier:
         return parse(raw)
 
     def apply_item(self, name, value):
+        self.execution_allowed()
         if name == 'lid_ignore':
             self.drop('/etc/systemd/logind.conf.d/90-clawctl-fleet.conf',
                       '[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n', value)
@@ -364,6 +417,7 @@ class Applier:
             raise ValueError('A non-root owner user is required')
 
     def disk_command(self, *argv, ok_codes=(0,)):
+        self.execution_allowed()
         # Bound output while the process runs, rather than truncating an
         # unbounded PIPE buffer after collection. No child inherits secrets.
         with tempfile.TemporaryFile() as out:
@@ -505,6 +559,7 @@ class Applier:
         return uid, gid, old
 
     def disk_jobs(self):
+        self.execution_allowed()
         if not hasattr(self, 'agent_uid'):
             return
         try:
@@ -582,6 +637,7 @@ class Applier:
             self.atomic(dest, (json.dumps(result, separators=(',', ':')) + '\n').encode())
 
     def apply(self):
+        self.execution_allowed()
         result = {'schema': 'clawctl-fleet-apply/v1', 'profile_digest': '',
                   'applied_at': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
                   'items': {}, 'reboot_required': self.path('/var/run/reboot-required').exists()}
@@ -623,6 +679,11 @@ def main():
     if (os.geteuid() != 0 and not args.root_prefix) or (args.root_prefix and not args.root_prefix.startswith('/')):
         parser.error('requires root and an absolute root prefix')
     a = Applier(args)
+    try:
+        a.execution_allowed()
+    except (OSError, ValueError, KeyError, StopIteration, TypeError):
+        print(json.dumps({'schema': 'clawctl-fleet-apply/v1', 'items': {'profile': {'status': 'failed', 'detail': 'Machine policy or configuration refuses host changes'}}}))
+        return 1
     state = a.path('/var/lib/clawctl-fleet-apply')
     a.safe(state)
     if args.dry_run:

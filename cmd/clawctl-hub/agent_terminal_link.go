@@ -398,7 +398,7 @@ func (h *hub) agentTerminalCredentialLoop(ctx context.Context, link *wsLink, mac
 			continue
 		}
 		reported = false
-		if !current {
+		if !current || h.store.MachineExecutionAllowed(machineID) != nil {
 			log.Printf("terminal connection closed: agent token for this machine has changed or machine was retired machine=%s", machineID)
 			link.closeWithStatus(websocket.StatusPolicyViolation, "agent token is no longer current")
 			return

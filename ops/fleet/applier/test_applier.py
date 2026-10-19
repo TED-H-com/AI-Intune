@@ -54,9 +54,15 @@ p.write_text(json.dumps(s))
             path.write_text(stub)
             path.chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + ':/usr/bin:/bin', CALLS=str(self.calls), COMMAND_STATE=str(self.state))
+        agent_dir = self.root / 'home/agent/.config/clawctl'
+        agent_dir.mkdir(parents=True)
+        self.agent_config = agent_dir / 'agent.json'
+        self.agent_config.write_text('{}')
+        if os.getuid() == 0:
+            os.chown(self.agent_config, uid, uid)
         subprocess.run(['bash', str(BASE / 'install.sh'), '--agent-user', 'agent', '--root-prefix', str(self.root)], env=self.env, check=True, stdout=subprocess.DEVNULL)
         self.profile = self.root / 'home/agent/.config/clawctl/host-profile.json'
-        self.profile.parent.mkdir(parents=True)
+        self.profile.parent.mkdir(parents=True, exist_ok=True)
         self.write({})
         package = self.root / 'usr/bin/unattended-upgrade'
         package.parent.mkdir(parents=True)
@@ -74,6 +80,19 @@ p.write_text(json.dumps(s))
 
     def snapshot(self):
         return {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*') if p.is_file() and not p.is_symlink() and '/var/lib/clawctl-fleet-apply/' not in str(p)}
+
+    def test_monitor_only_refuses_install_and_every_apply(self):
+        self.agent_config.write_text(json.dumps({'execution_policy': {'mode': 'monitor_only', 'revision': 2}}))
+        before = self.snapshot()
+        calls = self.calls.read_bytes() if self.calls.exists() else b''
+        self.run_apply(False)
+        result = subprocess.run(['bash', str(BASE / 'install.sh'), '--agent-user', 'agent', '--root-prefix', str(self.root)], env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.calls.read_bytes() if self.calls.exists() else b'', calls)
+        for policy in [None, {}, {'mode':'unknown','revision':2}, {'mode':'managed','revision':0}]:
+            self.agent_config.write_text(json.dumps({'execution_policy': policy}))
+            self.run_apply(False)
 
     def test_apply_idempotence_and_drift(self):
         p = dict(lid_ignore=True, disable_sleep=True, power_profile='performance', wifi_power_save_off=True, journald_max_mb=500, unattended_upgrades=True, scoped_sudoers=True, linger=True, root_disk_clean_timer=True)

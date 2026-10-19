@@ -25,6 +25,15 @@ class DiskTest(unittest.TestCase):
         for directory in ('etc', 'proc', 'sys/block/nvme1n1/holders', 'dev/disk/by-id', 'home/agent/.config/clawctl'):
             (self.root / directory).mkdir(parents=True, exist_ok=True, mode=0o755)
         (self.root / 'etc/passwd').write_text('agent:x:1001:1002::/home/agent:/bin/sh\nroot:x:0:0::/root:/bin/sh\nlow:x:999:999::/:/bin/sh\n')
+        (self.root / 'etc/clawctl').mkdir()
+        (self.root / 'etc/clawctl/fleet-apply.conf').write_text('{"agent_user":"agent"}')
+        agent_config = self.root / 'home/agent/.config/clawctl/agent.json'
+        agent_config.write_text('{}')
+        if os.getuid() == 0:
+            os.chown(agent_config, 1001, 1002)
+        else:
+            passwd = self.root / 'etc/passwd'
+            passwd.write_text(passwd.read_text().replace('agent:x:1001:', 'agent:x:%d:' % os.getuid()))
         (self.root / 'etc/fstab').write_text('# original\n')
         (self.root / 'proc/swaps').write_text('Filename Type Size Used Priority\n')
         (self.root / 'dev/nvme1n1').touch()
@@ -74,6 +83,14 @@ elif name=='df':print('Filesystem Size Used Avail Use% Mounted on\\n/dev/nvme1n1
         self.input = self.root / 'home/agent/.config/clawctl/disk-jobs.json'
         self.dest = self.root / 'var/lib/clawctl-fleet-apply/disk-jobs/example-job-01.json'
 
+    def test_monitor_only_refuses_disk_operations(self):
+        policy = self.root / 'home/agent/.config/clawctl/agent.json'
+        policy.write_text(json.dumps({'execution_policy': {'mode':'monitor_only','revision':1}}))
+        with self.assertRaises(ValueError):
+            self.run_jobs()
+        self.assertEqual(self.argv(), [])
+        self.assertFalse(self.dest.exists())
+
     def run_jobs(self):
         self.config.write_text(json.dumps(self.fixture))
         self.input.write_text(json.dumps([self.job]))
@@ -96,7 +113,7 @@ elif name=='df':print('Filesystem Size Used Avail Use% Mounted on\\n/dev/nvme1n1
         calls = self.argv()
         self.assertIn(['parted', '-s', '/dev/nvme1n1', 'mklabel', 'gpt', 'mkpart', 'data', 'ext4', '1MiB', '100%'], calls)
         self.assertIn(['mkfs.ext4', '-L', 'data', '/dev/nvme1n1p1'], calls)
-        self.assertIn(['chown', '1001:1002', str(self.root / 'data')], calls)
+        self.assertIn(['chown', '%d:1002' % (os.getuid() or 1001), str(self.root / 'data')], calls)
         self.assertTrue(all('-F' not in c and '-f' not in c for c in calls))
         self.assertIn('UUID=12345678-abcd-1234-abcd-123456789abc /data ext4 defaults,nofail 0 2', (self.root / 'etc/fstab').read_text())
         self.assertEqual((self.root / 'etc/fstab.fleet-apply.bak').read_text(), '# original\n')

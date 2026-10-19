@@ -139,6 +139,13 @@ func (h *hub) authed(next func(w http.ResponseWriter, r *http.Request, machineID
 			h.finishStoreError(w, "authenticate agent", "", "internal error", err)
 			return
 		}
+		if agentExecutionRoute(r.Method, r.URL.Path) {
+			if err := h.store.MachineExecutionAllowed(machineID); err != nil {
+				writeErr(w, http.StatusForbidden, "MACHINE_EXECUTION_BLOCKED", "Machine execution is blocked by policy.")
+				return
+			}
+		}
+
 		next(w, r, machineID)
 	}
 }
@@ -167,9 +174,18 @@ func (h *hub) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	execution, policyErr := h.store.MachineExecutionPolicy(machineID)
+	if policyErr != nil {
+		h.writeStoreError(w, "execution policy", machineID, policyErr)
+		return
+	}
+	var enrollmentPolicy *model.ExecutionPolicy
+	if req.ExecutionPolicyV1 {
+		enrollmentPolicy = &execution.ExecutionPolicy
+	}
 	log.Printf("enrolled machine=%s host=%s user=%s", machineID, req.Hostname, req.UnixUser)
 	settings, settingsDigest := h.resolveAgentSettings(machineID)
-	writeJSON(w, http.StatusOK, model.EnrollResponse{
+	writeJSON(w, http.StatusOK, model.EnrollResponse{ExecutionPolicy: enrollmentPolicy,
 		SchemaVersion:              model.SchemaVersion,
 		MachineID:                  machineID,
 		AgentToken:                 token,
@@ -209,6 +225,17 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		h.writeStoreError(w, "下發期望", machineID, err)
 		return
 	}
+	execution, err := h.store.MachineExecutionPolicy(machineID)
+	if err != nil {
+		h.writeStoreError(w, "execution policy", machineID, err)
+		return
+	}
+	allowed := execution.Mode == model.ExecutionManaged
+	var executionPolicy *model.ExecutionPolicy
+	if c.ExecutionPolicyV1 {
+		executionPolicy = &execution.ExecutionPolicy
+	}
+
 	transitions, err := h.store.DiskTimerTransitions(machineID)
 	if err != nil {
 		h.writeStoreError(w, "disk timer transitions", machineID, err)
@@ -227,7 +254,7 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		h.writeStoreError(w, "host platform", machineID, profileErr)
 		return
 	}
-	if linux {
+	if linux && allowed {
 		p, e := h.store.HostProfile()
 		if e != nil {
 			h.writeStoreError(w, "host profile", machineID, e)
@@ -237,16 +264,24 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		hostDigest, _ = p.Digest()
 	}
 	var diskJobs []model.DiskJob
-	if linux {
+	if linux && allowed {
 		diskJobs, err = h.store.DeliverDiskJobs(machineID)
 		if err != nil {
 			h.writeStoreError(w, "disk setup jobs", machineID, err)
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, model.CheckinResponse{
+	if !allowed {
+		readinessConfig.AutoRemediate = false
+		transitions = nil
+	}
+	var signins []model.SigninCommand
+	if allowed {
+		signins = h.store.SigninCommands(machineID)
+	}
+	writeJSON(w, http.StatusOK, model.CheckinResponse{ExecutionPolicy: executionPolicy,
 		DiskJobs: diskJobs, HostProfile: hostProfile, HostProfileDigest: hostDigest,
-		SigninCommands:             h.store.SigninCommands(machineID),
+		SigninCommands:             signins,
 		ReadinessConfig:            readinessConfig,
 		DiskTimerTransitions:       transitions,
 		ReceivedAt:                 received,
@@ -264,7 +299,12 @@ func (h *hub) handleAgentReadiness(w http.ResponseWriter, r *http.Request, machi
 		h.finishStoreError(w, "讀取 agent readiness", machineID, "讀取 agent readiness 失敗", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, model.AgentReadinessResponse{
+	execution, policyErr := h.store.MachineExecutionPolicy(machineID)
+	if policyErr != nil {
+		h.writeStoreError(w, "execution policy", machineID, policyErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, model.AgentReadinessResponse{ExecutionPolicy: &execution.ExecutionPolicy,
 		MachineID: result.MachineID, LastCheckinReceivedAt: result.LastCheckinReceivedAt,
 		AgentStartedAt: result.AgentStartedAt, AgentVersion: result.AgentVersion, JobsEnabled: result.JobsEnabled,
 		DeviceSyncV1: result.DeviceSyncV1, MaintenanceDiskCleanV1: result.MaintenanceDiskCleanV1,
@@ -363,4 +403,8 @@ func (h *hub) finishStoreError(w http.ResponseWriter, action, machineID, publicM
 		return
 	}
 	writeErr(w, http.StatusInternalServerError, "INTERNAL", publicMessage)
+}
+
+func agentExecutionRoute(method, path string) bool {
+	return strings.HasPrefix(path, "/v1/jobs") || path == "/v1/agent/terminal-link" || strings.HasPrefix(path, "/v1/ops-manifests/") || strings.Contains(path, "/grants/")
 }

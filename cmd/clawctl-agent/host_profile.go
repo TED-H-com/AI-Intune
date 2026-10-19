@@ -12,6 +12,9 @@ import (
 
 // The observer only writes data in its existing writable config directory.
 func adoptHostProfileAt(dir string, resp model.CheckinResponse) error {
+	if resp.ExecutionPolicy != nil && (resp.ExecutionPolicy.Validate() != nil || resp.ExecutionPolicy.Mode != model.ExecutionManaged) {
+		return errExecutionBlocked
+	}
 	if resp.HostProfile == nil {
 		return nil
 	}
@@ -37,6 +40,9 @@ func adoptHostProfileAt(dir string, resp model.CheckinResponse) error {
 	return writeModeFile(path, raw, 0600)
 }
 func adoptHostProfile(resp model.CheckinResponse) error {
+	if resp.ExecutionPolicy != nil && (resp.ExecutionPolicy.Validate() != nil || resp.ExecutionPolicy.Mode != model.ExecutionManaged) {
+		return errExecutionBlocked
+	}
 	if runtime.GOOS != "linux" {
 		return nil
 	}

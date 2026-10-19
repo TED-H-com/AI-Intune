@@ -13,7 +13,7 @@
 <form method="post" action="/machines/join/decide">
 <input type="hidden" name="join_id" value="{{.Code}}">
 <label>Display name <input name="display_name" value="{{.DisplayName}}" maxlength="128" required></label>
-{{if ne .State "approved"}}<button name="decision" value="approve">Approve</button>{{end}}
+{{if ne .State "approved"}}<label>Profile <select name="monitor_only"><option value="false">Managed / 可管理</option><option value="true">只監控 / Monitor only</option></select></label><p>Monitor only reports observations and does not install the host changes service.</p><button name="decision" value="approve">Approve</button>{{end}}
 <button class="secondary" name="decision" value="reject">Reject</button>
 </form>
 {{end}}
@@ -23,7 +23,7 @@
 <form class="panel" method="post" action="/machines/join/decide">
 <p>Approve these waiting machines with their suggested names:</p>
 {{range .Join.Rows}}{{if ne .State "approved"}}<p><code>{{.Code}}</code> — {{.DisplayName}}</p><input type="hidden" name="join_id" value="{{.Code}}"><input type="hidden" name="display_name" value="{{.DisplayName}}">{{end}}{{end}}
-<button name="decision" value="approve">Approve all</button></form>
+<label>Profile <select name="monitor_only"><option value="false">Managed / 可管理</option><option value="true">只監控 / Monitor only</option></select></label><p>Monitor only reports observations and does not install the host changes service.</p><button name="decision" value="approve">Approve all</button></form>
 {{end}}{{end}}
 {{else}}<div class="panel"><h2>No machines are waiting.</h2><p>On the new machine run:</p><pre><code>{{.Join.Command}}</code></pre></div>{{end}}
 {{template "foot" .}}{{end}}

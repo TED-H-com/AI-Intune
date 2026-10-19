@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>protected-appliance · AI-Intune</title>
+<style>
+:root{
+  --topbar:#323130; --sidebar:#f3f2f1; --canvas:#faf9f8; --surface:#fff;
+  --surface-alt:#f7f7f7; --line:#e1dfdd; --line-strong:#c8c6c4;
+  --ink:#201f1e; --dim:#605e5c; --muted:#605e5c; --accent:#006fc9;
+  --accent-soft:#eff6fc; --green:#107c10; --green-soft:#f1faf1;
+  --amber:#ca5010; --amber-soft:#fff4e5; --red:#a4262c; --red-soft:#fde7e9;
+  --grey:#605e5c; --blue:#006fc9; --warning-text:#8a3b00; --shadow:0 1px 3px rgba(0,0,0,.12);
+  --topbar-height:48px; --sidebar-width:212px; --workload-width:224px;
+}
+*{box-sizing:border-box}
+html{background:var(--canvas);scroll-behavior:smooth}
+body{
+  margin:0;background:var(--canvas);color:var(--ink);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",
+       "PingFang TC","Microsoft JhengHei",Arial,sans-serif;
+}
+a{color:var(--accent);text-underline-offset:2px}
+a:hover{color:#004e8c}
+button,input,select,textarea{font:inherit}
+button,input,select{min-height:34px}
+input,select,textarea{
+  max-width:100%;border:1px solid var(--line-strong);border-radius:2px;background:#fff;
+  color:var(--ink);padding:6px 9px;
+}
+input:focus,select:focus,textarea:focus,a:focus-visible,button:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px;
+}
+button,.button{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--accent);
+  border-radius:2px;background:var(--accent);color:#fff;padding:6px 13px;text-decoration:none;
+  cursor:pointer;font-weight:600;
+}
+button:hover,.button:hover{background:#005a9e;color:#fff}
+button.danger,.button.danger{background:#b42318;border-color:#b42318;color:#fff}
+button.danger:hover,.button.danger:hover{background:#912018;border-color:#912018;color:#fff}
+.button.secondary{background:#fff;color:var(--ink);border-color:var(--line-strong)}
+.button.secondary:hover{background:var(--surface-alt);color:var(--ink)}
+.skip-link{position:fixed;left:10px;top:-60px;z-index:100;background:#fff;padding:9px 14px}
+.skip-link:focus{top:7px}
+.sr-only{
+  position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;
+  overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;
+}
+
+.topbar{
+  position:sticky;top:0;z-index:30;height:var(--topbar-height);display:flex;align-items:center;
+  gap:18px;background:var(--topbar);color:#fff;padding:0 18px;box-shadow:0 1px 2px rgba(0,0,0,.25);
+}
+.topbar a{color:inherit;text-decoration:none}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
+.brand-mark{
+  display:grid;place-items:center;width:22px;height:22px;border-radius:3px;background:#2b88d8;
+  color:#fff;font-size:11px;font-weight:700;
+}
+.topbar-tools{margin-left:auto;display:flex;align-items:center;height:100%;gap:4px}
+.topbar-boundary{display:flex;align-items:center;gap:7px;padding:0 11px;color:#e1dfdd;font-size:12px}
+.topbar-boundary .dot{margin:0}
+.operator-chip{display:flex;align-items:center;gap:7px;padding:3px 9px;border-left:1px solid rgba(255,255,255,.24);font-size:12px;color:#fff;white-space:nowrap}
+.operator-chip .operator-detail{color:#c8c6c4}
+.language-form{margin:0;display:inline-flex}
+.language-switch{
+  background:transparent;font:inherit;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:3px 9px;
+  border:1px solid rgba(255,255,255,.34);border-radius:2px;color:#fff;font-size:12px;white-space:nowrap;
+}
+.language-switch:hover{background:rgba(255,255,255,.12);color:#fff}
+.clock{padding-left:12px;border-left:1px solid rgba(255,255,255,.24);color:#e1dfdd;font-size:12px;white-space:nowrap}
+
+.app-shell{display:grid;grid-template-columns:var(--sidebar-width) minmax(0,1fr);min-height:calc(100vh - var(--topbar-height))}
+.sidebar{
+  position:sticky;top:var(--topbar-height);align-self:start;height:calc(100vh - var(--topbar-height));
+  overflow-y:auto;background:var(--sidebar);border-right:1px solid var(--line);padding:10px 0 22px;
+}
+.nav-group-label{
+  padding:12px 20px 5px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.sidebar nav{display:block}
+.nav-item{
+  position:relative;display:flex;align-items:center;gap:11px;min-height:38px;padding:7px 16px;
+  color:var(--ink);text-decoration:none;border-left:3px solid transparent;
+}
+.nav-item:hover{background:#e9e8e7;color:var(--ink)}
+.nav-item.on,.nav-item[aria-current="page"]{background:#e1dfdd;border-left-color:var(--accent);font-weight:600}
+.nav-icon{width:18px;height:18px;display:grid;place-items:center;flex:none;color:#0078d4}
+.nav-icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.nav-separator{height:1px;background:var(--line-strong);margin:12px 20px}
+.sidebar-note{margin:18px 20px 0;padding-top:14px;border-top:1px solid var(--line-strong);color:var(--dim);font-size:12px}
+
+.mfa-warning{padding:12px 16px;border:1px solid #d29200;background:#fff4ce;color:var(--warning-text)}
+.workspace-shell{display:grid;grid-template-columns:minmax(0,1fr);min-width:0}
+.workspace-shell.with-workload-nav{grid-template-columns:var(--workload-width) minmax(0,1fr)}
+.workload-rail{
+  position:sticky;top:var(--topbar-height);align-self:start;height:calc(100vh - var(--topbar-height));
+  overflow-y:auto;background:#fff;border-right:1px solid var(--line);padding:16px 0 24px;
+}
+.workload-title{padding:0 18px 13px;font-size:18px;font-weight:600;color:var(--ink)}
+.main-content{min-width:0;padding:18px 28px 80px}
+.content-inner{width:100%;max-width:none;margin:0}
+.breadcrumb{display:flex;align-items:center;gap:8px;min-height:26px;color:var(--dim);font-size:12px;margin-bottom:8px}
+.breadcrumb a{text-decoration:none}
+.breadcrumb-separator{color:var(--muted)}
+.subnav{display:block;margin:0}
+.subnav-item{
+  display:flex;align-items:center;min-height:36px;padding:7px 18px;border-left:3px solid transparent;
+  color:var(--ink);font-size:13px;text-decoration:none;
+}
+.subnav-item:hover{background:var(--surface-alt);color:var(--ink)}
+.subnav-item.on,.subnav-item[aria-current]{border-left-color:var(--accent);background:#edebe9;color:var(--ink);font-weight:600}
+.section-anchor{display:block;scroll-margin-top:calc(var(--topbar-height) + 58px)}
+.page-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin:0 0 18px}
+.page-heading h1{font-size:26px;line-height:1.25;font-weight:500;margin:0 0 5px}
+.page-heading p{margin:0;color:var(--dim)}
+.command-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+ 
+.headline{margin:0 0 16px}
+.headline p{font-size:15px;line-height:1.5;margin:0 0 5px}
+.headline p:first-child{font-size:17px;font-weight:600;color:var(--ink)}
+.headline .quiet{color:var(--dim)}
+
+h1{font-size:26px;font-weight:500;line-height:1.25;margin:0 0 18px}
+h2{
+  font-size:17px;font-weight:600;color:var(--ink);letter-spacing:0;margin:30px 0 11px;
+  border:0;padding:0;
+}
+h3{font-size:14px;margin:18px 0 8px}
+h2[id]{scroll-margin-top:calc(var(--topbar-height) + 12px)}
+.panel{
+  background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:18px 20px;
+  box-shadow:var(--shadow);overflow-x:auto;
+}
+.panel + .panel{margin-top:14px}
+details.panel > summary{cursor:pointer;font-weight:600;list-style-position:outside}
+details.panel > summary + *{margin-top:12px}
+
+.metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 18px}
+.metric-card{
+  min-width:0;min-height:142px;background:var(--surface);border:1px solid var(--line);border-radius:3px;
+  padding:17px 18px;box-shadow:var(--shadow);display:flex;flex-direction:column;color:var(--ink);text-decoration:none;
+}
+.metric-card:hover{border-color:#8a8886;color:var(--ink);box-shadow:0 2px 6px rgba(0,0,0,.16)}
+.metric-label{font-size:14px;font-weight:600;margin-bottom:12px}
+.metric-value{font-size:32px;line-height:1;font-weight:500;letter-spacing:-.02em;margin-bottom:9px}
+.metric-note{color:var(--dim);font-size:13px;margin-top:auto}
+.metric-state{display:inline-flex;align-items:center;gap:7px}
+.metric-state .dot{margin:0}
+.dashboard-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(270px,1fr);gap:14px;align-items:start}
+.dashboard-stack{display:grid;gap:14px}
+.dashboard-stack .panel + .panel{margin-top:0}
+.panel-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-2px 0 12px}
+.panel-title h2{margin:0;font-size:16px}
+.panel-title a{font-size:13px;text-decoration:none}
+.section-title{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:30px 0 11px}
+.section-title h2{margin:0}
+.active-filter{margin:0;color:var(--dim);font-size:13px}
+.active-filter a{margin-left:8px}
+.signal-list{list-style:none;margin:0;padding:0}
+.signal-list li{padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:9px;align-items:flex-start}
+.signal-list li:last-child{border-bottom:0}
+.signal-list .dot{margin-top:7px}
+
+.table-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;background:var(--surface)}
+caption{text-align:left;font-weight:600;padding:0 0 10px}
+th{
+  text-align:left;font-size:12px;font-weight:600;color:var(--dim);padding:8px 10px;
+  border-bottom:1px solid var(--line-strong);white-space:nowrap;background:#fafafa;
+}
+td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--accent-soft)}
+td.name a{font-weight:600;text-decoration:none}
+td.name .sub{display:block;color:var(--dim);font-size:12px;font-weight:400}
+td.reason{color:var(--dim);min-width:260px}
+
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:baseline;flex:none}
+.green{background:var(--green)} .amber{background:var(--amber)}
+.red{background:var(--red)} .grey{background:var(--grey)} .blue{background:var(--blue)}
+.st{white-space:nowrap;font-weight:600}
+.st.green{background:none;color:var(--green)}
+.st.blue{background:none;color:var(--blue)}
+.st.amber{background:none;color:var(--amber)}
+.st.red{background:none;color:var(--red)}
+.st.grey{background:none;color:var(--grey)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.dim{color:var(--dim)}
+.small{font-size:13px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f5f5f5;padding:1px 3px;border-radius:2px}
+
+ul.findings{list-style:none;margin:0;padding:0}
+ul.findings li{padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:flex-start}
+ul.findings li:last-child{border-bottom:none}
+ul.findings .who{color:var(--dim);flex:none;min-width:96px}
+.caveat{
+  border-left:3px solid var(--amber);background:var(--amber-soft);color:#5c3b00;
+  padding:12px 15px;border-radius:0 3px 3px 0;margin:14px 0;font-size:14px;
+}
+.caveat b{color:#7a3e00}
+.strip{display:flex;gap:2px;align-items:flex-end;height:26px}
+.strip i{display:block;width:6px;border-radius:1px}
+.swatch{display:inline-block;width:8px;height:8px;border-radius:1px;margin:0 4px 0 8px}
+pre.copy{
+  background:#f7f7f7;border:1px solid var(--line);border-radius:2px;padding:12px 14px;overflow-x:auto;
+  margin:8px 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;color:#323130;
+}
+blockquote.summary{margin:0 0 14px;padding:10px 14px;border-left:2px solid var(--line-strong);color:var(--ink);white-space:pre-wrap;font-size:14px}
+blockquote.summary .meta{display:block;color:var(--dim);font-size:12px;margin-bottom:5px}
+.empty{color:var(--dim);font-style:normal;padding:6px 0}
+.field-label{display:block;font-weight:600;font-size:13px;margin:0 0 4px}
+.form-grid{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:10px;align-items:end}
+.disk-form{display:grid;gap:16px;margin-top:16px}
+.disk-form fieldset{border:1px solid var(--line);border-radius:4px;padding:16px;margin:0;min-width:0}
+.disk-form legend{font-weight:600;padding:0 6px}
+.disk-form label{display:block}
+.disk-form input,.disk-form select{width:100%;box-sizing:border-box}
+.disk-button-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0}
+.disk-schedule{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}
+.disk-badge{display:inline-block;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.disk-ok{background:#e6f4ea;color:#176536}
+.disk-skipped{background:#fff2d5;color:#785200}
+.disk-error{background:#fde7e9;color:#a4262c}
+.disk-usage{width:100%;height:18px}
+.disk-mount + .disk-mount{border-top:1px solid var(--line);margin-top:16px;padding-top:8px}
+.disk-report-filters{display:flex;flex-wrap:wrap;gap:20px;align-items:end;margin-bottom:20px}
+.disk-report-filters label{display:flex;flex-direction:column;gap:6px}
+.disk-report-actions{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.disk-report-actions button:disabled,.disk-report-table button:disabled{background:#e5e7eb;color:#6b7280;border:1px solid #cbd5e1;box-shadow:none;cursor:not-allowed;opacity:.75}
+.disk-report-table input:disabled{opacity:.45;cursor:not-allowed;accent-color:#9ca3af}
+.disk-report-scroll{max-width:100%;overflow-x:auto}
+.disk-report-table{width:100%;table-layout:fixed;font-size:.875rem}
+.disk-report-table th,.disk-report-table td{white-space:normal;overflow-wrap:anywhere;padding:10px 6px;vertical-align:top}
+.disk-report-table th:nth-child(1){width:5%}.disk-report-table th:nth-child(2){width:25%}.disk-report-table th:nth-child(3){width:11%}.disk-report-table th:nth-child(4){width:16%}.disk-report-table th:nth-child(5){width:8%}.disk-report-table th:nth-child(6){width:8%}.disk-report-table th:nth-child(7){width:9%}.disk-report-table th:nth-child(8){width:7%}.disk-report-table th:nth-child(9){width:11%}
+.disk-report-table code{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.disk-report-table button{max-width:100%;margin-bottom:6px;padding:5px 7px;font-size:.8rem}
+@media(max-width:800px){.disk-report-table{min-width:900px}}
+.disk-review-request{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f7f7;border:1px solid var(--line);padding:16px}
+.disk-form-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.form-grid label,.form-grid input,.form-grid select{width:100%}
+.enrollment-form{
+  display:grid;grid-template-columns:minmax(180px,.8fr) minmax(240px,1.2fr) auto;
+  gap:10px;align-items:end;margin:10px 0 4px;
+}
+.enrollment-form label,.enrollment-form input{width:100%}
+.action-form{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin:10px 0 4px}
+.action-form label{flex:1 1 220px}
+.action-form input,.action-form select{width:100%}
+.action-form button{flex:0 0 auto}
+.section-anchor:focus{outline:2px solid var(--accent);outline-offset:4px}
+
+@media (max-width:1100px){
+  :root{--sidebar-width:190px;--workload-width:196px}
+  .main-content{padding:18px 20px 70px}
+  .metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dashboard-grid{grid-template-columns:1fr}
+}
+@media (max-width:760px){
+  .topbar{padding:0 12px}.topbar-boundary,.operator-chip,.clock{display:none}
+  .app-shell{display:block}
+  .sidebar{position:static;height:auto;overflow:visible;border-right:0;border-bottom:1px solid var(--line);padding:0}
+  .sidebar nav{display:flex;overflow-x:auto;scrollbar-width:thin}
+  .nav-group-label,.nav-separator,.sidebar-note{display:none}
+  .nav-item{min-width:max-content;min-height:46px;padding:8px 13px;border-left:0;border-bottom:3px solid transparent}
+  .nav-item.on,.nav-item[aria-current="page"]{border-left:0;border-bottom-color:var(--accent)}
+  .nav-icon{display:none}
+  .workspace-shell,.workspace-shell.with-workload-nav{display:block}
+  .workload-rail{position:static;height:auto;overflow:visible;border-right:0;border-bottom:1px solid var(--line);padding:0;background:#fff}
+  .workload-title{padding:10px 14px 3px;font-size:15px}
+  .subnav{display:flex;overflow-x:auto;scrollbar-width:thin;padding:0 7px}
+  .subnav-item{min-width:max-content;min-height:42px;padding:7px 10px;border-left:0;border-bottom:3px solid transparent}
+  .subnav-item.on,.subnav-item[aria-current]{border-left:0;border-bottom-color:var(--accent);background:transparent;color:var(--accent)}
+  .main-content{padding:15px 14px 56px}
+  .page-heading{display:block}.command-bar{margin-top:12px}
+  .metric-grid{grid-template-columns:1fr 1fr;gap:9px}
+  .metric-card{min-height:124px;padding:14px}
+  .metric-value{font-size:28px}
+  .panel{padding:15px}
+  input,select,textarea{font-size:16px}
+  table{min-width:680px}
+  .enrollment-form{grid-template-columns:1fr;align-items:stretch}
+  .form-grid{grid-template-columns:1fr}
+  .action-form{display:grid;grid-template-columns:1fr;align-items:stretch}
+}
+@media (max-width:430px){
+  .brand-mark{display:none}.topbar{gap:8px}
+  .metric-grid{grid-template-columns:1fr}
+  .metric-card{min-height:110px}
+  .page-heading h1,h1{font-size:23px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">跳到主要內容</a>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="AI-Intune 管理中心首頁">
+    <span class="brand-mark" aria-hidden="true">AI</span>
+    <span>AI-Intune 系統管理中心</span>
+  </a>
+  <div class="topbar-tools">
+    
+      <span class="topbar-boundary"><span class="dot green" aria-hidden="true"></span>Tailscale 已驗證</span>
+      <span class="operator-chip" title="source device browser; Tailscale user example-admin">
+        <span>example-admin</span><span class="operator-detail">view,admin · browser</span>
+      </span>
+    
+    <form class="language-form" method="post" action="/preferences/navigation-language">
+      <input type="hidden" name="locale" value="en">
+      <input type="hidden" name="return_to" value="/machines/fixture-protected-machine">
+      <button class="language-switch" type="submit" title="將管理中心導覽切換為英文" aria-label="將管理中心導覽切換為英文">English</button>
+    </form>
+    <time class="clock">2026-10-19 09:00</time>
+  </div>
+</header>
+<div class="app-shell">
+  <aside class="sidebar">
+    <nav aria-label="主要導覽"><a class="nav-item" href="/readiness">Readiness</a>
+      <div class="nav-group-label">管理中心</div>
+      <a href="/" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span><span>儀表板</span>
+      </a>
+      <a href="/signins" class="nav-item ">Sign-ins <span class="chip">0</span></a>
+      <a href="/machines#machines" class="nav-item on" aria-current="page">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg></span><span>裝置</span>
+      </a>
+      <a href="/apps" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span><span>應用程式</span>
+      </a>
+      <a href="/settings/tailnet" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span>端點安全性</span>
+      </a>
+      <a href="/jobs" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M5 18c0-3 1.4-5 3-5s3 2 3 5M13 18c0-3 1.4-5 3-5s3 2 3 5"/></svg></span><span>代理程式</span>
+      </a>
+      <a href="/attention/loops" class="nav-item " >Attention / Loops</a>
+      <a href="/channels" class="nav-item " ><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4z"/><path d="M8 8h8M8 12h5"/></svg></span><span>Channels</span></a>
+      
+      <a href="/secrets" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg></span><span>Secrets</span>
+      </a>
+      
+      <a href="/reports" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 16v-3M12 16V8M16 16v-5"/></svg></span><span>報告</span>
+      </a>
+      <a href="/tenant/maintenance" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V7l8-4 8 4v13"/><path d="M8 10h2M14 10h2M8 14h2M14 14h2M10 20v-3h4v3"/></svg></span><span>租用戶管理</span>
+      </a>
+      <a href="/machines/diagnostics" class="nav-item " >
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 4a6 6 0 0 0-6 8l-5 5 4 4 5-5a6 6 0 0 0 8-6"/><path d="m15 7 2 2"/></svg></span><span>疑難排解 &#43; 支援</span>
+      </a>
+    
+    </nav>
+  </aside>
+  <div class="workspace-shell with-workload-nav">
+    
+    <aside class="workload-rail">
+      <div class="workload-title">裝置</div>
+      <nav class="subnav" aria-label="裝置詳細資料子選單">
+        <a href="/machines/fixture-protected-machine?section=machine-overview#machine-overview" class="subnav-item on" aria-current="location">概觀</a><a href="/machines/fixture-protected-machine?section=monitor#monitor" class="subnav-item " >監視</a><a href="/machines/fixture-protected-machine?section=properties#properties" class="subnav-item " >屬性</a><a href="/machines/fixture-protected-machine?section=apps-and-credentials#apps-and-credentials" class="subnav-item " >應用與憑證</a><a href="/machines/fixture-protected-machine?section=jobs#jobs" class="subnav-item " >工作單</a><a href="/machines/fixture-protected-machine/timeline" class="subnav-item " >事件時間軸</a><a href="/machines/fixture-protected-machine/data" class="subnav-item " >資料</a>
+      </nav>
+    </aside>
+    
+    <main class="main-content" id="main-content" tabindex="-1" lang="zh-Hant">
+ 
+      <div class="content-inner">
+        
+        <nav class="breadcrumb" aria-label="麵包屑" lang="zh-Hant">
+          <a href="/">AI-Intune 管理中心</a><span class="breadcrumb-separator" aria-hidden="true">›</span><span aria-current="page">protected-appliance</span>
+        </nav>
+
+
+
+<section class="panel" aria-label="Machine profile"><h2>Machine profile / 管理模式</h2>
+<span class="st blue">只監控 / Monitor only</span><p>This machine reports health, identity and observations. Jobs, scripts, terminal access, CLI sign-ins and changes to the machine are unavailable.</p>
+<p>The agent has not yet acknowledged this profile. The Hub already enforces it.</p>
+<form class="disk-form" method="post" action="/machines/fixture-protected-machine/execution-policy/preview">
+<input type="hidden" name="revision" value="2">
+<div class="form-grid disk-form-grid"><label><span class="field-label">Profile</span><select name="mode"><option value="managed" >Managed / 可管理</option><option value="monitor_only" selected>只監控 / Monitor only</option></select></label>
+<label><span class="field-label">Reason</span><input name="reason" maxlength="500" required></label></div><div class="command-bar"><button class="secondary">Preview profile change</button></div></form></section>
+
+
+
+<div class="page-heading section-anchor" id="machine-overview" tabindex="-1"><div>
+  
+  <h1><span class="dot red" aria-hidden="true"></span>protected-appliance —— 從未報到</h1>
+  <p>指派使用者：未指派 · 從未報到；已納入管理分母 · channel：未指派</p>
+  
+  
+  
+</div></div>
+
+<div class="panel" id="readiness"><h2>Readiness</h2>
+<p>Reports refresh automatically. Missing or old reports show Unknown. <a href="/channels">Configure notification channels</a>.</p>
+<h3><a href="/machines/fixture-protected-machine">protected-appliance</a></h3>
+<p><a href="/machines/fixture-protected-machine#disks">Disks ready to set up (0)</a></p>
+<p>Agent service user: Unknown · Last report: Waiting for the first report</p>
+
+<h4>Needs you (3)</h4>
+<ul><li><strong>Reachability ()</strong> — Unknown. Choose an access path. <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/runbooks/OPERATOR-BOX-SSH.md">Instructions</a></li><li><strong>Scoped sudoers</strong> — Unknown. Choose the scoped sudoers drop-in. <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/runbooks/NEW-HOST.md">Instructions</a></li><li><strong>Notification bindings</strong> — Fail. Open Channels and bind a selected channel to this machine; send a test there. <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/CHANNELS.md">Instructions</a></li></ul>
+
+<h4>Fixing itself (7)</h4>
+<ul><li><strong>Agent check-in</strong> — Unknown. Waiting for the first report <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/runbooks/NEW-HOST.md">Instructions</a></li><li><strong>claude signed in</strong> — Unknown. Waiting for the first report <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/FLEET-AI-CLIS.md">Instructions</a></li><li><strong>codex signed in</strong> — Unknown. Waiting for the first report <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/FLEET-AI-CLIS.md">Instructions</a></li><li><strong>grok signed in</strong> — Unknown. Waiting for the first report <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/FLEET-AI-CLIS.md">Instructions</a></li><li><strong>agy signed in</strong> — Unknown. Waiting for the first report <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/FLEET-AI-CLIS.md">Instructions</a></li><li><strong>Backup job</strong> — Unknown. Waiting for the first report <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/runbooks/RESTORE-DRILL.md">Instructions</a></li><li><strong>Backup last completed OK</strong> — Unknown. Waiting for the first report <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/runbooks/RESTORE-DRILL.md">Instructions</a></li></ul>
+
+<details><summary>Done (0)</summary>
+<ul></ul>
+</details>
+
+
+<form method="post" action="/readiness" class="disk-form">
+<input type="hidden" name="machine" value="fixture-protected-machine">
+<label>Access path<select name="path"><option value="">Uses fleet default</option><option value="tailscale" >tailscale</option><option value="cloudflare" >cloudflare</option><option value="jump_host" >jump_host</option><option value="direct" >direct</option></select></label>
+<label>Scoped sudoers drop-in<input name="sudoers_path" value="" placeholder="Uses fleet default"></label>
+<label>Backup user service unit<input name="backup_unit" value="" placeholder="Uses fleet default"></label>
+<button>Save readiness targets</button></form>
+</div>
+
+
+<div class="panel section-anchor" id="disks"><h2>Disks</h2>
+<p>Set up a new, empty disk once. Existing filesystems and partitions are always preserved. Disk facts are reported by this machine. <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/HOST-PROFILE.md#new-disk-setup">Safety checks</a>.</p>
+<p>Read-only. Ask an administrator to approve disk setup.</p>
+
+<p>No disk inventory yet. Linux machines report disks at their next check-in.</p>
+<h3>Disk setup jobs</h3><table><thead><tr><th>Disk</th><th>Requested setup</th><th>Status and result</th><th>Action</th></tr></thead><tbody>
+<tr><td colspan="4">No disk setup jobs.</td></tr>
+</tbody></table></div>
+<p><a href="/readiness">Fleet readiness</a></p>
+<p><a href="?view=bot">Bot view</a></p>
+<p><a href="#oom-kills">Recent OOM kills</a></p>
+
+
+
+<div class="panel" id="loops"><h2>Loop episodes</h2>
+<p><a href="/attention/loops">Review loops and detection policy</a>. Inspect the affected process and task checkpoint before acknowledging or resolving. Acknowledgement preserves the episode; resolution resets its counting window. Missing reports never resolve an episode.</p>
+<p>Showing up to 200 episodes, open first, newest first. Filtered to machine fixture-protected-machine. <a href="/attention/loops">Show all machines</a>.</p>
+<table><thead><tr><th>Machine / signatures</th><th>Evidence</th><th>State / action</th></tr></thead><tbody>
+<tr><td colspan="3">No loop episodes reported. <a href="/machines">Review machines</a> and enable call activity reporting in the workload integration to establish coverage.</td></tr></tbody></table></div>
+
+
+<h2>發現</h2>
+<div class="panel">
+  
+  
+  
+  <ul class="findings">
+  
+    <li>
+      <span class="dot red" style="margin-top:9px" aria-hidden="true"></span>
+      <span class="sr-only">嚴重度：嚴重。</span>
+      <span class="who">reachability</span>
+      <span>在名冊上但從來沒有成功 check-in 過</span>
+    </li>
+  
+  </ul>
+</div>
+
+
+<div class="panel"><h2>Disk growth</h2><p><a href="/tenant/disk-policies">Configure growth alerts in disk policies</a>. GB = 1,000,000,000 bytes. Estimates assume the measured rate continues.</p><p>No growth history yet. Wait for agent check-ins, or use the machine disk page to schedule observation previews for declared data mounts.</p></div>
+<p><a href="/machines/fixture-protected-machine/disk">Disk usage and safe cleanup →</a></p>
+<h2 id="monitor" class="section-anchor" tabindex="-1">心跳</h2>
+<div class="panel">
+  
+    <p class="empty">尚無心跳。</p>
+  
+
+  <p class="dim small" style="margin-top:8px">
+  
+    尚未清理觀測資料。
+  
+  </p>
+
+  <table style="margin-top:14px">
+  <tbody>
+    <tr><th style="width:190px">最後一次收到</th><td>
+      從未
+    </td></tr>
+    <tr><th>約定間隔</th><td>2 分鐘</td></tr>
+    
+    <tr><th>時鐘偏移</th><td>
+      —
+    </td></tr>
+    <tr><th>一小時內不同 agent 啟動身分</th><td>
+      <span class="dim">未知</span>
+      
+    </td></tr>
+    <tr><th>一小時內不同 boot identity</th><td>
+      <span class="dim">未知</span>
+    </td></tr>
+    <tr><th>linger</th><td>
+      <span class="dim">未知</span>
+    </td></tr>
+    <tr><th>完整觀測最後更新</th><td>
+      <span class="dim">從未</span>
+    </td></tr>
+    
+  </tbody>
+  </table>
+</div>
+
+<h2 id="properties" class="section-anchor" tabindex="-1">身分</h2>
+<div class="panel">
+  
+  <table>
+  <thead><tr><th style="width:190px">machine-id</th><th>第一次看到</th><th>最後看到</th><th>次數</th></tr></thead>
+  <tbody>
+  
+    <tr><td colspan="4" class="empty">還沒收到過任何身分資訊。</td></tr>
+  
+  </tbody>
+  </table>
+	
+	
+
+  
+  <p class="empty">還沒收到 identity 觀測。</p>
+  
+</div>
+
+<h2 id="oom-kills">Recent OOM kills</h2>
+<div class="panel">
+  <p>Last hour, up to 64 events. Review service memory limits and workload demand before restarting affected services. Missing attribution is unavailable.</p>
+  
+  <p>No recent OOM kills reported. <a href="/updates">Review agent version</a> and ensure the agent can read the system journal and cgroup counters. Missing evidence does not prove no kills occurred.</p>
+  
+</div>
+
+
+
+
+<h2 id="apps-and-credentials" class="section-anchor" tabindex="-1">OpenClaw</h2>
+<div class="panel">
+
+  <p class="empty">還沒收到這台的 OpenClaw 觀測。</p>
+
+</div>
+
+<h2 id="summaries">最近的任務摘要</h2>
+<div class="panel">
+  
+    <p class="small dim">還沒收到這台的 OpenClaw 觀測。</p>
+  
+  
+    <p class="empty">沒有摘要可以看。</p>
+  
+  
+</div>
+
+<h2>這台實際用掉了誰的額度</h2>
+<div class="panel">
+  
+  
+    <p class="empty">尚無供應商占用紀錄。</p>
+  
+</div>
+
+<h2>登入憑證</h2>
+<div class="panel" style="padding:4px 6px">
+<table>
+<thead><tr>
+  <th style="width:110px">供應商</th><th style="width:190px">狀態</th>
+  <th style="width:170px">怎麼知道的</th>
+  <th style="width:150px">檔案裡的到期時間</th><th style="width:210px">自己續了幾次</th><th>備註</th>
+</tr></thead>
+<tbody>
+
+  <tr><td colspan="6" class="empty">還沒收到憑證觀測。</td></tr>
+
+</tbody>
+</table>
+
+
+</div>
+
+<h2>CLI 工具</h2>
+<div class="panel" style="padding:4px 6px">
+<table>
+<thead><tr><th style="width:110px">工具</th><th style="width:150px">版本</th><th>證據</th></tr></thead>
+<tbody>
+
+  <tr><td colspan="3" class="empty">還沒收到工具觀測。</td></tr>
+
+</tbody>
+</table>
+
+
+</div>
+
+<h2>它該做到什麼</h2>
+<div class="panel">
+
+  <p class="empty">沒有產出規則。</p>
+
+</div>
+
+<h2 id="jobs" class="section-anchor" tabindex="-1">工作單</h2>
+<div class="panel" style="padding:4px 6px">
+
+<p class="empty">這台還沒有任何工作單</p>
+
+</div>
+
+<h2>systemd unit</h2>
+<div class="panel" style="padding:4px 6px">
+<table>
+<thead><tr>
+  <th style="width:230px">unit</th><th style="width:120px">狀態</th>
+  <th style="width:150px">最後一次進入 active</th><th>重啟次數</th>
+</tr></thead>
+<tbody>
+
+  <tr><td colspan="4" class="empty">還沒收到 unit 觀測。</td></tr>
+
+</tbody>
+</table>
+
+  
+  
+  
+  
+  
+  
+
+</div>
+
+<h2>狀態歷史</h2>
+<div class="panel" style="padding:4px 6px">
+<table>
+<thead><tr><th style="width:120px">狀態</th><th style="width:170px">進入時間</th><th style="width:120px">持續</th><th>當時的理由</th></tr></thead>
+<tbody>
+
+  <tr><td colspan="4" class="empty">還沒有任何狀態轉移。</td></tr>
+
+</tbody>
+</table>
+
+
+</div>
+
+
+
+
+      </div>
+    </main>
+  </div>
+</div>
+<script data-audit-reason>document.querySelectorAll('input[name="reason"]:not([type="hidden"]),textarea[name="reason"]').forEach(function(input){input.removeAttribute('maxlength');var counter=document.createElement('small');counter.setAttribute('aria-live','polite');input.after(counter);var key='audit-reason:'+location.pathname+':'+(input.form?input.form.action:'');try{if(!input.value)input.value=sessionStorage.getItem(key)||'';}catch(e){}function update(){var n=Array.from(input.value).length;counter.textContent=n+'/500 · max 500 characters';input.setCustomValidity(n>500?'reason is '+n+' characters; maximum is 500':'');try{sessionStorage.setItem(key,input.value);}catch(e){}}input.addEventListener('input',update);update();});</script>
+</body>
+</html>

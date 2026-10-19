@@ -129,6 +129,7 @@ type MachineChannelRequest struct {
 type MachineChannelResult = store.OperatorMachineChannelResult
 
 type EnrollTokenPreviewRequest struct {
+	MonitorOnly bool
 	DisplayName string
 	TTLSeconds  int64
 }
@@ -136,6 +137,7 @@ type EnrollTokenPreviewRequest struct {
 type EnrollTokenPreviewResult = store.OperatorEnrollTokenPreviewResult
 
 type EnrollTokenCreateRequest struct {
+	MonitorOnly    bool
 	DisplayName    string
 	TTLSeconds     int64
 	PreviewDigest  string
@@ -165,7 +167,7 @@ type EnrollTokenRevocationRequest struct {
 type EnrollTokenRevocationResult = store.OperatorEnrollTokenRevocationResult
 
 func (s *Service) PreviewEnrollToken(req EnrollTokenPreviewRequest) (EnrollTokenPreviewResult, error) {
-	return s.store.PreviewOperatorEnrollToken(req.DisplayName, req.TTLSeconds)
+	return s.store.PreviewOperatorEnrollToken(req.DisplayName, req.TTLSeconds, req.MonitorOnly)
 }
 
 func (s *Service) PendingEnrollToken(machineID string) (EnrollTokenStatusResult, error) {
@@ -235,6 +237,7 @@ func (s *Service) CreateEnrollToken(req EnrollTokenCreateRequest) (EnrollTokenCr
 	auditBase.IdempotencyKey = req.IdempotencyKey
 	auditBase.RequestDigest = digest
 	result, err := s.store.ApplyOperatorEnrollToken(store.OperatorEnrollTokenCreateRequest{
+		MonitorOnly: req.MonitorOnly,
 		DisplayName: req.DisplayName, TTLSeconds: req.TTLSeconds,
 		PreviewDigest: req.PreviewDigest, Reason: req.Reason, IdempotencyKey: req.IdempotencyKey,
 		RequestDigest: digest, Audit: auditBase,
@@ -382,11 +385,12 @@ func SemanticDigest(req MachineChannelRequest) string {
 // did not send.
 func EnrollTokenSemanticDigest(req EnrollTokenCreateRequest) string {
 	body := struct {
+		MonitorOnly   bool   `json:"monitor_only,omitempty"`
 		DisplayName   string `json:"display_name"`
 		TTLSeconds    int64  `json:"ttl_seconds"`
 		PreviewDigest string `json:"preview_digest"`
 		Reason        string `json:"reason"`
-	}{req.DisplayName, req.TTLSeconds, req.PreviewDigest, req.Reason}
+	}{req.MonitorOnly, req.DisplayName, req.TTLSeconds, req.PreviewDigest, req.Reason}
 	raw, _ := json.Marshal(body)
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
