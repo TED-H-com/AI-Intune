@@ -1418,7 +1418,7 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		terminalOpen = nil
 	}
 	s.render(w, r, "machine.html", page{
-		MachineChecks: checks,
+		MachineChecks:           checks,
 		ExecutionPolicy:         &executionPolicyPage{MachineID: machine.Item.MachineID, Mode: policy.Mode, Revision: policy.Revision, Manage: humanWebAdmin(r), MonitorOnly: monitorOnly, Pending: policy.ObservedRevision != policy.Revision},
 		DiskSetup:               &diskSetupPage{Machine: machine.Item.MachineID, Inventory: disks, Manage: principal.Has(operatorauth.Admin) && !monitorOnly, Owner: owner},
 		Readiness:               &readinessPage{Items: []store.HostChecklist{checklist}, Manage: principal.Has(operatorauth.Admin)},

@@ -26,16 +26,16 @@ const SchemaVersion = 1
 
 // EnrollRequest 是機器第一次向 Hub 報到。用一次性 token 換一個長期身分。
 type EnrollRequest struct {
-	MonitorOnlySupported bool `json:"monitor_only_supported,omitempty"`
-	ExecutionPolicyV1 bool `json:"execution_policy_v1,omitempty"`
-	SchemaVersion int    `json:"schema_version"`
-	EnrollToken   string `json:"enroll_token"`
-	Hostname      string `json:"hostname"`
-	MachineIDHint string `json:"machine_id_hint"` // /etc/machine-id，重灌會變，只是候選
-	UnixUser      string `json:"unix_user"`
-	OS            string `json:"os"`
-	Arch          string `json:"arch"`
-	TailscaleIP   string `json:"tailscale_ip,omitempty"`
+	MonitorOnlySupported bool   `json:"monitor_only_supported,omitempty"`
+	ExecutionPolicyV1    bool   `json:"execution_policy_v1,omitempty"`
+	SchemaVersion        int    `json:"schema_version"`
+	EnrollToken          string `json:"enroll_token"`
+	Hostname             string `json:"hostname"`
+	MachineIDHint        string `json:"machine_id_hint"` // /etc/machine-id，重灌會變，只是候選
+	UnixUser             string `json:"unix_user"`
+	OS                   string `json:"os"`
+	Arch                 string `json:"arch"`
+	TailscaleIP          string `json:"tailscale_ip,omitempty"`
 	// LANIPv4 is optional for older agents; only bounded native interface IPv4 facts.
 	LANIPv4      []string `json:"lan_ipv4,omitempty"`
 	AgentVersion string   `json:"agent_version"`

@@ -133,4 +133,12 @@ func TestMonitorOnlyPausedSchedulesExplainProfile(t *testing.T) {
 	if err != nil || len(assignments.Machines) != 0 {
 		t.Fatal("monitor profile target offered", assignments, err)
 	}
+	checks := diskWebRequest(t, s, "GET", "/checks?target="+id, nil, p, false)
+	if checks.Code != 200 || strings.Contains(checks.Body.String(), `action="/checks/schedules/preview"`) || strings.Contains(checks.Body.String(), `<option value="`+id+`"`) {
+		t.Fatal("monitor check schedule target offered", checks.Code)
+	}
+	forged := diskWebRequest(t, s, "POST", "/checks/schedules/preview", url.Values{"target": {id}}, p, false)
+	if forged.Code < 400 {
+		t.Fatal("monitor check schedules accepted", forged.Code)
+	}
 }

@@ -44,10 +44,11 @@ func (s *Server) checks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, m := range list.Items {
-		if m.RetiredAt == nil {
+		if m.RetiredAt == nil && s.store.MachineExecutionAllowed(m.MachineID) == nil {
 			v.Targets = append(v.Targets, scheduleMachine{ID: m.MachineID, Name: m.DisplayName, Selected: r.URL.Query().Get("target") == m.MachineID})
 		}
 	}
+	v.Manage = v.Manage && len(v.Targets) > 0
 	for _, m := range machines.Items {
 		reports, e := s.operator.MachineReadReports(m.MachineID)
 		if e != nil {
