@@ -101,7 +101,7 @@ func deepSchema() Schema {
 
 var registry = []Entry{
 	{"oci-cost-report-v1", "1", "0cb9bc5384fce7c59c592db4b5db72810be30c020eb4cb11610da1a5f0df5380", ociCostSchema(), 300, 600, 64 << 10, "read", "agent-user", []string{"linux"}, ociCost},
-	{"network-watch-v1", "1", "b09f52fd69e53846d231104aa39dd59557b2864fd77554f426c2e3f1cb52fc0a", networkWatchSchema(), 180, 300, 64 << 10, "read", "agent-user", []string{"linux"}, networkWatch},
+	{"network-watch-v1", "1", "3f6a22ab6fd65b9a399643a2ccccba66bbfcae6906d3588be03ac347e1f0cf6a", networkWatchSchema(), 180, 300, 64 << 10, "read", "agent-user", []string{"linux"}, networkWatch},
 	{"bat-release-check-v1", "1", "bc8ac19f948a4b107650e746d1e2826bb21741ee33296035bcf2505677735ffb", Schema{Type: "object", Properties: map[string]Property{}}, 60, 120, 64 << 10, "read", "agent-user", []string{"linux"}, batRelease},
 	{"disk-approved-quarantine-v1", "1", "b331c74b57728aed88f4c4a32c286af9909f0adc76eb25be15aa14634f7de5f6", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskQuarantine},
 	{"disk-approved-delete-v1", "1", "fdc52c3cdd4c0ec5e44907e937df681aaa99820fab9ac6886643cb3ffc591a35", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskDelete},
