@@ -261,9 +261,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryState: {
 		title:    "狀態判定",
-		holds:    "Hub 判定這台進入哪一個狀態、什麼時候進去、什麼時候離開。",
+		holds:    "Hub 判定這台進入哪一個狀態、什麼時候進去、什麼時候離開。離線通知每台最多保留一筆事件與送達狀態，直到復原或退役。",
 		source:   DataSourceHub,
-		tables:   []string{"machine_state_history", "machine_state_transition_events"},
+		tables:   []string{"machine_state_history", "machine_state_transition_events", "machine_offline_alerts"},
 		freeText: "判定理由（Hub 自己寫的句子，長度不設上限）。",
 		path:     "/machines",
 	},

@@ -96,6 +96,8 @@ type hub struct {
 	// wins over built-in channels: the child still inherits CLAWCTL_NOTIFY_ENV
 	// so ops/notify-telegram.sh keeps working.
 	notifyCmd string
+	// notifierOverride is the in-process injection seam for deterministic delivery tests.
+	notifierOverride notifier
 	// notifyEnv is the path from --notify-env / CLAWCTL_NOTIFY_ENV. Secrets
 	// are read from that file only, never from flags or the process environment.
 	notifyEnv string
@@ -272,6 +274,9 @@ func main() {
 		case "tickets":
 			cmdTickets(os.Args[2:])
 			return
+		case "offline-alerts":
+			cmdOfflineAlerts(os.Args[2:])
+			return
 		case "enrollment-limit":
 			cmdEnrollmentLimit(os.Args[2:])
 			return
@@ -417,7 +422,7 @@ func classifyTopLevel(argv []string) (string, error) {
 	}
 	switch argv[0] {
 	case "add-admin", "set-email", "rename-user", "disable-user", "enable-user", "bootstrap-admin", "reset-admin-password", "regenerate-recovery-codes", "enroll-token", "machines", "audit", "retire", "report", "data", "tickets", "tailnet",
-		"enrollment-limit", "prune", "restore-drill", "job", "machine", "deployment",
+		"offline-alerts", "enrollment-limit", "prune", "restore-drill", "job", "machine", "deployment",
 		"artifact", "catalog", "verifier", "settings", "compliance", "version", "notify-check":
 		return argv[0], nil
 	default:
@@ -794,6 +799,7 @@ func serve(argv []string) {
 	go h.scheduleLoop(ctx)
 	go h.certificateLoop(ctx)
 	go h.reportLoop(ctx)
+	go h.offlineAlertLoop(ctx)
 	go h.pruneLoop(ctx)
 	go watchdogLoop(ctx, h)
 

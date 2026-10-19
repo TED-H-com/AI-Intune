@@ -27,6 +27,7 @@ type MachineDataTable struct {
 
 // machineDataTables 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var machineDataTables = []MachineDataTable{
+	{Table: "machine_offline_alerts", TimeCol: "unreachable_since"},
 	{Table: "fleet_host_profile", TimeCol: ""},
 	{Table: "signin_sessions", TimeCol: "created_at"},
 	{Table: "signin_notification_state", TimeCol: ""},

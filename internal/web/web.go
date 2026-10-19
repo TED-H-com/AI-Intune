@@ -272,6 +272,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	patterns = append(patterns, s.joinRoutes(mux)...)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
+	patterns = append(patterns, s.offlineAlertsRoutes(mux)...)
 	return append(append(append(append(append(patterns, append(s.channelRoutes(mux), s.signinRoutes(mux)...)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), s.diskSetupRoutes(mux)...)...)...)...)...)
 }
 
@@ -390,6 +391,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	OfflineAlerts             *offlineAlertsPage
 	DiskSetup                 *diskSetupPage
 	HostProfile               *hostProfilePage
 	Join                      *joinView
@@ -1936,6 +1938,8 @@ func subNavigationFor(data page) subNavigation {
 		return tenantSubNavigation("Disk alerts")
 	case "tenant-approvals":
 		return tenantSubNavigation("Approvals")
+	case "tenant-offline-alerts":
+		return tenantSubNavigation("離線通知")
 	case "tenant-maintenance":
 		return tenantSubNavigation("維護")
 	case "tenant-data":
@@ -1965,6 +1969,7 @@ func reportsSubNavigation(current string) subNavigation {
 func tenantSubNavigation(current string) subNavigation {
 	return makeSubNavigation("租用戶子選單", current,
 		subNavigationItem{Label: "維護", Href: "/tenant/maintenance"},
+		subNavigationItem{Label: "離線通知", Href: "/tenant/offline-alerts"},
 		subNavigationItem{Label: "Disk policies", Href: "/tenant/disk-policies"},
 		subNavigationItem{Label: "Approvals", Href: "/tenant/approvals"},
 		subNavigationItem{Label: "Disk alerts", Href: "/tenant/disk-alerts"},

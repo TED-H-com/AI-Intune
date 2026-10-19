@@ -40,6 +40,9 @@ func (h *hub) notifier() notifier {
 	if h == nil {
 		return nil
 	}
+	if h.notifierOverride != nil {
+		return h.notifierOverride
+	}
 	if strings.TrimSpace(h.notifyCmd) != "" {
 		return commandNotifier{cmd: h.notifyCmd}
 	}
