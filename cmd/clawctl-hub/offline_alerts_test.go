@@ -215,6 +215,10 @@ func TestOfflineAlertsSuccessfulAlertThenRetirementHasNoRecovery(t *testing.T) {
 	if len(n.kinds) != 1 {
 		t.Fatal("retired machine received recovery")
 	}
+	var rows int
+	if err := h.store.DB().QueryRow(`SELECT COUNT(*) FROM machine_offline_alerts WHERE machine_id=?`, id).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("retired episode retained: %d %v", rows, err)
+	}
 }
 func TestOfflineAlertsShortOutageBetweenSweepsResetsThreshold(t *testing.T) {
 	h, c, n, id := newOfflineFixture(t)

@@ -160,6 +160,22 @@ func (s *Store) ClaimOfflineAlerts(now time.Time) ([]OfflineAlertSend, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(ov.Retired) != 0 {
+		// Overview separates retired machines from its active rows. Clear their
+		// latches too, while rechecking retirement in the writer snapshot.
+		tx, err := s.beginWrite(context.Background(), "offline_alert_retired")
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.Exec(`DELETE FROM machine_offline_alerts WHERE machine_id IN (SELECT machine_id FROM machine_registry WHERE retired_at IS NOT NULL)`)
+		if err == nil {
+			err = tx.Commit()
+		}
+		tx.Rollback()
+		if err != nil {
+			return nil, err
+		}
+	}
 	out := []OfflineAlertSend{}
 	for _, m := range ov.Machines {
 		send, err := s.claimOfflineAlert(m, now.UTC())
