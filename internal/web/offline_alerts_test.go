@@ -45,3 +45,21 @@ func TestOfflineAlertSettingsWebReviewApplyAndReplay(t *testing.T) {
 		}
 	}
 }
+
+func TestOfflineAlertSettingsMalformedFormsUseTheirOwnErrorAndAudit(t *testing.T) {
+	s, st := newServer(t)
+	for _, form := range []url.Values{
+		{"minutes": {"5"}, "unknown": {"raw-sensitive-input"}},
+		{"minutes": {"not-an-integer"}},
+		{"minutes": {"5"}, "expected_revision": {"invalid"}},
+	} {
+		rec := postForm(t, s, offlineAlertsBack+"/apply", form)
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "無法變更離線通知") || strings.Contains(rec.Body.String(), "Unable to complete disk operation") {
+			t.Fatalf("wrong form error: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	var count int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action='offline-alert-settings' AND subject='offline-alerts' AND outcome='failed' AND detail NOT LIKE '%raw-sensitive-input%'`).Scan(&count); err != nil || count != 3 {
+		t.Fatalf("wrong transport audit: %d %v", count, err)
+	}
+}

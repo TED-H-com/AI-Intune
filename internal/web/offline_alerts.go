@@ -39,20 +39,20 @@ func (s *Server) offlineAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Settings = settings
 	} else {
-		if !diskOpsForm(w, r, "minutes", "reason", "expected_revision", "preview_digest", "idempotency_key", "confirm") {
-			s.diskFormError(w, r, offlineAlertsBack)
+		if !operatorWebForm(w, r, nil, "minutes", "reason", "expected_revision", "preview_digest", "idempotency_key", "confirm") {
+			s.offlineAlertFormError(w, r)
 			return
 		}
 		raw := r.PostForm.Get("minutes")
 		minutes, err := strconv.Atoi(raw)
 		if err != nil || strconv.Itoa(minutes) != raw {
-			http.Error(w, "minutes must be an integer", 400)
+			s.offlineAlertFormError(w, r)
 			return
 		}
 		if r.URL.Path == offlineAlertsBack+"/preview" {
 			preview, err := s.operator.PreviewOfflineAlertSettings(minutes)
 			if err != nil {
-				s.diskOpsError(w, r, err, offlineAlertsBack)
+				s.offlineAlertError(w, r, err)
 				return
 			}
 			key, err := operator.NewIdempotencyKey("web-offline-alerts")
@@ -64,12 +64,12 @@ func (s *Server) offlineAlerts(w http.ResponseWriter, r *http.Request) {
 		} else {
 			rev, err := strconv.ParseInt(r.PostForm.Get("expected_revision"), 10, 64)
 			if err != nil || rev < 0 {
-				http.Error(w, "expected revision required", 400)
+				s.offlineAlertFormError(w, r)
 				return
 			}
 			_, err = s.operator.ApplyOfflineAlertSettings(store.OfflineAlertSettingsRequest{Minutes: minutes, ExpectedRevision: &rev, PreviewDigest: r.PostForm.Get("preview_digest"), Reason: r.PostForm.Get("reason"), Confirm: r.PostForm.Get("confirm")}, r.PostForm.Get("idempotency_key"), operator.ActorFromRequest(r, operator.SourceKindWeb))
 			if err != nil {
-				s.diskOpsError(w, r, err, offlineAlertsBack)
+				s.offlineAlertError(w, r, err)
 				return
 			}
 			http.Redirect(w, r, offlineAlertsBack, http.StatusSeeOther)
@@ -77,4 +77,17 @@ func (s *Server) offlineAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, r, "offline_alerts.html", page{Title: "離線通知", Nav: "tenant-offline-alerts", Now: time.Now().Local().Format("2006-01-02 15:04"), OfflineAlerts: &view})
+}
+
+func (s *Server) offlineAlertFormError(w http.ResponseWriter, r *http.Request) {
+	if err := s.operator.RecordOfflineAlertTransportRejection(operator.ActorFromRequest(r, operator.SourceKindWeb)); err != nil {
+		s.fail(w, "Unable to record offline alert settings rejection", err)
+		return
+	}
+	s.renderActionStatus(w, r, 400, "離線通知", "無法變更離線通知", "Invalid form. Return to the page and preview again.", offlineAlertsBack)
+}
+
+func (s *Server) offlineAlertError(w http.ResponseWriter, r *http.Request, err error) {
+	status, _, detail := operator.HTTPError(err)
+	s.renderActionStatus(w, r, status, "離線通知", "無法變更離線通知", detail, offlineAlertsBack)
 }
