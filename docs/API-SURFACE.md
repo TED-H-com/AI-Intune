@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 352 個 HTTP operations（35 non-operator＋317 operator；156 條 operator JSON）、
+> 逐一對照 358 個 HTTP operations（35 non-operator＋323 operator；159 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 352-operation tally above (35 non-operator + 317 operator). The inventory/contract excludes these six public account operations and totals 346. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 358-operation tally above (35 non-operator + 323 operator). The inventory/contract excludes these six public account operations and totals 352. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -1424,3 +1424,25 @@ Docker, virbr, bridge and container/tunnel interfaces. This is agent-measured
 identity evidence with the existing agent/Hub clocks, not a connectivity test.
 Older agents omit `lan_ipv4` and the Hub projects an empty list (UI: 未回報).
 The list, changes, service-token eligibility and BAT coordinate rules are unchanged.
+
+## Immediate offline alert settings
+
+Six operator operations add three JSON and three HTML routes. These routes
+remain human-only and use the shared Host/CrossOriginProtection/locked-CSP
+boundary. Read requires view; all writes, including previews, require admin.
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/v1/operator/offline-alert-settings` | No-store `{minutes,revision}`, default 10 minutes, no query parameters |
+| POST | `/v1/operator/offline-alert-settings/preview` | Closed `{minutes}` (1..1440); read-only current/next threshold and digest |
+| POST | `/v1/operator/offline-alert-settings` | Closed `{minutes,expected_revision,preview_digest,reason,confirm}`; exact `OFFLINE ALERTS` confirmation and `Idempotency-Key`; settings, receipt and audit commit atomically; revision conflict 409, stale preview 412; replay 200 with replay header |
+| GET | `/tenant/offline-alerts` | Discoverable tenant settings page with current threshold and delivery semantics |
+| POST | `/tenant/offline-alerts/preview` | Shared canonical preview |
+| POST | `/tenant/offline-alerts/apply` | Shared canonical apply and typed confirmation; redirects to current settings |
+
+`clawctl-hub offline-alerts` read/preview/apply uses the same HTTP DTOs and strict
+client. No new service-token eligibility or notification-channel configuration.
+The per-machine durable latch `machine_offline_alerts` retains only episode and
+Hub-clock delivery/dedupe metadata, is disclosed with state records, and
+has no agent-controlled text or secret fields. See [Hub reliability](HUB-RELIABILITY.md#immediate-machine-offline-notifications)
+for recovery hold, backoff, lifecycle handling and ambiguous-delivery limits.

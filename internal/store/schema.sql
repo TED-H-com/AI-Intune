@@ -1935,3 +1935,15 @@ CREATE TABLE IF NOT EXISTS signin_notification_state (
  last_notified_at TEXT NOT NULL DEFAULT '', pending INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(machine_id,cli,slot)
 );
+
+-- One bounded durable latch per machine; delivery history uses notifications.
+CREATE TABLE IF NOT EXISTS offline_alert_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1), minutes INTEGER NOT NULL CHECK(minutes BETWEEN 1 AND 1440), revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS machine_offline_alerts (
+ machine_id TEXT PRIMARY KEY REFERENCES machine_registry(machine_id),
+ episode_id TEXT NOT NULL, unreachable_since TEXT NOT NULL, recovery_since TEXT NOT NULL DEFAULT '',
+ last_checkin_at TEXT NOT NULL, offline_sent INTEGER NOT NULL DEFAULT 0,
+ last_attempt_at TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
+ lease_until TEXT NOT NULL DEFAULT '', lease_token TEXT NOT NULL DEFAULT '', lifecycle_revision INTEGER NOT NULL
+);

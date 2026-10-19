@@ -191,7 +191,7 @@ func IsCanonicalOperatorAction(action AuditAction) bool {
 		action == AuditRetentionPrune || action == AuditRestoreDrill ||
 		action == AuditVerifierRegister || action == AuditVerifierRevoke ||
 		action == AuditVerificationAssign ||
-		action == AuditSettingPolicy || action == AuditSettingAssign ||
+		action == AuditSettingPolicy || action == AuditSettingAssign || action == AuditOfflineAlertSettings ||
 		action == AuditCompliancePolicy || action == AuditComplianceAssign ||
 		action == AuditMaintenanceProfile || action == AuditMaintenanceDryRun ||
 		action == AuditMaintenanceCanary || action == AuditMaintenanceContinue ||

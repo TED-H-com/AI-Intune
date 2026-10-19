@@ -169,6 +169,10 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 		"POST /v1/operator/deployments/{id}/skip-failed-batch-preview",
 		"POST /v1/operator/deployments/{id}/skip-failed-batches",
 	}
+	for _, pattern := range []string{"GET /v1/operator/offline-alert-settings", "POST /v1/operator/offline-alert-settings/preview", "POST /v1/operator/offline-alert-settings"} {
+		patterns = append(patterns, pattern)
+		mux.HandleFunc(pattern, h.handleOfflineAlertSettings)
+	}
 	patterns = append(patterns, "GET /v1/operator/machines/{id}/oom-kills")
 	mux.HandleFunc("GET /v1/operator/machines/{id}/oom-kills", h.handleOperatorOOMKills)
 	patterns = append(patterns, "GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status")

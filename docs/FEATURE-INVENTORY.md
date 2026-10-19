@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 346 個 production operations 基線
+## 352 個 production operations 基線
 
-此數字按 HTTP method + route 計數：29 個 non-operator operations、317 個 operator
-operations；其中 156 個為 operator JSON、161 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=126`、`operate=34`、`admin=157`。這組數字由 route/API/service/Web/CLI
-合約測試固定；346-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：29 個 non-operator operations、323 個 operator
+operations；其中 159 個為 operator JSON、164 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=128`、`operate=34`、`admin=161`。這組數字由 route/API/service/Web/CLI
+合約測試固定；352-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -99,7 +99,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 28 | `GET /v1/join/bundle/{arch}` | Join service | 否 | Pending/approved device bearer; expires with request |
 | 29 | `POST /v1/agent/signins` | Agent transport | No | Machine bearer; sanitized sign-in updates only |
 
-### Operator HTML/BFF 與 JSON（317）
+### Operator HTML/BFF 與 JSON（323）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -445,6 +445,12 @@ domain service 見 `internal/operator/`。
 | 344 | `POST /signins/notifications` | HTML form | Yes | Admin + fresh MFA + CSRF; optional channel notification |
 | 345 | `GET /checks` | HTML | 讀取 | `view`；機隊唯讀檢查結果 |
 | 346 | `POST /checks/schedules/preview` | HTML form | 預覽 | `operate`；五個停用排程 |
+| 347 | `GET /v1/operator/offline-alert-settings` | JSON | Read | `view`; No-store threshold and revision |
+| 348 | `POST /v1/operator/offline-alert-settings/preview` | JSON | Yes | `admin`; Read-only threshold preview and digest |
+| 349 | `POST /v1/operator/offline-alert-settings` | JSON | Yes | `admin`; Revision, digest, confirmation, idempotency and audit |
+| 350 | `GET /tenant/offline-alerts` | HTML | Read | `view`; Current threshold and notification rules |
+| 351 | `POST /tenant/offline-alerts/preview` | HTML form | Yes | `admin`; Review current and proposed threshold |
+| 352 | `POST /tenant/offline-alerts/apply` | HTML form | Yes | `admin`; Canonical confirmed apply |
 
 ## Workload / submenu parity matrix
 
