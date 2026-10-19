@@ -171,6 +171,7 @@
     </td></tr>
     <tr><th>作業系統</th><td class="mono">{{.OS.Text}} {{.Arch.Text}} · {{.Kernel.Text}}</td></tr>
     <tr><th>執行身分</th><td class="mono">{{.UnixUser.Text}}</td></tr>
+    <tr><th>LAN 位址</th><td class="mono">{{range .LANIPv4.Items}}<div>{{.}}</div>{{else}}未回報{{end}}{{if .LANIPv4.Invalid}}<span class="small dim">（{{.LANIPv4.Invalid}} 筆無效或重複）</span>{{end}}{{if .LANIPv4.Truncated}}<span class="small dim">（已截斷）</span>{{end}}</td></tr>
     <tr><th>Tailscale</th><td class="mono">{{with .TailscaleIP}}{{.Text}}{{else}}—{{end}}</td></tr>
   </tbody>
   </table>

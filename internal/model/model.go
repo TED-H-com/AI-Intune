@@ -34,7 +34,9 @@ type EnrollRequest struct {
 	OS            string `json:"os"`
 	Arch          string `json:"arch"`
 	TailscaleIP   string `json:"tailscale_ip,omitempty"`
-	AgentVersion  string `json:"agent_version"`
+	// LANIPv4 is optional for older agents; only bounded native interface IPv4 facts.
+	LANIPv4      []string `json:"lan_ipv4,omitempty"`
+	AgentVersion string   `json:"agent_version"`
 }
 
 type EnrollResponse struct {
@@ -554,6 +556,8 @@ type Identity struct {
 	MachineIDHint string `json:"machine_id_hint"`
 	BootID        string `json:"boot_id"`
 	TailscaleIP   string `json:"tailscale_ip,omitempty"`
+	// LANIPv4 is optional for older agents; only bounded native interface IPv4 facts.
+	LANIPv4 []string `json:"lan_ipv4,omitempty"`
 
 	// LingerEnabled: systemd --user unit 在使用者登出後會不會活著，只有在
 	// LingerMeasured 為 true 時才有意義。量不到的平台（macOS 沒有 systemd
