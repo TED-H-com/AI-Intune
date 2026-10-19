@@ -28,6 +28,8 @@ func DangerousAction(route string) string {
 		return ""
 	}
 	switch {
+	case strings.HasSuffix(path, "/disks/approve") || strings.HasSuffix(path, "/disks/cancel"):
+		return "approving or cancelling disk setup"
 	case method == "DELETE" && (strings.Contains(path, "/machines/") || strings.Contains(path, "/tenants/")):
 		return "deleting a machine or tenant"
 	case strings.HasPrefix(path, "/account/users/") || strings.HasPrefix(path, "/v1/operator/users"):

@@ -13,6 +13,7 @@
   {{if $md.Checkins.Invalid}}<p class="small dim">已取回的心跳裡有 {{$md.Checkins.Invalid}} 筆無效，沒有畫進狀態條。</p>{{end}}
 </div></div>
 {{template "readiness-panel" .Readiness}}
+{{template "disk-setup-panel" .DiskSetup}}
 <p><a href="/readiness">Fleet readiness</a></p>
 <p><a href="?view=bot">Bot view</a></p>
 <p><a href="#oom-kills">Recent OOM kills</a></p>

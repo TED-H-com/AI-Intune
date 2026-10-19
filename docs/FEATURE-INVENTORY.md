@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 334 個 production operations 基線
+## 337 個 production operations 基線
 
-此數字按 HTTP method + route 計數：28 個 non-operator operations、306 個 operator
-operations；其中 154 個為 operator JSON、152 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=122`、`operate=33`、`admin=151`。這組數字由 route/API/service/Web/CLI
-合約測試固定；334-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：28 個 non-operator operations、309 個 operator
+operations；其中 155 個為 operator JSON、154 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=123`、`operate=33`、`admin=153`。這組數字由 route/API/service/Web/CLI
+合約測試固定；337-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -98,7 +98,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 27 | `POST /v1/join/poll` | Join service | 否 | Device secret body; single-use approval delivery |
 | 28 | `GET /v1/join/bundle/{arch}` | Join service | 否 | Pending/approved device bearer; expires with request |
 
-### Operator HTML/BFF 與 JSON（306）
+### Operator HTML/BFF 與 JSON（309）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -433,6 +433,9 @@ domain service 見 `internal/operator/`。
 | 332 | `GET /machines/host-profile` | HTML | Read | View; Linux host setup profile and status |
 | 333 | `POST /machines/host-profile` | HTML form | Yes | Human Admin; audited fleet host profile |
 | 334 | `GET /v1/operator/host-profile` | JSON | Read | View; same profile and host reports; MCP `host_profile_get` |
+| 335 | `POST /machines/{id}/disks/approve` | HTML form | Yes | Human Admin + fresh MFA; single-use new disk setup, atomic audit |
+| 336 | `POST /machines/{id}/disks/cancel` | HTML form | Yes | Human Admin + fresh MFA; pending jobs only, atomic audit |
+| 337 | `GET /v1/operator/machines/{id}/disks` | JSON | Read | View; machine disk facts and setup results; read-only MCP `machine_disks` |
 
 ## Workload / submenu parity matrix
 
@@ -967,3 +970,12 @@ while the request is still valid. An already minted enrollment ticket expires
 naturally and cannot be reconstructed. Join decisions and their secret-free
 `join_approve` / `join_reject` audit rows commit together. Rows older than seven
 days past expiry are pruned lazily on start/list, without changing ledger retention.
+
+## New disk setup
+
+Delivered: machine **Disks** panel, readiness count/link, human approval and
+pending cancellation, Linux check-in delivery and result receipts, strict operator
+read client and read-only MCP `machine_disks`. Root execution accepts only empty,
+identified disks and ext4/xfs; there is no wipe, force, overwrite or reuse option.
+Fixture validation does not constitute real hardware acceptance. See
+[HOST-PROFILE](HOST-PROFILE.md#new-disk-setup).

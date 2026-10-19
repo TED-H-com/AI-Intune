@@ -153,6 +153,7 @@ func Tools() []Tool {
 			"channel": strEnum("any", "none", "canary", "stable"), "limit": machineLimit, "cursor": cursor,
 		}), Annotations: readAnn("machines_list")},
 		{Name: "machine_get", Description: "Read GET /v1/operator/machines/{id}. Reachability is Hub's judgement from outbound check-ins.", InputSchema: obj(map[string]any{"machine_id": id256}, "machine_id"), Annotations: readAnn("machine_get")},
+		{Name: "machine_disks", Description: "Read a machine’s disk inventory and setup job results. Approvals are available only in the Hub.", InputSchema: obj(map[string]any{"machine_id": strField(1, 256, "", "Machine ID")}, "machine_id"), Annotations: readAnn("machine_disks")},
 		{Name: "host_profile_get", Description: "Read the fleet host setup profile and Linux host reports shown in Hub. Reports are agent-relayed evidence, not independent verification.", InputSchema: obj(map[string]any{}), Annotations: readAnn("host_profile_get")},
 		{Name: "join_requests_list", Description: "List machines waiting for Hub approval. Read only; no credentials are returned.", InputSchema: obj(map[string]any{}), Annotations: readAnn("join_requests_list")},
 		{Name: "machine_readiness", Description: "Read the host readiness checklist, Needs you / Fixing itself / Done counts, effective targets, and next actions shown in Hub. This tool is read-only; sign-in requires human consent.", InputSchema: obj(map[string]any{"machine_id": id256}, "machine_id"), Annotations: readAnn("machine_readiness")},

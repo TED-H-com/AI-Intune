@@ -5,6 +5,7 @@
 <div class="panel" id="readiness"><h2>Readiness</h2>
 <p>Reports refresh automatically. Missing or old reports show Unknown. <a href="/channels">Configure notification channels</a>.</p>
 {{range .Items}}{{$host := .}}<h3><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a></h3>
+<p><a href="/machines/{{.MachineID}}#disks">Disks ready to set up ({{.ReadyDisks}})</a></p>
 <p>Agent service user: {{if .Facts.ServiceUser}}{{.Facts.ServiceUser}}{{else}}Unknown{{end}} · Last report: {{if .ReceivedAt}}{{.ReceivedAt}}{{else}}Waiting for the first report{{end}}</p>
 {{range readinessBuckets}}{{$bucket := .}}
 {{if eq . "done"}}<details><summary>Done ({{$host.Done}})</summary>{{else}}<h4>{{readinessBucketTitle .}} ({{if eq . "needs_you"}}{{$host.NeedsYou}}{{else}}{{$host.Auto}}{{end}})</h4>{{end}}

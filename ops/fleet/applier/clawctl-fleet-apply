@@ -13,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 
 HEADER = '# Managed by clawctl-fleet-apply v1\n'
 FIELDS = ('lid_ignore', 'disable_sleep', 'power_profile', 'wifi_power_save_off',
@@ -94,6 +95,13 @@ class Applier:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, str(path))
+            # Persist the receipt name before any destructive command can run.
+            for directory in (path.parent, path.parent.parent):
+                directory_fd = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -153,6 +161,7 @@ class Applier:
             uid, home = record.pw_uid, record.pw_dir
         if uid == 0 or not home.startswith('/') or '..' in Path(home).parts:
             raise ValueError('non-root service user required')
+        self.agent_uid, self.agent_home = uid, home
         # Traverse all user-controlled directories using dirfds and O_NOFOLLOW.
         # Holding each descriptor prevents symlink swaps between stat and read.
         profile = self.path(home + '/.config/clawctl/host-profile.json')
@@ -296,6 +305,282 @@ class Applier:
                 # repeated on/off cycles and interrupted timer changes.
         return ('changed', 'Host setting updated') if self.changed else ('ok', '')
 
+    def disk_input(self):
+        # read_input resolves the installer-selected account, even if its profile
+        # is missing. The jobs file uses the same descriptor traversal boundary.
+        uid, home = self.agent_uid, self.agent_home
+        path = self.path(home + '/.config/clawctl/disk-jobs.json')
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for component in path.parts[1:-1]:
+                new = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = new
+            f = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(f, 'rb') as stream:
+                s = os.fstat(stream.fileno())
+                if not stat.S_ISREG(s.st_mode) or s.st_uid != uid or s.st_size > 65536:
+                    raise ValueError('Untrusted disk jobs file')
+                raw = stream.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError('Disk jobs file is too large')
+        finally:
+            os.close(fd)
+        jobs = json.loads(raw, object_pairs_hook=strict)
+        if type(jobs) is not list or len(jobs) > 128:
+            raise ValueError('Expected a bounded list of disk jobs')
+        seen = set()
+        for j in jobs:
+            self.validate_disk_job(j)
+            if j['id'] in seen:
+                raise ValueError('Duplicate disk job')
+            seen.add(j['id'])
+        return jobs
+
+    @staticmethod
+    def validate_disk_job(j):
+        keys = {'id', 'device', 'serial', 'wwn', 'size_bytes', 'model',
+                'mount_point', 'fstype', 'label', 'owner'}
+        if type(j) is not dict or set(j) != keys:
+            raise ValueError('Unknown or missing disk job fields')
+        for k in keys - {'size_bytes'}:
+            if type(j[k]) is not str or len(j[k]) > 256 or any(ord(c) < 32 or ord(c) > 126 for c in j[k]):
+                raise ValueError('Invalid disk job text')
+        if not re.fullmatch(r'[A-Za-z0-9-]{8,64}', j['id']):
+            raise ValueError('Invalid disk job ID')
+        if not re.fullmatch(r'/dev/[A-Za-z0-9_-]+', j['device']):
+            raise ValueError('Invalid disk path')
+        if type(j['size_bytes']) is not int or j['size_bytes'] < 1073741824 or not (j['serial'] or j['wwn']):
+            raise ValueError('Invalid disk identity')
+        m = j['mount_point']
+        if (not re.fullmatch(r'/[A-Za-z0-9._/-]+', m) or '..' in m or m == '/'
+                or os.path.normpath(m) != m or m.startswith('//')):
+            raise ValueError('Choose an absolute mount point without ..')
+        if any(m == p or m.startswith(p + '/') for p in ('/etc', '/usr', '/boot', '/proc', '/sys', '/dev', '/run')) or m.startswith('/var/lib/clawctl'):
+            raise ValueError('Mount point is in a protected system directory')
+        if j['fstype'] not in ('ext4', 'xfs') or not re.fullmatch(r'[A-Za-z0-9_-]{1,16}', j['label']):
+            raise ValueError('Invalid filesystem or label')
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,31}', j['owner']) or j['owner'] == 'root':
+            raise ValueError('A non-root owner user is required')
+
+    def disk_command(self, *argv, ok_codes=(0,)):
+        # Bound output while the process runs, rather than truncating an
+        # unbounded PIPE buffer after collection. No child inherits secrets.
+        with tempfile.TemporaryFile() as out:
+            p = subprocess.Popen(argv, stdout=out, stderr=subprocess.DEVNULL,
+                                 env={'PATH': os.environ['PATH'], 'LC_ALL': 'C'})
+            try:
+                deadline = time.monotonic() + 60
+                while p.poll() is None:
+                    if os.fstat(out.fileno()).st_size > 1048576 or time.monotonic() > deadline:
+                        raise ValueError('Disk command exceeded its time or output limit')
+                    time.sleep(0.01)
+                if p.returncode not in ok_codes:
+                    raise ValueError('Disk command failed: ' + argv[0])
+                out.seek(0)
+                raw = out.read(1048577)
+                if len(raw) > 1048576:
+                    raise ValueError('Disk command output is too large')
+                return raw.decode('utf-8', errors='strict').strip()
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                p.wait()
+
+    def disk_lsblk(self, device=None):
+        argv = ['lsblk', '--json', '--bytes', '--output',
+                'NAME,PATH,KNAME,TYPE,SIZE,MODEL,SERIAL,WWN,FSTYPE,UUID,LABEL,MOUNTPOINTS,PKNAME,RM,RO,PTTYPE']
+        if device:
+            argv += ['--', device]
+        raw = self.disk_command(*argv)
+        data = json.loads(raw, object_pairs_hook=strict)
+        if type(data) is not dict or type(data.get('blockdevices')) is not list:
+            raise ValueError('Disk inventory is unavailable')
+        return data['blockdevices']
+
+    @staticmethod
+    def disk_points(d):
+        return [p for p in (d.get('mountpoints') or [d.get('mountpoint')]) if p]
+
+    def disk_owner(self, name):
+        if self.prefix:
+            records = [l.split(':') for l in self.path('/etc/passwd').read_text().splitlines()]
+            r = next((r for r in records if r[0] == name), None)
+            if r is None:
+                raise ValueError('Owner user does not exist')
+            uid, gid = int(r[2]), int(r[3])
+        else:
+            try:
+                r = pwd.getpwnam(name)
+            except KeyError:
+                raise ValueError('Owner user does not exist') from None
+            uid, gid = r.pw_uid, r.pw_gid
+        if uid < 1000:
+            raise ValueError('Owner user must have a UID of at least 1000')
+        return uid, gid
+
+    def check_disk(self, j):
+        uid, gid = self.disk_owner(j['owner'])
+        mount = self.path(j['mount_point'])
+        self.safe(mount)
+        if mount.exists() and (not mount.is_dir() or any(mount.iterdir())):
+            raise ValueError('Mount point must be an empty directory')
+        if self.disk_command('findmnt', '--noheadings', '--mountpoint', j['mount_point'], ok_codes=(0, 1)):
+            raise ValueError('Mount point is already mounted')
+        fstab = self.path('/etc/fstab')
+        self.safe(fstab)
+        old = fstab.read_text() if fstab.exists() else ''
+        for line in old.splitlines():
+            fields = line.split()
+            if fields and not fields[0].startswith('#') and len(fields) > 1 and os.path.normpath(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[1])) == j['mount_point']:
+                raise ValueError('Mount point is already in fstab')
+        device = j['device']
+        actual = self.path(device)
+        self.safe(actual)
+        if not self.prefix and not stat.S_ISBLK(actual.stat().st_mode):
+            raise ValueError('Device is not a block device')
+        # Require a stable by-id alias containing the approved serial or WWN.
+        byid = self.path('/dev/disk/by-id')
+        self.safe(byid)
+        matches = []
+        for alias in byid.iterdir():
+            if not alias.is_symlink() or '-part' in alias.name:
+                continue
+            if any(v and (alias.name.endswith('-' + v) or alias.name.endswith('_' + v)) for v in (j['serial'], j['wwn'])):
+                matches.append(alias.resolve())
+        if not matches or any(p != actual for p in matches):
+            raise ValueError('Stable disk identity does not resolve to the approved device')
+        disks = self.disk_lsblk(device)
+        if len(disks) != 1:
+            raise ValueError('Expected exactly one disk')
+        d = disks[0]
+        if d.get('path') != device or d.get('type') != 'disk':
+            raise ValueError('Approved device is not a disk')
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', d.get('kname', '')) or d['kname'].startswith(('loop', 'zram', 'sr')):
+            raise ValueError('Unsupported disk device')
+        for key in ('serial', 'wwn'):
+            if (d.get(key) or '').strip() != j[key]:
+                raise ValueError('Disk ' + key + ' does not match approval')
+        if type(d.get('size')) not in (int, str) or int(d['size']) != j['size_bytes']:
+            raise ValueError('Disk size does not match approval')
+        if (d.get('model') or '').strip() != j['model']:
+            raise ValueError('Disk model does not match approval')
+        if d.get('rm') not in (False, 0, '0') or d.get('ro') not in (False, 0, '0'):
+            raise ValueError('Removable or read-only disk refused')
+        if d.get('children'):
+            raise ValueError('Disk already has partitions or members')
+        if any(d.get(k) for k in ('fstype', 'uuid', 'label', 'pttype')):
+            raise ValueError('Disk already contains a filesystem or partition table')
+        if self.disk_points(d):
+            raise ValueError('Disk is mounted')
+        swaps = self.path('/proc/swaps').read_text().splitlines()[1:]
+        for line in swaps:
+            if line.split() and self.path(line.split()[0]).resolve() == actual:
+                raise ValueError('Disk is used as swap')
+        holders = self.path('/sys/block/' + d['kname'] + '/holders')
+        self.safe(holders)
+        if any(holders.iterdir()):
+            raise ValueError('Disk has active holders')
+        # Walk all descendants and flat PKNAME chains to protect root and boot.
+        parents, boot = {}, set()
+        def walk(n, ancestors):
+            k = n.get('kname')
+            parents[k] = n.get('pkname')
+            if any(p == '/' or p == '/boot' or p.startswith('/boot/') for p in self.disk_points(n)):
+                boot.update(ancestors + [k])
+            for c in n.get('children') or []:
+                walk(c, ancestors + [k])
+        for n in self.disk_lsblk():
+            walk(n, [])
+        for k in list(boot):
+            for _ in range(64):
+                k = parents.get(k)
+                if not k:
+                    break
+                boot.add(k)
+        if d['kname'] in boot:
+            raise ValueError('Disk backs the root or boot filesystem')
+        if self.disk_command('wipefs', '--no-act', '--noheadings', '--output', 'TYPE', device):
+            raise ValueError('Disk has an existing signature')
+        return uid, gid, old
+
+    def disk_jobs(self):
+        if not hasattr(self, 'agent_uid'):
+            return
+        try:
+            jobs = self.disk_input()
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, TypeError, KeyError):
+            print('Disk jobs refused; check file ownership and strict JSON')
+            return
+        directory = self.path('/var/lib/clawctl-fleet-apply/disk-jobs')
+        self.safe(directory)
+        for j in jobs:
+            dest = directory / (j['id'] + '.json')
+            # Any existing ID, including an interrupted operation, is single use.
+            if os.path.lexists(dest):
+                continue
+            result = {'state': 'refused', 'reason': 'Disk setup could not be verified'}
+            step, started = 'verify', False
+            try:
+                uid, gid, old_fstab = self.check_disk(j)
+                if self.args.dry_run:
+                    continue
+                # Durable reservation precedes the first destructive command.
+                self.atomic(dest, b'{"state":"failed","step":"partition","reason":"Setup was interrupted; inspect the disk locally"}\n')
+                started, step = True, 'partition'
+                self.disk_command('parted', '-s', j['device'], 'mklabel', 'gpt', 'mkpart', j['label'], j['fstype'], '1MiB', '100%')
+                step = 'partition discovery'
+                self.disk_command('partprobe', j['device'])
+                self.disk_command('udevadm', 'settle')
+                disk = self.disk_lsblk(j['device'])
+                if len(disk) != 1 or len(disk[0].get('children') or []) != 1:
+                    raise ValueError('New partition is not the only child')
+                part = disk[0]['children'][0]
+                partition = part.get('path', '')
+                expected = j['device'] + ('p1' if j['device'][-1].isdigit() else '1')
+                if (partition != expected or part.get('type') != 'part' or part.get('children')
+                        or any(part.get(k) for k in ('fstype', 'uuid', 'label')) or self.disk_points(part)):
+                    raise ValueError('New partition identity or contents are unexpected')
+                self.safe(self.path(partition))
+                step = 'filesystem'
+                self.disk_command('mkfs.' + j['fstype'], '-L', j['label'], partition)
+                uuid = self.disk_command('blkid', '-s', 'UUID', '-o', 'value', partition)
+                if not re.fullmatch(r'[A-Fa-f0-9-]{8,64}', uuid):
+                    raise ValueError('Filesystem UUID is unavailable')
+                step = 'fstab'
+                fstab = self.path('/etc/fstab')
+                # Preserve concurrent local edits; never overwrite them.
+                if (fstab.read_text() if fstab.exists() else '') != old_fstab:
+                    raise ValueError('fstab changed during disk setup')
+                self.atomic(Path(str(fstab) + '.fleet-apply.bak'), old_fstab.encode())
+                entry = '\n' + HEADER + 'UUID=%s %s %s defaults,nofail 0 2\n' % (uuid, j['mount_point'], j['fstype'])
+                self.atomic(fstab, (old_fstab + entry).encode())
+                step = 'mount'
+                mount = self.path(j['mount_point'])
+                self.safe(mount)
+                mount.mkdir(parents=True, exist_ok=True, mode=0o755)
+                self.disk_command('mount', j['mount_point'])
+                step = 'ownership'
+                self.disk_command('chown', str(uid) + ':' + str(gid), str(mount))
+                mount.chmod(0o755)
+                step = 'verification'
+                facts = self.disk_command('findmnt', '--json', '--mountpoint', j['mount_point'], '--output', 'UUID,FSTYPE,TARGET')
+                mounted = json.loads(facts, object_pairs_hook=strict).get('filesystems', [])
+                if len(mounted) != 1 or mounted[0].get('uuid') != uuid or mounted[0].get('fstype') != j['fstype'] or mounted[0].get('target') != j['mount_point']:
+                    raise ValueError('Mounted filesystem does not match the new disk')
+                df = self.disk_command('df', '-h', '--', j['mount_point']).splitlines()[-1]
+                df = ''.join(c for c in df if 32 <= ord(c) <= 126)[:512]
+                result = {'state': 'done', 'uuid': uuid, 'partition': partition,
+                          'mount_point': j['mount_point'], 'fstype': j['fstype'], 'df': df}
+            except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError) as e:
+                reason = str(e) if isinstance(e, ValueError) else 'Required disk checks or commands are unavailable'
+                result = {'state': 'failed' if started else 'refused', 'reason': reason[:256]}
+                if started:
+                    result['step'] = step
+            self.atomic(dest, (json.dumps(result, separators=(',', ':')) + '\n').encode())
+
     def apply(self):
         result = {'schema': 'clawctl-fleet-apply/v1', 'profile_digest': '',
                   'applied_at': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
@@ -324,6 +609,7 @@ class Applier:
                 result['items'][name] = {'status': status, 'detail': detail}
         self.atomic(self.path('/var/lib/clawctl-fleet-apply/last.json'),
                     (json.dumps(result, separators=(',', ':')) + '\n').encode())
+        self.disk_jobs()
         print(json.dumps(result))
         return int(any(v['status'] == 'failed' for v in result['items'].values()))
 

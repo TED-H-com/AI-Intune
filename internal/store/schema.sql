@@ -1893,3 +1893,21 @@ CREATE TABLE IF NOT EXISTS join_requests (
  state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','redeemed','approval_expired'))
 );
 CREATE INDEX IF NOT EXISTS join_requests_expiry ON join_requests(expires_at);
+
+-- One approved, immutable setup per active disk. Terminal rows retain evidence.
+CREATE TABLE IF NOT EXISTS disk_setup_jobs (
+ id TEXT PRIMARY KEY,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ device TEXT NOT NULL,
+ serial TEXT NOT NULL,
+ wwn TEXT NOT NULL,
+ job TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','delivered','done','refused','failed','expired')),
+ created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ result TEXT NOT NULL DEFAULT '{}'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active ON disk_setup_jobs(machine_id,device) WHERE state IN ('pending','delivered');
+
+CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active_serial ON disk_setup_jobs(machine_id,serial) WHERE serial<>'' AND state IN ('pending','delivered');
+CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active_wwn ON disk_setup_jobs(machine_id,wwn) WHERE wwn<>'' AND state IN ('pending','delivered');

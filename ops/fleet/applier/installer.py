@@ -65,7 +65,7 @@ for src in maintenance.rglob('*'):
 a.atomic(a.path('/usr/local/sbin/clawctl-fleet-apply'), (BASE / 'clawctl-fleet-apply').read_bytes(), 0o755)
 a.atomic(a.path('/etc/clawctl/fleet-apply.conf'), (json.dumps({'agent_user': args.agent_user}) + '\n').encode())
 for unit in units:
-    text = (BASE / unit).read_text().replace('@@PROFILE@@', home + '/.config/clawctl/host-profile.json')
+    text = (BASE / unit).read_text().replace('@@PROFILE@@', home + '/.config/clawctl/host-profile.json').replace('@@JOBS@@', home + '/.config/clawctl/disk-jobs.json')
     a.drop('/etc/systemd/system/' + unit, text)
 state = a.path('/var/lib/clawctl-fleet-apply')
 a.safe(state)

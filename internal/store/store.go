@@ -1931,6 +1931,14 @@ VALUES (?,?,?,?,?,?,?,?)`)
 		return nil
 	}
 
+	if b.BlockDevices != nil {
+		if err := put("block_devices", "block_devices", b.BlockDevices); err != nil {
+			return err
+		}
+	}
+	if err := s.recordDiskSetupResults(tx, machineID, b.DiskJobResults, receivedAt); err != nil {
+		return err
+	}
 	if err := put("host_profile_apply", "host_profile_apply", b.HostProfileApply); err != nil {
 		return err
 	}

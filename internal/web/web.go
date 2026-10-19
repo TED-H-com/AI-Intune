@@ -272,7 +272,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	patterns = append(patterns, s.joinRoutes(mux)...)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), s.hostProfileRoutes(mux)...)...)...)...)
+	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), s.diskSetupRoutes(mux)...)...)...)...)...)
 }
 
 type maintenancePageView struct {
@@ -390,6 +390,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	DiskSetup   *diskSetupPage
 	HostProfile *hostProfilePage
 
 	Join                      *joinView
@@ -1384,8 +1385,18 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "Unable to load readiness", err)
 		return
 	}
+	disks, err := s.store.MachineDisks(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Unable to load disks", err)
+		return
+	}
+	owner := ""
+	if checklist.Facts != nil {
+		owner = checklist.Facts.ServiceUser
+	}
 	principal, _ = operatorauth.PrincipalFromContext(r.Context())
 	s.render(w, r, "machine.html", page{
+		DiskSetup:               &diskSetupPage{Machine: machine.Item.MachineID, Inventory: disks, Manage: principal.Has(operatorauth.Admin), Owner: owner},
 		Readiness:               &readinessPage{Items: []store.HostChecklist{checklist}, Manage: principal.Has(operatorauth.Admin)},
 		DiskGrowth:              growth,
 		Loops:                   &loopsPage{Items: loopItems, Machine: machine.Item.MachineID},
@@ -2051,6 +2062,16 @@ var funcs = template.FuncMap{
 			return "Unknown"
 		}
 	},
+	"unusedDisk": model.UnusedDisk,
+	"diskAvailable": func(d model.BlockDevice, jobs []store.DiskSetupRecord) bool {
+		for _, j := range jobs {
+			if j.Job.Device == d.Path && (j.State == "pending" || j.State == "delivered") {
+				return false
+			}
+		}
+		return true
+	},
+	"diskSize": func(n int64) string { return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30)) },
 	"hostProfileLabel": func(name string) string {
 		for _, f := range hostProfileFields(model.HostProfile{}) {
 			if f.Name == name {

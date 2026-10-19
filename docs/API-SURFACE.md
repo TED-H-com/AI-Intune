@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 340 個 HTTP operations（34 non-operator＋306 operator；154 條 operator JSON）、
+> 逐一對照 343 個 HTTP operations（34 non-operator＋309 operator；155 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 340-operation tally above (34 non-operator + 306 operator). The inventory/contract excludes these six public account operations and totals 334. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 343-operation tally above (34 non-operator + 309 operator). The inventory/contract excludes these six public account operations and totals 337. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -979,8 +979,8 @@ for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
 Adds ten operator operations (six JSON, four HTML). The combined manifest totals
-340 including public accounts, 334 excluding them; 306 operator (154 JSON,
-152 HTML/plain), exact grants view=122 / operate=33 / admin=151.
+343 including public accounts, 337 excluding them; 309 operator (155 JSON,
+154 HTML/plain), exact grants view=123 / operate=33 / admin=153.
 
 | Method | Route | Admission |
 | --- | --- | --- |
@@ -1288,3 +1288,20 @@ while the request is still valid. An already minted enrollment ticket expires
 naturally and cannot be reconstructed. Join decisions and their secret-free
 `join_approve` / `join_reject` audit rows commit together. Rows older than seven
 days past expiry are pruned lazily on start/list, without changing ledger retention.
+
+## New disk provisioning
+
+`POST /machines/{id}/disks/approve` and `POST /machines/{id}/disks/cancel`
+are human Admin browser forms with fresh MFA, CSRF checks and atomic audit rows.
+The machine Disks panel is the write surface; there is no operator JSON write
+or MCP write. `GET /v1/operator/machines/{id}/disks` requires human View and
+returns `{devices: [...], jobs: [{job, state, created_at, result}]}`; read-only
+MCP `machine_disks` requires `machine_id` and exposes the same read through the
+strict operator client. These three routes are service-token ineligible.
+
+Linux observations add `block_devices` and `disk_job_results`; check-in responses
+add `disk_jobs` with immutable identity and approved setup values. The lifecycle
+is pending → delivered → done/refused/failed; uncollected jobs expire at 24 hours
+and pending cancellation becomes expired. Delivery is retried until a terminal
+receipt. No wipe, force, overwrite or reuse fields are accepted. See
+[New disk setup](HOST-PROFILE.md#new-disk-setup).

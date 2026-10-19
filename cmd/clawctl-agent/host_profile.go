@@ -44,7 +44,11 @@ func adoptHostProfile(resp model.CheckinResponse) error {
 	if err != nil {
 		return err
 	}
-	return adoptHostProfileAt(filepath.Join(home, ".config", "clawctl"), resp)
+	dir := filepath.Join(home, ".config", "clawctl")
+	if err := adoptDiskJobsAt(dir, resp.DiskJobs); err != nil {
+		return err
+	}
+	return adoptHostProfileAt(dir, resp)
 }
 func readHostApplyResult(path string) *model.HostApplyResult {
 	f, err := os.Open(path)

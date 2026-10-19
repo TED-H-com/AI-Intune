@@ -143,3 +143,8 @@ present; otherwise it uses the checkout installer. Plan prints the root step;
 apply records success only after installation, and resume retries failures.
 The installer needs the non-root agent account (`--agent-user` when run directly).
 See [Host setup profile](../HOST-PROFILE.md) for drift repair, status and rollback.
+
+For a new empty Linux data disk, use the machine's **Disks → Approve disk setup**
+form after installing the root applier. Review the identity and owner first. See
+[New disk setup](../HOST-PROFILE.md#new-disk-setup) for safety checks and results;
+existing disks are never wiped or reused.
