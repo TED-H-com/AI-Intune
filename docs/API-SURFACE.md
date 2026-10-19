@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 330 個 HTTP operations（30 non-operator＋300 operator；152 條 operator JSON）、
+> 逐一對照 333 個 HTTP operations（30 non-operator＋303 operator；153 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 330-operation tally above (30 non-operator + 300 operator). The inventory/contract excludes these six public account operations and totals 324. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 333-operation tally above (30 non-operator + 303 operator). The inventory/contract excludes these six public account operations and totals 327. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -23,7 +23,7 @@ These six operations are included in the 330-operation tally above (30 non-opera
 
 | Method | Operator download route | Authority / behavior |
 |---|---|---|
-| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 300 operator tally. |
+| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 303 operator tally. |
 
 In local mode operator routes use a local admin session, including `/metrics`; in `both`, sessions precede eligible WhoIs fallback. Forwarded identity headers and machine/verifier bearers never authorize operators. The Tailscale-specific explanations below describe the advanced mode. See [Autopilot](AUTOPILOT.md) for setup, expiry, lockout and recovery.
 
@@ -979,8 +979,8 @@ for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
 Adds ten operator operations (six JSON, four HTML). The combined manifest totals
-330 including public accounts, 324 excluding them; 300 operator (152 JSON,
-148 HTML/plain), exact grants view=118 / operate=33 / admin=149.
+333 including public accounts, 327 excluding them; 303 operator (153 JSON,
+150 HTML/plain), exact grants view=120 / operate=33 / admin=150.
 
 | Method | Route | Admission |
 | --- | --- | --- |
@@ -1236,3 +1236,15 @@ at most one attempt per unit per hour per agent process.
 Linux repair only enables/starts already-installed, unmasked expected user units,
 at most once per unit per hour per agent process. No system-scope or unit-file
 editing is performed. The profile change, rather than each local attempt, is audited.
+
+### Host setup profile
+
+Human UI: `GET /machines/host-profile` (View), linked from Configuration;
+`POST /machines/host-profile` (human Admin, existing MFA/CSRF form boundary).
+`GET /v1/operator/host-profile` (View, human operator, service-token ineligible)
+returns `{profile,digest,hosts}`: the optional typed fleet settings and Linux
+host reports with display names, receipt times, item status and restart flag.
+The strictly decoded operator client and read-only MCP `host_profile_get` expose
+the same read. Linux check-in responses add `host_profile` and
+`host_profile_digest`; observations add `host_profile_apply`. No operator write
+API or write MCP is introduced. See [HOST-PROFILE](HOST-PROFILE.md).

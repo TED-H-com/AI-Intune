@@ -542,6 +542,9 @@ func runAgent() {
 			}
 			rtt := time.Since(callStart)
 			if postErr == nil {
+				if err := adoptHostProfile(resp); err != nil {
+					log.Print("Host setup profile could not be saved")
+				}
 				timerTransitions = resp.DiskTimerTransitions
 				now = adoptSettings(now, resp, &applied, cfg, seq)
 				// ⚠ 期望由 Hub 下發，agent 不自己決定要量什麼。規則與 token
@@ -649,6 +652,9 @@ func applyWorkloadPolicy(obs *model.ObservationBatch, policy *workloadPolicyBund
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if runtime.GOOS == "linux" {
+		obs.HostProfileApply = readHostApplyResult("/var/lib/clawctl-fleet-apply/last.json")
+	}
 	obs.Readiness = probe.CollectReadiness(ctx, policy.readiness, obs.Credentials)
 	probe.CollectReadinessUnits(ctx, policy.readiness, obs.Readiness)
 	obs.Artifacts = probe.CheckArtifacts(policy.expectations)
