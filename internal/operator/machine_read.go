@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/teddashh/AI-Intune/internal/netidentity"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -24,9 +25,8 @@ const (
 	MachineReadSchemaVersion     = 2
 	MachineListReadSchemaVersion = MachineReadSchemaVersion
 	// MachineDetailReadSchemaVersion advances independently from the fleet list:
-	// v6 makes resource memory and load typed absences (mem_measured and nullable
-	// load_1m), so old strict clients fail clearly on the version instead of null.
-	MachineDetailReadSchemaVersion = 6
+	// v7 adds validated, bounded LAN IPv4 identity evidence.
+	MachineDetailReadSchemaVersion = 7
 	MachineDetailIdentityHintLimit = 100
 	MachineDetailFindingLimit      = 100
 	MachineDetailExpectationLimit  = 50
@@ -288,17 +288,27 @@ type MachineIdentityEvidence struct {
 	Value      *MachineIdentity      `json:"value"`
 }
 
+// MachineLANIPv4 excludes interface names and arbitrary agent text. Invalid
+// includes duplicates; truncated counts valid addresses beyond the display cap.
+type MachineLANIPv4 struct {
+	Total     int      `json:"total"`
+	Invalid   int      `json:"invalid"`
+	Truncated bool     `json:"truncated"`
+	Items     []string `json:"items"`
+}
+
 type MachineIdentity struct {
-	Hostname       EvidenceText  `json:"hostname"`
-	OS             EvidenceText  `json:"os"`
-	Kernel         EvidenceText  `json:"kernel"`
-	Arch           EvidenceText  `json:"arch"`
-	UnixUser       EvidenceText  `json:"unix_user"`
-	MachineIDHint  EvidenceText  `json:"machine_id_hint"`
-	BootID         EvidenceText  `json:"boot_id"`
-	TailscaleIP    *EvidenceText `json:"tailscale_ip"`
-	LingerEnabled  bool          `json:"linger_enabled"`
-	LingerMeasured bool          `json:"linger_measured"`
+	LANIPv4        MachineLANIPv4 `json:"lan_ipv4"`
+	Hostname       EvidenceText   `json:"hostname"`
+	OS             EvidenceText   `json:"os"`
+	Kernel         EvidenceText   `json:"kernel"`
+	Arch           EvidenceText   `json:"arch"`
+	UnixUser       EvidenceText   `json:"unix_user"`
+	MachineIDHint  EvidenceText   `json:"machine_id_hint"`
+	BootID         EvidenceText   `json:"boot_id"`
+	TailscaleIP    *EvidenceText  `json:"tailscale_ip"`
+	LingerEnabled  bool           `json:"linger_enabled"`
+	LingerMeasured bool           `json:"linger_measured"`
 }
 
 type MachineIdentityHintPage struct {
@@ -815,6 +825,7 @@ func projectMachineDetailSections(result *MachineDetailResult, detail store.Deta
 			MachineIDHint:  projectMachineDetailText(machineDetailMachineIDHint, identity.MachineIDHint),
 			BootID:         projectMachineDetailText(machineDetailCheckinBootID, identity.BootID),
 			TailscaleIP:    projectOptionalMachineDetailText(machineDetailTailscaleIP, identity.TailscaleIP),
+			LANIPv4:        projectLANIPv4(identity.LANIPv4),
 			LingerEnabled:  identity.LingerEnabled,
 			LingerMeasured: identity.LingerMeasured,
 		}
@@ -1570,4 +1581,22 @@ func decodeMachineListCursor(encoded, filterDigest string) (machineListCursor, e
 		return machineListCursor{}, fmt.Errorf("%w: cursor does not match this query", ErrInvalidMachineRead)
 	}
 	return cursor, nil
+}
+
+func projectLANIPv4(raw []string) MachineLANIPv4 {
+	result := MachineLANIPv4{Total: len(raw), Items: []string{}}
+	seen := map[string]bool{}
+	for _, value := range raw {
+		if !netidentity.ValidLANIPv4(value) || seen[value] {
+			result.Invalid++
+			continue
+		}
+		seen[value] = true
+		if len(result.Items) == netidentity.MaxLANIPv4 {
+			result.Truncated = true
+			continue
+		}
+		result.Items = append(result.Items, value)
+	}
+	return result
 }

@@ -292,7 +292,7 @@ func TestMachineDetailProjectsTypedMonitorIdentityResourcesAndHistory(t *testing
 		Identity: model.Identity{
 			Hostname: "host-\x1b]2;owned\x07", OS: "linux", Kernel: "6.8", Arch: "amd64",
 			UnixUser: "example-user", MachineIDHint: "observed-machine-id", BootID: "boot-one",
-			TailscaleIP: "100.64.0.9", LingerEnabled: true,
+			TailscaleIP: "100.64.0.9", LANIPv4: []string{"192.168.0.9", "100.64.0.9", "do-not-disclose"}, LingerEnabled: true,
 		},
 		Resources: model.Resources{
 			DiskFreeBytes: 40 << 30, DiskTotalBytes: 100 << 30,
@@ -378,7 +378,8 @@ VALUES (?,?,?,?)`, machineID, string(state.IdentityConflict), stateReason,
 	if !result.Identity.Observed || !result.Identity.Decoded || result.Identity.ObservedAt == nil ||
 		result.Identity.Value == nil || strings.Contains(result.Identity.Value.Hostname.Text, "\x1b") ||
 		result.Identity.Value.TailscaleIP == nil || result.Identity.Value.TailscaleIP.Text != "100.64.0.9" ||
-		result.IdentityHints.Total != 2 || len(result.IdentityHints.Items) != 2 {
+		result.IdentityHints.Total != 2 || len(result.IdentityHints.Items) != 2 ||
+		len(result.Identity.Value.LANIPv4.Items) != 1 || result.Identity.Value.LANIPv4.Items[0] != "192.168.0.9" || result.Identity.Value.LANIPv4.Invalid != 2 {
 		t.Fatalf("identity=%+v hints=%+v", result.Identity, result.IdentityHints)
 	}
 	if !result.Resources.Observed || !result.Resources.Decoded || result.Resources.Invalid ||

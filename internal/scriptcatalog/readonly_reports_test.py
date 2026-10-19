@@ -201,6 +201,9 @@ class Reports(unittest.TestCase):
         self.assertEqual(result['status'], 'ok')
         self.assertEqual(result['metrics']['listen_digest'], digest([22,443]))
         self.assertEqual(result['metrics']['listen_count'], 2)
+        self.assertEqual(result['metrics']['online_peer_count'], 1)
+        self.assertFalse(result['metrics']['listen_baseline_available'])
+        self.assertIsNone(result['metrics']['listen_ports_changed'])
         self.assertNotIn('address', json.dumps(result))
         self.assertEqual([args for name, args, _ in self.calls() if name == 'getent'], [['hosts','github.com'], ['hosts','cloudflare.com']])
 
@@ -222,6 +225,8 @@ class Reports(unittest.TestCase):
         args = {'baseline_listen_digest': digest([22,80]), 'baseline_listen_ports': ['80','22']}
         result = self.invoke('network-watch-v1', args)
         self.assertEqual(result['metrics']['added_ports'], [443])
+        self.assertTrue(result['metrics']['listen_baseline_available'])
+        self.assertTrue(result['metrics']['listen_ports_changed'])
         self.assertEqual(result['metrics']['removed_ports'], [80])
         del args['baseline_listen_ports']
         self.assertIn('listen_diff_unavailable', self.reasons(self.invoke('network-watch-v1', args)))

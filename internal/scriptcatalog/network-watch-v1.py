@@ -151,7 +151,7 @@ def check(args):
                     matches = [p for p in peers if name in (p.get("HostName", "").lower(), p.get("DNSName", "").lower().rstrip("."))]
                     offline += not any(p.get("Online") is True for p in matches)
                 relay = sum(p.get("Online") is True and p.get("Active") is True and bool(p.get("Relay")) and not p.get("CurAddr") and not p.get("PeerRelay") for p in peers)
-                metrics.update(peer_count=len(peers), expected_offline_count=offline, derp_only_count=relay)
+                metrics.update(online_peer_count=sum(p.get("Online") is True for p in peers), peer_count=len(peers), expected_offline_count=offline, derp_only_count=relay)
                 if offline:
                     issue("expected_peers_offline", count=offline)
                 if relay:
@@ -213,7 +213,9 @@ def check(args):
                 issue("invalid_listen_response")
             else:
                 current = digest(ports)
-                metrics.update(listen_count=len(ports), listen_digest=current)
+                metrics.update(listen_count=len(ports), listen_digest=current,
+                               listen_baseline_available=baseline is not None,
+                               listen_ports_changed=(baseline != current) if baseline is not None else None)
                 if baseline is not None and baseline != current:
                     issue("listen_ports_changed")
                     if previous is not None:

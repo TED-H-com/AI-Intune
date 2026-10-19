@@ -271,6 +271,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	patterns = append(patterns, s.joinRoutes(mux)...)
+	patterns = append(patterns, s.checksRoutes(mux)...)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
 	patterns = append(patterns, s.offlineAlertsRoutes(mux)...)
 	return append(append(append(append(append(patterns, append(s.channelRoutes(mux), s.signinRoutes(mux)...)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), s.diskSetupRoutes(mux)...)...)...)...)...)
@@ -400,6 +401,9 @@ type page struct {
 	Readiness                 *readinessPage
 	BuildVersion, BuildCommit string
 
+	Checks                *checksPage
+	ChecksNext            *string
+	MachineChecks         []operator.ReadReport
 	Schedules             *schedulePage
 	DiskAction            *diskActionView
 	DiskQuarantine        *diskQuarantineView
@@ -1398,7 +1402,13 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		owner = checklist.Facts.ServiceUser
 	}
 	principal, _ = operatorauth.PrincipalFromContext(r.Context())
+	checks, err := s.operator.MachineReadReports(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Read checks", err)
+		return
+	}
 	s.render(w, r, "machine.html", page{
+		MachineChecks:           checks,
 		DiskSetup:               &diskSetupPage{Machine: machine.Item.MachineID, Inventory: disks, Manage: principal.Has(operatorauth.Admin), Owner: owner},
 		Readiness:               &readinessPage{Items: []store.HostChecklist{checklist}, Manage: principal.Has(operatorauth.Admin)},
 		DiskGrowth:              growth,
@@ -1912,6 +1922,8 @@ func subNavigationFor(data page) subNavigation {
 			subNavigationItem{Label: "Canary", Href: "/updates#channel-canary"},
 			subNavigationItem{Label: "Stable", Href: "/updates#channel-stable"},
 		)
+	case "checks":
+		return reportsSubNavigation("Checks / 檢查")
 	case "reports":
 		return reportsSubNavigation("報告總覽")
 	case "changes":
@@ -1954,6 +1966,7 @@ func subNavigationFor(data page) subNavigation {
 func reportsSubNavigation(current string) subNavigation {
 	return makeSubNavigation("報告子選單", current,
 		subNavigationItem{Label: "報告總覽", Href: "/reports"},
+		subNavigationItem{Label: "Checks / 檢查", Href: "/checks"},
 		subNavigationItem{Label: "變更", Href: "/reports/changes"},
 		subNavigationItem{Label: "票證使用量", Href: "/reports/tickets"},
 		subNavigationItem{Label: "註冊", Href: "/reports/enrollment"},

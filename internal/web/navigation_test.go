@@ -191,12 +191,13 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 		sectionHref("/updates", "channel-canary"): "Canary", sectionHref("/updates", "channel-stable"): "Stable",
 	})
 	reportsNav := map[string]string{
-		"/reports": "報告總覽", "/reports/changes": "變更",
+		"/reports": "報告總覽", "/reports/changes": "變更", "/checks": "Checks / 檢查",
 		"/reports/tickets": "票證使用量", "/reports/enrollment": "註冊",
 		"/reports/software": "軟體清查", "/reports/install": "安裝狀態",
 		"/reports/profile": "發佈與指派", "/audit": "稽核記錄",
 	}
 	assertSubNavigation(t, s, "/reports", "報告子選單", "報告總覽", reportsNav)
+	assertSubNavigation(t, s, "/checks", "報告子選單", "Checks / 檢查", reportsNav)
 	// 同一台機器的兩頁要給同一份子選單。少一項的選單看起來像那一節在這裡不存在。
 	assertSubNavigation(t, s, detailBase+"/timeline", "裝置詳細資料子選單", "事件時間軸", detailNav)
 	assertSubNavigation(t, s, detailBase+"/data", "裝置詳細資料子選單", "資料", detailNav)
