@@ -124,14 +124,30 @@ python3 - "$ROOT" <<'PY'
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
 s = (root/'ops/join/join.ps1').read_text()
-for text in ("[switch]$JobsEnabled", "$jobs = 'false'", "--jobs-enabled $jobs", "--token-file $tokenFile", 'WindowsBuiltInRole]::Administrator', 'Join code:', '/machines/join', 'expires_at', 'poll_seconds', 'Get-FileHash', 'SHA256', 'Unsafe agent archive member.', 'Set-JoinPrivate $work $true', 'Remove-Item -LiteralPath $work'):
+for text in ("[switch]$JobsEnabled", "$jobs = 'false'", "--jobs-enabled $Jobs", "--token-file $TokenFile", 'WindowsBuiltInRole]::Administrator', 'Join code:', '/machines/join', 'expires_at', 'poll_seconds', 'Get-FileHash', 'SHA256', 'Unsafe agent archive member.', 'Set-JoinPrivate $work $true', 'Remove-Item -LiteralPath $work'):
     assert text in s, text
 assert s.index('Get-FileHash') < s.index('Expand-JoinBundle $archive')
 assert s.index('bundle/windows-$arch') < s.index('$Hub/v1/join/poll')
+assert '*> $null' not in s, 'installer diagnostics must not be discarded'
+for text in ('function Protect-JoinInstallerOutput', 'function Invoke-JoinInstaller',
+             '$Text.Replace($secret,', '(?:token|secret)', r'\bbearer',
+             '*>&1', '$LASTEXITCODE -ne 0',
+             '$line = Protect-JoinInstallerOutput ([string]$_) $Secrets',
+             'Add-Content -LiteralPath $LogFile -Value $line',
+             'Last redacted output lines:', '$tail.Count -gt 10',
+             '@($approved.enroll_token, $started.device_secret)',
+             "Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1')"):
+    assert text in s, text
+capture = s[s.index('function Invoke-JoinInstaller'):s.index('function Read-JoinBlock')]
+assert capture.index('Protect-JoinInstallerOutput ([string]$_)') < capture.index('Add-Content')
+assert 'Write-Host' not in capture and '[Console]' not in capture.split('$engine =', 1)[1]
 installer = (root/'ops/install-agent-windows.ps1').read_text()
 for text in ('jobs_enabled', '--monitor-only', 'Register-ScheduledTask', 'enroll --hub $Hub --token-file $TokenFile'):
     assert text in installer, text
-print('Windows bootstrap: static monitor-only, approval, digest, private-file and cleanup checks passed.')
+assert installer.index("$TaskXml = $TaskXml -replace") < installer.index('\n  Register-ScheduledTask ')
+assert 'encoding="UTF-16"' in installer
+assert 'Fail "Scheduled task registration failed: $($_.Exception.Message)"' in installer
+print('Windows bootstrap: static encoding, redacted diagnostics, monitor-only, approval, digest, private-file and cleanup checks passed.')
 PY
 if command -v pwsh >/dev/null 2>&1; then
   mkdir "$TEST_DIR/powershell"
@@ -156,7 +172,7 @@ for mode in ['valid', 'traversal', 'backslash', 'absolute', 'symlink', 'hardlink
 PY
   pwsh -NoProfile -File "$ROOT/ops/join/test-windows.ps1" -Fixtures "$TEST_DIR/powershell"
 else
-  printf 'skip: pwsh is not available; PowerShell parse/extraction tests not run.\n'
+  printf 'skip: pwsh is not available; PowerShell parse/extraction/redaction tests not run.\n'
 fi
 
 # The Fly and Compose images share this initializer. Optional OS pairs must
