@@ -1210,3 +1210,29 @@ not authorization to perform privileged operations; see operator-playbook's Host
 readiness checklist for freshness and measurement limits.
 The operator client and MCP `machine_readiness` tool expose the same read (human
 network identity; no configuration writes). Unknown/missing CLI evidence is null.
+
+Readiness adds `display_name`, `effective_config`, counts `needs_you`, `auto`,
+`done`, and item `key`, `owner` (hub/you), `bucket` (done/auto/needs_you).
+Existing status and host-only `config` semantics remain unchanged. Effective
+targets inherit empty host fields from the single-row `fleet_readiness_profile`.
+Admin `POST /readiness` with `scope=fleet` saves validated defaults and an atomic
+`fleet_readiness_profile` audit entry; route policy is unchanged.
+The profile selects expected CLIs (empty retains all four), up to 16 user units,
+and automatic remediation (on when no fleet profile row exists; saved
+`auto_remediate_user_units: false` remains off). Only listed expected user units
+can be acted on; an empty list does nothing. Agent config adds comparable
+`expected_user_units`
+(sorted comma-separated names) and `auto_remediate`. Facts add `units`, keyed by
+unit name, with nullable `loaded`, `enabled`, `active`, and optional
+`remediation` (`at`, `action`, `ok`, bounded sanitized `reason`). Additive boolean
+facts `oneshot`, `failed`, `masked`, and `disabled` preserve unit semantics without
+raw systemd classes. `enabled` accepts enabled, enabled-runtime, static, indirect,
+generated, and alias. Idle oneshot or static/indirect services pass unless their
+last run failed, and are never repaired. Loaded, unmasked timers and long-running
+services may be repaired when automatic remediation is on: disabled uses
+`enable --now`, enabled but inactive/failed uses `start` (also the remediation
+action). Never restart or use sudo;
+at most one attempt per unit per hour per agent process.
+Linux repair only enables/starts already-installed, unmasked expected user units,
+at most once per unit per hour per agent process. No system-scope or unit-file
+editing is performed. The profile change, rather than each local attempt, is audited.

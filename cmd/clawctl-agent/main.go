@@ -650,6 +650,7 @@ func applyWorkloadPolicy(obs *model.ObservationBatch, policy *workloadPolicyBund
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	obs.Readiness = probe.CollectReadiness(ctx, policy.readiness, obs.Credentials)
+	probe.CollectReadinessUnits(ctx, policy.readiness, obs.Readiness)
 	obs.Artifacts = probe.CheckArtifacts(policy.expectations)
 	// ⚠ 用 obs.MeasuredAt（agent 自己的時鐘）當事件窗口的原點。
 	// 這裡跟 artifact 不一樣：artifact 只回報 mtime、由 Hub 用 Hub 的

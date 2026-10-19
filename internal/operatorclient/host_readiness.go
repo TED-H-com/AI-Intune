@@ -27,7 +27,7 @@ func (c *Client) MachineReadiness(ctx context.Context, id string) (store.HostChe
 	if err = decodeStrictJSONDocument(response.body, "readiness", &out); err != nil {
 		return out, err
 	}
-	if out.MachineID != id || len(out.Items) != 10 {
+	if out.MachineID != id || (len(out.Items) < 7 || len(out.Items) > 26) {
 		return store.HostChecklist{}, fmt.Errorf("operator client: invalid readiness response")
 	}
 	return out, nil

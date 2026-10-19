@@ -1872,3 +1872,9 @@ CREATE TABLE IF NOT EXISTS host_readiness_config (
  machine_id TEXT PRIMARY KEY REFERENCES machine_registry(machine_id),
  config TEXT NOT NULL
 );
+
+-- Fleet-wide readiness defaults; retained until explicitly changed.
+CREATE TABLE IF NOT EXISTS fleet_readiness_profile (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  config TEXT NOT NULL
+);
