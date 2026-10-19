@@ -247,6 +247,21 @@ class Reports(unittest.TestCase):
         self.cfg['ss'] = {'out': 'malformed token=test-secret'}
         self.assertIn('invalid_listen_response', self.reasons(self.invoke('network-watch-v1', {})))
 
+    def test_network_missing_configuration_is_error(self):
+        self.cfg['tailscale']['json']['BackendState'] = 'NeedsLogin'
+        result = self.invoke('network-watch-v1', {})
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('tailscale_config_missing', self.reasons(result))
+        self.cfg['tailscale']['json']['BackendState'] = 'Running'
+        self.cfg['systemctl'] = {'code': 4, 'out': 'unknown'}
+        result = self.invoke('network-watch-v1', {})
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('cloudflared_service_missing', self.reasons(result))
+        self.cfg['systemctl'] = {'code': 1}
+        self.assertIn('cloudflared_status_failed', self.reasons(self.invoke('network-watch-v1', {})))
+        self.cfg['tailscale'] = {'json': {}}
+        self.assertIn('invalid_tailscale_response', self.reasons(self.invoke('network-watch-v1', {})))
+
     def test_bat_semver_current_newer_and_installed_ahead(self):
         for installed, latest, expected in [('v3.9.0','v3.10.0',True), ('3.10.0','v3.10.0',False), ('v4.0.0','v3.10.0',False)]:
             self.release(installed, latest)

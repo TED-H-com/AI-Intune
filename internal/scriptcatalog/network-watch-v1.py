@@ -139,8 +139,12 @@ def check(args):
         else:
             try:
                 state = document(ts[1])
+                if not isinstance(state.get("BackendState"), str):
+                    raise Failure("invalid_tailscale_response")
                 peers = list((state.get("Peer") or {}).values())
-                if state.get("BackendState") != "Running":
+                if state.get("BackendState") == "NeedsLogin":
+                    issue("tailscale_config_missing")
+                elif state.get("BackendState") != "Running":
                     issue("tailscale_not_running")
                 offline = 0
                 for name in expected:
@@ -180,7 +184,11 @@ def check(args):
     service = read("systemctl", ["is-active", "cloudflared.service"])
     if service:
         metrics["cloudflared_active"] = service[0] == 0 and service[1].strip() == "active"
-        if not metrics["cloudflared_active"]:
+        if service[0] == 4 or service[1].strip() == "unknown":
+            issue("cloudflared_service_missing")
+        elif service[0] not in (0, 3):
+            issue("cloudflared_status_failed")
+        elif not metrics["cloudflared_active"]:
             issue("cloudflared_inactive")
     listeners = read("ss", ["-H", "-ltn"])
     if listeners:

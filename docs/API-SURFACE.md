@@ -680,7 +680,8 @@ these entries alone do not establish full OpenClaw anomaly parity.
 [Disabled schedule examples](runbooks/retirement-phase0-schedules.example.json)
 provide five independent upsert request bodies in one JSON array. Each ships
 with `enabled:false`, `catch_up:false`, and a placeholder pilot target.
-Replace the target and expected peer list before previewing; submit each body
+Replace the target, sample OCI profiles, and expected peer list before previewing;
+submit each body
 through the existing schedule upsert preview/apply contract. No live schedules
 are created by the examples or tests. UTC cron values are `15 9 * * *` and
 `20 9 * * *` for sample-oci-a/sample-oci-b, `17 */6 * * *` for network watch,
