@@ -171,13 +171,25 @@ func TestPublicPowerShellBootstrap(t *testing.T) {
 	if res.Code != 200 || res.Header().Get("Cache-Control") != "no-store" || strings.Contains(script, "@@CLAWCTL_PUBLIC_URL@@") || !strings.Contains(script, "$Hub = 'https://hub.example.com'") {
 		t.Fatal("public script not templated")
 	}
-	for _, term := range []string{"[switch]$JobsEnabled", "$jobs = 'false'", "--token-file $tokenFile", "--jobs-enabled $jobs", "Join code:", "/machines/join", "expires_at", "Get-FileHash", "SHA256", "Expand-JoinBundle", "Unsafe agent archive member.", "Remove-Item -LiteralPath $work", "WindowsBuiltInRole]::Administrator"} {
+	for _, term := range []string{
+		"[switch]$JobsEnabled", "$jobs = 'false'", "--token-file $TokenFile", "--jobs-enabled $Jobs",
+		"Join code:", "/machines/join", "expires_at", "Get-FileHash", "SHA256", "Expand-JoinBundle",
+		"Unsafe agent archive member.", "Remove-Item -LiteralPath $work", "WindowsBuiltInRole]::Administrator",
+		"function Protect-JoinInstallerOutput", "$Text.Replace($secret,", `(?:token|secret)`, `\bbearer`,
+		"Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1')",
+		"@($approved.enroll_token, $started.device_secret)", "*>&1", "$LASTEXITCODE -ne 0",
+		"$line = Protect-JoinInstallerOutput ([string]$_) $Secrets",
+		"Add-Content -LiteralPath $LogFile -Value $line", "Last redacted output lines:",
+	} {
 		if !strings.Contains(script, term) {
 			t.Errorf("bootstrap missing %q", term)
 		}
 	}
 	if strings.Contains(script, "operator_token") || strings.Contains(script, "Write-Host $started") || strings.Contains(script, "Write-Host $approved") {
 		t.Fatal("bootstrap exposes credentials")
+	}
+	if strings.Contains(script, "*> $null") {
+		t.Fatal("bootstrap discards installer diagnostics")
 	}
 	s.SetHubBase("http://hub.example.com")
 	if w := joinHTTPRequest(mux, "GET", "/join.ps1", ""); w.Code != 503 {

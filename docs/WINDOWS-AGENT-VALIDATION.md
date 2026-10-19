@@ -55,6 +55,20 @@ Hub 的 bootstrap release 保留 Linux amd64／arm64 必要組；同目錄若出
 
 遇到失敗時，保留 installer 的失敗步驟。Linux 上的編譯與 `go test` 不是這一步。
 
+## Join 已 enrollment，但 scheduled task 安裝失敗時復原
+
+先查看 `%ProgramData%\clawctl\join.log` 的已遮蔽 installer 診斷。若 join 已完成
+enrollment，卻在註冊 scheduled task 時失敗，下載並解壓修正後的 Windows 安裝包，
+以原本 enrollment 的使用者帳號開啟系統管理員 PowerShell，在解壓目錄執行：
+
+```powershell
+.\install-agent-windows.ps1 --hub '<hub>' --jobs-enabled false --binary '<exe>'
+```
+
+將 `<hub>` 換成 Hub URL、`<exe>` 換成該機架構的 `clawctl-agent.exe` 路徑。
+`%APPDATA%\clawctl\agent.json` 已存在時，installer 會略過 enrollment，重新安裝並啟動
+scheduled task，最後驗證 Hub readiness。無需新的 enrollment token。
+
 ## 實機 profile 驗收
 
 以這台已報到的 Windows 預覽一個只含 exact Node runtime 版本的 profile，

@@ -39,6 +39,48 @@ function Write-JoinProgress([string]$Message) {
   Write-Host $Message
   Add-Content -LiteralPath $LogFile -Value ("{0:u} {1}" -f [DateTime]::UtcNow, $Message)
 }
+function Protect-JoinInstallerOutput([string]$Text, [string[]]$Secrets) {
+  # Literal replacement also covers credentials printed without a field name.
+  foreach ($secret in @($Secrets | Sort-Object Length -Descending)) {
+    if (-not [string]::IsNullOrEmpty($secret)) { $Text = $Text.Replace($secret, '[REDACTED]') }
+  }
+  $value = '(?:"[^"]*"|''[^'']*''|\[REDACTED\]|[^\s,;}\]]+)'
+  $Text = $Text -replace ('(?i)(\b[\w-]*(?:token|secret)\b["'']?\s*[:=]\s*)' + $value), '$1[REDACTED]'
+  $Text = $Text -replace ('(?i)(\bbearer["'']?(?:\s+|\s*[:=]\s*))' + $value), '$1[REDACTED]'
+  return $Text
+}
+function Invoke-JoinInstaller([string]$Installer, [string]$Hub, [string]$TokenFile, [string]$Jobs, [string[]]$Secrets) {
+  # A child process captures even the installer's [Console]::Error writes.
+  $engine = Join-Path $PSHOME 'powershell.exe'
+  if ($PSVersionTable.PSEdition -eq 'Core') {
+    $engine = Join-Path $PSHOME 'pwsh'
+    if ($env:OS -eq 'Windows_NT') { $engine += '.exe' }
+  }
+  $tail = New-Object 'Collections.Generic.Queue[string]'
+  try {
+    & {
+      # Windows PowerShell 5.1 wraps native stderr in error records. Capture them
+      # without stopping the pipeline; the child's exit code decides success.
+      $ErrorActionPreference = 'Continue'
+      $PSNativeCommandUseErrorActionPreference = $false
+      # Native commands update the global variable; a local one would hide it.
+      $global:LASTEXITCODE = 1
+      & $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Installer --hub $Hub --token-file $TokenFile --jobs-enabled $Jobs *>&1
+      if ($LASTEXITCODE -ne 0) { throw 'Agent installer failed.' }
+    } | ForEach-Object {
+      $line = Protect-JoinInstallerOutput ([string]$_) $Secrets
+      Add-Content -LiteralPath $LogFile -Value $line -ErrorAction Stop
+      $tail.Enqueue($line)
+      if ($tail.Count -gt 10) { [void]$tail.Dequeue() }
+    }
+  } catch {
+    $line = Protect-JoinInstallerOutput $_.Exception.Message $Secrets
+    Add-Content -LiteralPath $LogFile -Value $line
+    Add-Content -LiteralPath $LogFile -Value 'Agent installer failed. Last redacted output lines:'
+    foreach ($line in $tail) { Add-Content -LiteralPath $LogFile -Value $line }
+    throw 'Agent installer failed. See the join log for redacted diagnostics.'
+  }
+}
 function Read-JoinBlock([IO.Stream]$Stream, [byte[]]$Buffer) {
   $offset = 0
   while ($offset -lt $Buffer.Length) {
@@ -167,9 +209,7 @@ try {
   $jobs = 'false'
   if ($JobsEnabled) { $jobs = 'true' }
   # One-time enrollment token from approval, never an operator token or argv secret.
-  # Suppress downstream output; errors can contain credential-bearing objects.
-  & (Join-Path $stage 'install-agent-windows.ps1') --hub $Hub --token-file $tokenFile --jobs-enabled $jobs *> $null
-  if (-not $?) { throw 'Agent installer failed.' }
+  Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1') $Hub $tokenFile $jobs @($approved.enroll_token, $started.device_secret)
   Write-JoinProgress "Joined. jobs_enabled=$jobs. Progress: $Hub/readiness"
 } catch {
   # Never serialize exceptions/responses: they may contain device/enrollment secrets.

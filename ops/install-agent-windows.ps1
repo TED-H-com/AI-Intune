@@ -268,8 +268,14 @@ $Step = 'scheduled task'
 $TaskXml = [IO.File]::ReadAllText($TaskTemplate)
 $TaskXml = $TaskXml.Replace('@@CLAWCTL_AGENT_BIN@@', (XmlEscape $BinFile))
 if ($TaskXml.Contains('@@')) { Fail "Scheduled task XML contains an unresolved placeholder" }
+# Register-ScheduledTask receives a UTF-16 .NET string, not the UTF-8 file bytes.
+$TaskXml = $TaskXml -replace '^<\?xml[^?]*\?>', '<?xml version="1.0" encoding="UTF-16"?>'
 Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Xml $TaskXml -Force | Out-Null
+try {
+  Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Xml $TaskXml -Force -ErrorAction Stop | Out-Null
+} catch {
+  Fail "Scheduled task registration failed: $($_.Exception.Message)"
+}
 $ServiceStartedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 
