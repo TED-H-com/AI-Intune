@@ -502,6 +502,7 @@ func runAgent() {
 
 	observationNudge := make(chan struct{}, 1)
 	startJobs(ctx, cfg, observationNudge)
+	startSignins(ctx, cfg)
 	go runTerminalLink(ctx, cfg)
 
 	// --- 心跳 goroutine。
@@ -544,6 +545,9 @@ func runAgent() {
 			if postErr == nil {
 				if err := adoptHostProfile(resp); err != nil {
 					log.Print("Host setup profile could not be saved")
+				}
+				for _, c := range resp.SigninCommands {
+					handleSigninCommand(ctx, c)
 				}
 				timerTransitions = resp.DiskTimerTransitions
 				now = adoptSettings(now, resp, &applied, cfg, seq)

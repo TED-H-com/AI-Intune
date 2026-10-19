@@ -74,6 +74,8 @@ func (h *hub) agentRoutes(mux *http.ServeMux) []string {
 		"POST /v1/verifications",
 		"GET /v1/verification-assignments",
 	}
+	patterns = append(patterns, "POST /v1/agent/signins")
+	mux.HandleFunc("POST /v1/agent/signins", h.authed(h.handleSigninUpdate))
 	patterns = append(patterns, "POST /v1/disk-actions/{job_id}/results")
 	mux.HandleFunc("POST /v1/disk-actions/{job_id}/results", h.authed(h.handleDiskActionResults))
 	patterns = append(patterns, "GET /v1/ops-manifests/{id}")
@@ -244,6 +246,7 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 	}
 	writeJSON(w, http.StatusOK, model.CheckinResponse{
 		DiskJobs: diskJobs, HostProfile: hostProfile, HostProfileDigest: hostDigest,
+		SigninCommands:             h.store.SigninCommands(machineID),
 		ReadinessConfig:            readinessConfig,
 		DiskTimerTransitions:       transitions,
 		ReceivedAt:                 received,

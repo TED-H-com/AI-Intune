@@ -1911,3 +1911,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active ON disk_setup_jobs(machine_i
 
 CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active_serial ON disk_setup_jobs(machine_id,serial) WHERE serial<>'' AND state IN ('pending','delivered');
 CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active_wwn ON disk_setup_jobs(machine_id,wwn) WHERE wwn<>'' AND state IN ('pending','delivered');
+
+-- Only session metadata is durable. Login URLs, device codes and pasted codes
+-- live in memory and disappear on Hub restart.
+CREATE TABLE IF NOT EXISTS signin_sessions (
+ id TEXT PRIMARY KEY,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ cli TEXT NOT NULL CHECK(cli IN ('codex','agy','claude','grok','gh')),
+ slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 8),
+ state TEXT NOT NULL CHECK(state IN ('pending','started','waiting_for_code','submitted','done','failed','expired','cancelled')),
+ created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ reason TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS signin_one_active ON signin_sessions(machine_id,cli,slot)
+ WHERE state IN ('pending','started','waiting_for_code','submitted');
+CREATE TABLE IF NOT EXISTS signin_notification_setting (
+ id INTEGER PRIMARY KEY CHECK(id=1), channel_id TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS signin_notification_state (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), cli TEXT NOT NULL,
+ slot INTEGER NOT NULL, status TEXT NOT NULL, account TEXT NOT NULL DEFAULT '',
+ last_notified_at TEXT NOT NULL DEFAULT '', pending INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(machine_id,cli,slot)
+);

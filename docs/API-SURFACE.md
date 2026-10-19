@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 343 個 HTTP operations（34 non-operator＋309 operator；155 條 operator JSON）、
+> 逐一對照 350 個 HTTP operations（35 non-operator＋315 operator；156 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 343-operation tally above (34 non-operator + 309 operator). The inventory/contract excludes these six public account operations and totals 337. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 350-operation tally above (35 non-operator + 315 operator). The inventory/contract excludes these six public account operations and totals 344. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -979,8 +979,8 @@ for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
 Adds ten operator operations (six JSON, four HTML). The combined manifest totals
-343 including public accounts, 337 excluding them; 309 operator (155 JSON,
-154 HTML/plain), exact grants view=123 / operate=33 / admin=153.
+350 including public accounts, 344 excluding them; 315 operator (156 JSON,
+160 HTML/plain), exact grants view=125 / operate=33 / admin=157.
 
 | Method | Route | Admission |
 | --- | --- | --- |
@@ -1305,3 +1305,15 @@ is pending → delivered → done/refused/failed; uncollected jobs expire at 24 
 and pending cancellation becomes expired. Delivery is retried until a terminal
 receipt. No wipe, force, overwrite or reuse fields are accepted. See
 [New disk setup](HOST-PROFILE.md#new-disk-setup).
+
+## Fleet Sign-ins
+
+`GET /signins` provides the View page; `GET /v1/operator/signins` provides the
+metadata-only JSON summary. Read-only MCP tool: `signins_list`. Neither JSON nor
+MCP exposes login URLs, device codes, pasted codes, or credentials.
+Admin HTML forms `POST /signins/start`, `POST /signins/{session}/code`,
+`POST /signins/{session}/cancel`, and `POST /signins/notifications` require
+fresh local MFA and same-origin form checks. `POST /v1/agent/signins` accepts
+machine-bearer sanitized results bound to that machine. All Sign-ins responses
+are no-store. Start, code submission, cancel, result, and preference changes
+are audited atomically with their durable state.

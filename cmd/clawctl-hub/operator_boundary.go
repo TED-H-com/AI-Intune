@@ -151,6 +151,7 @@ var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
 	"POST /v1/disk-reports/{job_id}/chunks":   {nonOperatorAgent},
 	"POST /v1/disk-reports/{job_id}/complete": {nonOperatorAgent},
 	"GET /v1/jobs/next":                       {nonOperatorAgent},
+	"POST /v1/agent/signins":                  {nonOperatorAgent},
 	"GET /v1/agent/readiness":                 {nonOperatorAgent},
 	"GET /v1/agent/terminal-link":             {nonOperatorAgent},
 	"POST /v1/jobs/{id}/claims":               {nonOperatorAgent},
@@ -259,6 +260,12 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /reports/install.csv":                                            {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /reports/profile":                                                {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /reports/profile.csv":                                            {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /signins":                                                        {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/signins":                                            {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"POST /signins/notifications":                                         {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /signins/start":                                                 {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /signins/{session}/code":                                        {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /signins/{session}/cancel":                                      {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /channels":                                                       {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/channels":                                           {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /channels/{operation}":                                          {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
@@ -1013,8 +1020,9 @@ func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
 }
 
 // lockedOperatorContentSecurityPolicy is the policy every non-terminal
-// operator response still sends. It names no script and no connection.
-var lockedOperatorContentSecurityPolicy = "script-src '" + web.ReasonScriptHash() + "'; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+// operator response sends. Only fixed audit and sign-in refresh scripts are allowed;
+// no outbound connection is permitted.
+var lockedOperatorContentSecurityPolicy = "script-src '" + web.ReasonScriptHash() + "' '" + web.SigninRefreshScriptHash() + "'; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 // The script hashes are fixed at process start from the embedded bytes. The
 // authority is the listener pinned on this boundary, so only the scheme is

@@ -172,3 +172,49 @@ has stopped and remains `expired`, even with a refresh token. Without a
 refresh token, expiry is judged normally; missing auth files remain `absent`.
 Claude and Codex expiry judgement is unchanged, including when refresh tokens
 are present. These probes read files only and never perform a model or network call.
+
+## Sign in from the Hub
+
+Open **Sign-ins** to see accounts across the fleet, grouped by CLI and plain
+account email where available. Unknown identities group by account slot. The
+navigation badge counts expired, failing, and soon-expiring sign-ins. Healthy
+accounts are under **Signed in**. Local credential files are evidence of saved
+configuration, not proof that the provider accepts a request. A login process
+that reports an authentication failure marks that account as failing even if a
+local credential file remains.
+
+An administrator chooses **Sign in** beside a machine, or **Sign in all** for
+supported flows. Local account administrators confirm fresh MFA first. Open each
+host's sign-in link in a new tab and use its one-time device code, or paste the
+authorization code into the Hub when prompted. Each machine has its own flow.
+The page refreshes while work is active, pausing while you enter a code; cancel
+from the same panel. Without JavaScript, refresh to check progress. Sessions
+expire after 15 minutes, with at most four concurrent logins per Linux host.
+
+Codex uses device authorization; agy selects Google OAuth and accepts a pasted
+code; Claude runs `claude setup-token`; GitHub uses its web device flow followed
+by `gh auth setup-git`. Grok accepts paste-back when offered; a localhost-only
+callback requires finishing in a browser on that machine. Claude setup-token
+versions that only print a token do not save the automation credential: that
+token is discarded, and the existing private automation-token setup is still
+required. Hermes openai-codex status is unknown because this tree has no stable
+read-only auth-store contract; Hub sign-in is unsupported.
+
+The agent starts login PTYs through `systemd-run --user` services, outside the
+agent unit's ProtectHome/NoNewPrivileges sandbox, as the same OS user. The user
+manager must be available. PATH includes the real user's `.local/bin` and
+`.grok/bin`; agy slots 2–8 override HOME to the corresponding
+`.gemini/antigravity-accounts/acctN-home` directory. Whole service control groups
+are stopped on timeout, cancellation, or agent shutdown. macOS and Windows
+report status but do not support Hub-started login.
+
+Only allowlisted HTTPS login URLs and device codes leave the PTY. Raw output
+and credential tokens are discarded. Pasted authorization codes live only in
+Hub memory until one delivery; they never enter the database or audit. A lost
+delivery or Hub restart requires a new flow. Pages are no-store. The View API
+`GET /v1/operator/signins` and read-only MCP `signins_list` return account status
+only, without login URLs or codes.
+
+Notifications default to Off. Choose an existing channel on Sign-ins to receive
+a message when a saved status changes from ok/expiring to logged out, at most
+once per machine/CLI/slot every 12 hours. Configure destinations in Channels.

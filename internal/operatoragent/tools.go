@@ -126,6 +126,8 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return result, hubErr(err)
 	case "fleet_overview":
 		return s.fleetOverview(ctx, raw)
+	case "signins_list":
+		return s.signinsList(ctx, raw)
 	case "machines_list":
 		return s.machinesList(ctx, raw)
 	case "machine_get":

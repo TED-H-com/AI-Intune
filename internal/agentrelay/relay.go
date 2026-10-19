@@ -51,6 +51,7 @@ var (
 type DownstreamType string
 
 const (
+	DownstreamSignin DownstreamType = "signin"
 	DownstreamOpen   DownstreamType = "open"
 	DownstreamInput  DownstreamType = "input"
 	DownstreamResize DownstreamType = "resize"
@@ -60,6 +61,7 @@ const (
 type UpstreamType string
 
 const (
+	UpstreamSignin UpstreamType = "signin_result"
 	UpstreamReady  UpstreamType = "ready"
 	UpstreamOutput UpstreamType = "output"
 	UpstreamExit   UpstreamType = "exit"
@@ -99,7 +101,7 @@ func EncodeDownstream(frame Downstream) ([]byte, error) {
 			Cols    int            `json:"cols"`
 			Rows    int            `json:"rows"`
 		}{frame.Type, frame.Session, frame.CWD, frame.Cols, frame.Rows})
-	case DownstreamInput:
+	case DownstreamInput, DownstreamSignin:
 		return json.Marshal(struct {
 			Type    DownstreamType `json:"type"`
 			Session string         `json:"session"`
@@ -159,7 +161,7 @@ func DecodeDownstream(payload []byte) (Downstream, error) {
 			return Downstream{}, err
 		}
 		frame.Cols, frame.Rows, err = decodeGeometry(fields)
-	case DownstreamInput:
+	case DownstreamInput, DownstreamSignin:
 		if err := rejectPresent(fields, "cwd", "cols", "rows"); err != nil {
 			return Downstream{}, err
 		}
@@ -189,7 +191,7 @@ func EncodeUpstream(frame Upstream) ([]byte, error) {
 			Type    UpstreamType `json:"type"`
 			Session string       `json:"session"`
 		}{frame.Type, frame.Session})
-	case UpstreamOutput:
+	case UpstreamOutput, UpstreamSignin:
 		return json.Marshal(struct {
 			Type    UpstreamType `json:"type"`
 			Session string       `json:"session"`
@@ -240,7 +242,7 @@ func DecodeUpstream(payload []byte) (Upstream, error) {
 	switch frame.Type {
 	case UpstreamReady:
 		err = rejectPresent(fields, "data", "code", "reason")
-	case UpstreamOutput:
+	case UpstreamOutput, UpstreamSignin:
 		if err := rejectPresent(fields, "code", "reason"); err != nil {
 			return Upstream{}, err
 		}
@@ -292,7 +294,7 @@ func validateDownstream(frame Downstream) error {
 			return err
 		}
 		return validateGeometry(frame.Cols, frame.Rows)
-	case DownstreamInput:
+	case DownstreamInput, DownstreamSignin:
 		if frame.CWD != "" || frame.Cols != 0 || frame.Rows != 0 {
 			return ErrFieldNotAllowed
 		}
@@ -323,7 +325,7 @@ func validateUpstream(frame Upstream) error {
 		if frame.Data != nil || frame.Code != nil || frame.Reason != "" {
 			return ErrFieldNotAllowed
 		}
-	case UpstreamOutput:
+	case UpstreamOutput, UpstreamSignin:
 		if frame.Code != nil || frame.Reason != "" {
 			return ErrFieldNotAllowed
 		}
@@ -351,7 +353,7 @@ func validateUpstream(frame Upstream) error {
 
 func classifyDownstreamType(frameType DownstreamType) error {
 	switch frameType {
-	case DownstreamOpen, DownstreamInput, DownstreamResize, DownstreamClose:
+	case DownstreamOpen, DownstreamInput, DownstreamResize, DownstreamClose, DownstreamSignin:
 		return nil
 	case DownstreamType(UpstreamReady), DownstreamType(UpstreamOutput), DownstreamType(UpstreamExit), DownstreamType(UpstreamError):
 		return ErrWrongDirection
@@ -362,7 +364,7 @@ func classifyDownstreamType(frameType DownstreamType) error {
 
 func classifyUpstreamType(frameType UpstreamType) error {
 	switch frameType {
-	case UpstreamReady, UpstreamOutput, UpstreamExit, UpstreamError:
+	case UpstreamReady, UpstreamOutput, UpstreamExit, UpstreamError, UpstreamSignin:
 		return nil
 	case UpstreamType(DownstreamOpen), UpstreamType(DownstreamInput), UpstreamType(DownstreamResize), UpstreamType(DownstreamClose):
 		return ErrWrongDirection

@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-337（28 non-operator＋309 operator；155 operator JSON＋154 HTML/BFF/CSV/download），exact auth tally 是
-`view=123`／`operate=33`／`admin=153`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+344（29 non-operator＋315 operator；156 operator JSON＋159 HTML/BFF/CSV/download），exact auth tally 是
+`view=125`／`operate=33`／`admin=157`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1264,3 +1264,17 @@ state immediately before acting, reserves the ID durably, stops on failure and
 retains receipts forever for replay protection. Agent-relayed results are host
 facts, not independent verification. See [HOST-PROFILE](HOST-PROFILE.md#new-disk-setup)
 for the checks and compromised-account limitation.
+
+## Fleet Sign-ins
+
+The server-rendered `/signins` page groups metadata-only auth_health observations
+across hosts. Start, paste-back, cancellation and optional notification settings
+are human Admin forms with fresh local MFA and CSRF checks. Sessions are bound to
+one machine/CLI/slot, single active, and expire in 15 minutes. URL/device-code
+projections and once-delivered pasted codes are volatile, never SQL or audit
+payloads. Agent delivery uses the existing link or the check-in response. Linux
+login PTYs run as user-manager services outside the agent home sandbox; each
+service has a hard runtime limit and control-group cleanup. The read-only
+`GET /v1/operator/signins` and MCP `signins_list` expose status without URLs or
+codes. No MCP write tools are added. Notification settings default off and reuse
+Channels with a 12-hour per-item deduplication window.

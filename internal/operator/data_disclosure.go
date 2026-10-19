@@ -306,9 +306,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryAssignments: {
 		title:    "指派",
-		holds:    "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。Channel bindings and bot inventory (name, kind, host, agent type, token reference, status and notes) are retained until explicitly removed. They have no routing behavior. Readiness overrides: host_readiness_config; fleet defaults: one fleet_readiness_profile row. fleet_host_profile: one shared Linux host setup row. Profile changes are audited.",
+		holds:    "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。Channel bindings and bot inventory (name, kind, host, agent type, token reference, status and notes) are retained until explicitly removed. They have no routing behavior. Readiness: host_readiness_config, fleet_readiness_profile. fleet_host_profile: shared Linux setup. Sign-in metadata and logout dedup state kept; login URLs, codes and credentials are not stored.",
 		source:   DataSourceOperator,
-		tables:   []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings", "channel_bots", "host_readiness_config", "fleet_host_profile"},
+		tables:   []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings", "channel_bots", "host_readiness_config", "fleet_host_profile", "signin_sessions", "signin_notification_state"},
 		freeText: "Bot inventory names, token references and notes; resolved tokens are not stored.",
 		path:     "/machines/configuration",
 	},

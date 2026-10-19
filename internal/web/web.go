@@ -272,7 +272,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
 	patterns = append(patterns, s.joinRoutes(mux)...)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
-	return append(append(append(append(append(patterns, s.channelRoutes(mux)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), s.diskSetupRoutes(mux)...)...)...)...)...)
+	return append(append(append(append(append(patterns, append(s.channelRoutes(mux), s.signinRoutes(mux)...)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), s.diskSetupRoutes(mux)...)...)...)...)...)
 }
 
 type maintenancePageView struct {
@@ -390,10 +390,11 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
-	DiskSetup   *diskSetupPage
-	HostProfile *hostProfilePage
-
+	DiskSetup                 *diskSetupPage
+	HostProfile               *hostProfilePage
 	Join                      *joinView
+	Signins                   *signinsPage
+	SigninNeeds               int
 	Readiness                 *readinessPage
 	BuildVersion, BuildCommit string
 
@@ -1618,6 +1619,11 @@ func stripReceivedAt(received []time.Time, interval time.Duration) []Block {
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data page) {
 	data.BuildVersion, data.BuildCommit = s.buildVersion, s.buildCommit
+	if groups, e := s.operator.Signins(); e == nil {
+		for _, g := range groups {
+			data.SigninNeeds += g.Needs
+		}
+	}
 	locale := navigationLocaleFromRequest(r)
 	data.Locale = navigationLocaleFor(r, data.Title)
 	if data.DiskMachine != nil {
@@ -2051,7 +2057,18 @@ var funcs = template.FuncMap{
 		}
 		return false
 	},
-	"readinessLines": func(v []string) string { return strings.Join(v, "\n") },
+	"readinessLines":  func(v []string) string { return strings.Join(v, "\n") },
+	"signinLabel":     signinLabel,
+	"signinBulk":      func(cli string) bool { return cli == "codex" || cli == "agy" || cli == "claude" || cli == "gh" },
+	"signinTarget":    signinTarget,
+	"signinSupported": store.SigninSupported,
+	"signinNeeds":     signinNeeds,
+	"signinGroupData": func(g store.SigninGroup, manage bool) any {
+		return struct {
+			Group  store.SigninGroup
+			Manage bool
+		}{g, manage}
+	},
 	"readinessStatus": func(v string) string {
 		switch v {
 		case "pass":

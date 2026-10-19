@@ -393,7 +393,7 @@ Bindings do not prove delivery; use Channels' test action. Agent facts expire af
 15 minutes and become unknown when targets change. Backup success must be within
 48 hours; timer presence alone does not establish a successful backup. Inspect the
 backup service and its timer, then follow the restore-drill runbook to verify data.
-No commands install policy, log in, or provision channels automatically.
+No commands install policy, log in, provision channels, or run backups automatically.
 
 On **Readiness → Fleet defaults**, choose the access path, sudoers drop-in,
 backup service, expected CLI checkboxes, and expected user units (one per line,
@@ -422,3 +422,19 @@ Attempts are limited to once per unit per hour in the agent process (restart
 resets that memory). Failures return a bounded reason under Needs you.
 The fleet profile change is recorded atomically in the Hub audit log; each
 attempt is reported in readiness, not as a separate Hub audit event.
+
+## Restore a CLI sign-in
+
+Open **Sign-ins**, find the account and machine display name, then choose
+**Sign in**. Administrators using local accounts need fresh MFA. Complete the
+linked provider page; paste its authorization code only when the Hub requests
+one. Device flows instead use the one-time code shown beside that machine.
+Each host has a separate URL/code, including after **Sign in all**. Cancel stale
+flows before retrying; sessions expire after 15 minutes.
+
+If a CLI cannot start, check that it is installed for the agent OS user and the
+Linux user manager is available. Login services run outside the agent's
+read-only home sandbox. Grok localhost callbacks may require a browser on that
+host. Hermes provider login is unsupported. Claude setup-token may require the
+existing private automation-token procedure described in FLEET-AI-CLIS.md.
+Optional logout notifications are disabled until a channel is selected.

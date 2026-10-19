@@ -203,6 +203,7 @@ func Collect(ctx context.Context) (model.ObservationBatch, error) {
 		Journals:      unitJournals(ctx, units),
 		OpenClaw:      openClaw(ctx, home, tools),
 		Credentials:   credentials(home, now),
+		AuthHealth:    AuthHealth(ctx, home, now),
 		CLITools:      tools,
 		BAT:           bat,
 	}
