@@ -563,7 +563,7 @@ closed `args`, `targets` (1–50 explicit machine IDs), `reason`, and optional
 with no active job. All target validation, job creation, receipt and audit are atomic.
 Phase 1 uses explicit IDs; selectors can be resolved with the existing machine list.
 
-The sole entry is `fleet-probe-v1`: uptime, three load averages, root disk use percent,
+The baseline entry is `fleet-probe-v1`: uptime, three load averages, root disk use percent,
 and failed systemd unit count (`null` when unavailable). It exposes no host identity.
 The embedded catalog is shared at build time; agents independently verify exact bytes,
 validate arguments, refuse root execution, and use JSON stdin, a private working directory,
@@ -622,6 +622,77 @@ required connector tree digest, optional excerpts (default false), admin approva
 (write-equivalent catalog mode), fixed mapping file, agent user, Python 3, 600-second
 maximum/default timeout and 64 KiB output. Existing script/schedule preview and
 apply APIs are reused; see [BAT pilot](runbooks/BAT-SWEEP-PILOT.md).
+
+Three read-only entries support the OpenClaw retirement Phase 0 comparison.
+All run as a non-root agent user on Linux, use isolated system Python 3 with
+JSON stdin, have closed argument schemas and at most 64 KiB of redacted output.
+They emit one JSON line with `schema_version:1`, `status` (`ok`, `warn`, `urgent`,
+or `error`), `summary`, `metrics`, and typed `findings[].reason`. Missing CLIs,
+configuration, malformed responses, and CLI timeouts produce structured errors
+with process exit 0; consumers must inspect `status` rather than treating a
+successful script process as a healthy observation. No raw CLI diagnostics,
+tokens, OCIDs, account emails, remote writes, downloads, or installs appear in
+their evidence. The existing runner still enforces the overall timeout and
+hashes the original streams. Agents and Hub preserve the validated network
+`metrics.listen_digest` through redaction so it can be reused as a baseline.
+
+| Entry | Arguments and behavior | Timeout (default / maximum) |
+| --- | --- | --- |
+| `oci-cost-report-v1` | Required `profile` matching `^[a-z0-9-]{1,32}$`; optional numeric `warn_usd` (0) and `urgent_usd` (5), each 0–1,000,000 with urgent ≥ warn. MONTHLY COST query from the first of this month at 00:00 UTC through tomorrow at 00:00 UTC. Decimal USD amounts sum before strict `>` threshold comparisons. Metrics: `mtd_usd`, `currency`, `running_instances`, `period_start`, `period_end`. | 300 / 600 seconds |
+| `network-watch-v1` | Optional `expected_peers` (≤32 hostnames), `resolve` (≤8 names; defaults `github.com`, `cloudflare.com`), `baseline_listen_digest` (64 lowercase hex), `baseline_listen_ports` (≤256 decimal port strings, 1–65535), and `mode` (`watch`, default, or `daily`). Checks Tailscale state/health, peer count, offline/missing expected peers, active DERP-only peers, default routes, DNS, system `cloudflared.service` active state, and external TCP listening ports. | 180 / 300 seconds |
+| `bat-release-check-v1` | Empty args. Reads the updater's user systemd unit `BAT_INSTALL_DIR`, then its `VERSION` file or versioned symlink target, matching `bat-server-auto-update`. Uses anonymous HTTPS to the fixed public GitHub `tony1223/better-agent-terminal/releases/latest` endpoint. Numeric version comparison rejects drafts/prereleases. Metrics: `installed_version`, `latest_stable`, `newer_available`, `published_at`. HTTP 403/429 returns warn with `github_rate_limited_or_forbidden` and null release fields. | 60 / 120 seconds |
+
+OCI lookup first uses the runner's fixed `/usr/bin:/bin` PATH, then the reviewed
+`$HOME/.local/bin/oci` fallback (the observed pilot installation); jobs cannot
+supply executable paths. The script inspects only section headers in
+`~/.oci/config`. OCI CLI alone handles authentication and key access. A read-only
+IAM availability-domain query obtains the selected profile's root compartment
+internally, without exposing it. Instance count includes root and up to 32
+accessible active child compartments **in the profile's configured region**;
+it is not a cross-region inventory. Queries paginate, and limits or failures
+produce an error rather than silently reporting a partial count/cost. Reasons
+include `oci_cli_missing`, `profile_missing`, `oci_auth_failed`, and
+`oci_permission_denied`. Profile failures must be triaged from typed reasons;
+never paste OCI stderr or inspect key files. Successful empty OCI list responses
+can have no stdout; these mean zero child compartments or zero running instances.
+
+Network output contains counts and typed findings, never peer identities,
+addresses, DNS answers, systemd diagnostics, or listener process details.
+`listen_digest` is SHA-256 of numerically sorted unique external TCP ports,
+each followed by LF (empty set hashes empty bytes). IPv4/IPv6 duplicates collapse;
+loopback listeners are excluded. A changed digest raises `listen_ports_changed`.
+Optional `baseline_listen_ports` must hash to the supplied digest; then metrics
+include `added_ports` and `removed_ports` as integer arrays. A digest alone
+cannot reveal a diff: `listen_diff_unavailable` reports that limitation.
+No baseline state is written. Compare full Tailscale DNS names or hostnames via
+`expected_peers`; only online, active peers with a relay and no direct/peer-relay
+address count as DERP-only, avoiding false alarms for idle peers.
+
+The reviewed OpenClaw entrypoints `run_network_watch_cron.py` and
+`run_security_study_daily.py` also invoke credentialed router/Deco, WAN speed/event,
+Cloudflare analytics, and historical correlation collectors. Those broader
+checks need separately reviewed inputs before retirement; the new script
+never imports or executes workspace code or reads those secret files.
+`metrics.coverage_gaps` lists these four categories, and `mode:"daily"` always
+raises `security_coverage_incomplete`. This is an explicit comparison gate;
+these entries alone do not establish full OpenClaw anomaly parity.
+
+[Disabled schedule examples](runbooks/retirement-phase0-schedules.example.json)
+provide five independent upsert request bodies in one JSON array. Each ships
+with `enabled:false`, `catch_up:false`, and a placeholder pilot target.
+Replace the target and expected peer list before previewing; submit each body
+through the existing schedule upsert preview/apply contract. No live schedules
+are created by the examples or tests. UTC cron values are `15 9 * * *` and
+`20 9 * * *` for sample-oci-a/sample-oci-b, `17 */6 * * *` for network watch,
+`45 3 * * *` for the daily security variant, and `0 10 * * *` for BAT.
+UTC remains fixed across daylight-saving changes. BAT can later use up to
+50 explicit machine targets under the existing API limit.
+
+Before retiring any OpenClaw job, compare seven days of manually authorized
+parallel observations: each OCI amount must differ by less than $0.01, BAT
+stable/update decisions must agree, and every watcher anomaly must be covered.
+Resolve profile errors and the network coverage gaps first. Enabling schedules
+and performing this seven-day acceptance are separate operator actions.
 
 ## Read-only supervision
 

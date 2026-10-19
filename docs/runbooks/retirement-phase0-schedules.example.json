@@ -1,0 +1,86 @@
+[
+  {
+    "name": "oci-cost-sample-oci-a",
+    "script_id": "oci-cost-report-v1",
+    "script_sha256": "0cb9bc5384fce7c59c592db4b5db72810be30c020eb4cb11610da1a5f0df5380",
+    "args": {
+      "profile": "sample-oci-a"
+    },
+    "targets": [
+      "replace-with-sample-agent-id"
+    ],
+    "cron": "15 9 * * *",
+    "enabled": false,
+    "catch_up": false,
+    "expected_revision": 0,
+    "reason": "Phase 0 seven-day read-only comparison"
+  },
+  {
+    "name": "oci-cost-sample-oci-b",
+    "script_id": "oci-cost-report-v1",
+    "script_sha256": "0cb9bc5384fce7c59c592db4b5db72810be30c020eb4cb11610da1a5f0df5380",
+    "args": {
+      "profile": "sample-oci-b"
+    },
+    "targets": [
+      "replace-with-sample-agent-id"
+    ],
+    "cron": "20 9 * * *",
+    "enabled": false,
+    "catch_up": false,
+    "expected_revision": 0,
+    "reason": "Phase 0 seven-day read-only comparison"
+  },
+  {
+    "name": "network-watch",
+    "script_id": "network-watch-v1",
+    "script_sha256": "ef1f1a4ce3f0f623436cc6a68c6c0be56a3471597f6db3c68186a9ca084c5d90",
+    "args": {
+      "expected_peers": [
+        "sample-peer"
+      ],
+      "mode": "watch"
+    },
+    "targets": [
+      "replace-with-sample-agent-id"
+    ],
+    "cron": "17 */6 * * *",
+    "enabled": false,
+    "catch_up": false,
+    "expected_revision": 0,
+    "reason": "Phase 0 seven-day read-only comparison"
+  },
+  {
+    "name": "network-security-study",
+    "script_id": "network-watch-v1",
+    "script_sha256": "ef1f1a4ce3f0f623436cc6a68c6c0be56a3471597f6db3c68186a9ca084c5d90",
+    "args": {
+      "expected_peers": [
+        "sample-peer"
+      ],
+      "mode": "daily"
+    },
+    "targets": [
+      "replace-with-sample-agent-id"
+    ],
+    "cron": "45 3 * * *",
+    "enabled": false,
+    "catch_up": false,
+    "expected_revision": 0,
+    "reason": "Phase 0 seven-day read-only comparison"
+  },
+  {
+    "name": "bat-release-check",
+    "script_id": "bat-release-check-v1",
+    "script_sha256": "bc8ac19f948a4b107650e746d1e2826bb21741ee33296035bcf2505677735ffb",
+    "args": {},
+    "targets": [
+      "replace-with-sample-agent-id"
+    ],
+    "cron": "0 10 * * *",
+    "enabled": false,
+    "catch_up": false,
+    "expected_revision": 0,
+    "reason": "Phase 0 seven-day read-only comparison"
+  }
+]
