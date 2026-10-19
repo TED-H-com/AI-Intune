@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 350 個 HTTP operations（35 non-operator＋315 operator；156 條 operator JSON）、
+> 逐一對照 352 個 HTTP operations（35 non-operator＋317 operator；156 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 350-operation tally above (35 non-operator + 315 operator). The inventory/contract excludes these six public account operations and totals 344. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 352-operation tally above (35 non-operator + 317 operator). The inventory/contract excludes these six public account operations and totals 346. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -623,6 +623,29 @@ required connector tree digest, optional excerpts (default false), admin approva
 maximum/default timeout and 64 KiB output. Existing script/schedule preview and
 apply APIs are reused; see [BAT pilot](runbooks/BAT-SWEEP-PILOT.md).
 
+The human View page `GET /checks`, linked from Reports and machine detail,
+shows at most 25 machines per cursor page and the latest attempt for each of
+these three report scripts. Machine detail uses the same allowlisted projection.
+Badges distinguish no issues found, attention, urgent attention, failure, and no
+result. The report status is independent of the script process exit status.
+Only reviewed numeric/boolean metrics, validated BAT versions, fixed summaries
+and sentences mapped from typed reasons enter HTML; raw output, findings data,
+peer identities and account identifiers are excluded. Missing measurements stay
+unknown. Times are normalized UTC. Old network reports lack `online_peer_count`,
+`listen_baseline_available`, and `listen_ports_changed`; these remain unknown
+rather than being inferred. New report bytes and example hashes include these
+additive metrics.
+
+Human Operate `POST /checks/schedules/preview` accepts one `target` and previews
+all five embedded example bodies through the existing schedule upsert contract.
+It shares schedule admission, authorization and audit behavior. Each confirmation
+posts to the existing `/tenant/schedules/apply`, preserving revision, digest,
+idempotency, MFA and CSRF checks. Every helper body has `enabled:false`,
+`catch_up:false`, and UTC; no helper request enables a schedule. Confirmation is
+per schedule, so partial setup is possible and existing names are never overwritten.
+Example profiles and expected peers must be edited in Schedules before enabling.
+Both new HTML routes are service-token ineligible and responses are no-store.
+
 Three read-only entries support the OpenClaw retirement Phase 0 comparison.
 All run as a non-root agent user on Linux, use isolated system Python 3 with
 JSON stdin, have closed argument schemas and at most 64 KiB of redacted output.
@@ -1051,8 +1074,8 @@ for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
 Adds ten operator operations (six JSON, four HTML). The combined manifest totals
-350 including public accounts, 344 excluding them; 315 operator (156 JSON,
-160 HTML/plain), exact grants view=125 / operate=33 / admin=157.
+352 including public accounts, 346 excluding them; 317 operator (156 JSON,
+161 HTML/plain), exact grants view=126 / operate=34 / admin=157.
 
 | Method | Route | Admission |
 | --- | --- | --- |

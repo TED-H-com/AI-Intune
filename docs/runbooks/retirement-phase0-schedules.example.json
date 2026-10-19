@@ -34,7 +34,7 @@
   {
     "name": "network-watch",
     "script_id": "network-watch-v1",
-    "script_sha256": "b09f52fd69e53846d231104aa39dd59557b2864fd77554f426c2e3f1cb52fc0a",
+    "script_sha256": "3f6a22ab6fd65b9a399643a2ccccba66bbfcae6906d3588be03ac347e1f0cf6a",
     "args": {
       "expected_peers": [
         "sample-peer"
@@ -53,7 +53,7 @@
   {
     "name": "network-security-study",
     "script_id": "network-watch-v1",
-    "script_sha256": "b09f52fd69e53846d231104aa39dd59557b2864fd77554f426c2e3f1cb52fc0a",
+    "script_sha256": "3f6a22ab6fd65b9a399643a2ccccba66bbfcae6906d3588be03ac347e1f0cf6a",
     "args": {
       "expected_peers": [
         "sample-peer"
