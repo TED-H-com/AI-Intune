@@ -45,6 +45,7 @@ import (
 var version = "dev"
 
 type config struct {
+	ProxyURL                 string `json:"proxy_url,omitempty"`
 	HubURL                   string `json:"hub_url"`
 	MachineID                string `json:"machine_id"`
 	AgentToken               string `json:"agent_token"`
@@ -370,6 +371,10 @@ func runVerify(args []string) {
 	if err != nil {
 		log.Fatalf("failed to read config: %v", err)
 	}
+	if err := configureHTTPClient(httpClient, cfg.ProxyURL); err != nil {
+		log.Fatal(err)
+	}
+
 	if cfg.MachineID == "" {
 		log.Fatal("config missing machine_id")
 	}
@@ -454,6 +459,10 @@ func runAgent() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("cannot read config (has `clawctl-agent enroll` been run?): %v", err)
+	}
+
+	if err := configureHTTPClient(httpClient, cfg.ProxyURL); err != nil {
+		log.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -141,6 +141,23 @@ for text in ('function Protect-JoinInstallerOutput', 'function Invoke-JoinInstal
 capture = s[s.index('function Invoke-JoinInstaller'):s.index('function Read-JoinBlock')]
 assert capture.index('Protect-JoinInstallerOutput ([string]$_)') < capture.index('Add-Content')
 assert 'Write-Host' not in capture and '[Console]' not in capture.split('$engine =', 1)[1]
+assert "[string]$Proxy = ''" in s
+assert 'if ($Proxy) { Set-JoinProxyConfig' in s
+helper = s[s.index('function Set-JoinProxyConfig'):s.index('function Write-JoinProgress')]
+assert 'if (-not $Proxy) { return }' in helper
+assert '-NotePropertyName proxy_url -NotePropertyValue $Proxy' in helper
+assert 'Text.UTF8Encoding($false)' in helper and 'Set-JoinPrivate $Path $false' in helper
+assert s.index('Invoke-JoinInstaller (Join-Path $stage') < s.index('if ($Proxy) { Set-JoinProxyConfig')
+assert '$env:HTTP_PROXY = $Proxy' in s and '$env:HTTPS_PROXY = $Proxy' in s
+assert '$proxyOptions.Proxy = $Proxy' in s
+assert s.count('@proxyOptions') == 3
+import xml.etree.ElementTree as ET
+task = ET.fromstring((root/'ops/clawctl-agent.task.xml').read_text())
+ns = {'t': 'http://schemas.microsoft.com/windows/2004/02/mit/task'}
+assert task.find('t:Settings/t:Hidden', ns).text == 'true'
+assert task.find('t:Actions/t:Exec/t:Command', ns).text == '@@CLAWCTL_AGENT_BIN@@'
+assert task.find('t:Actions/t:Exec/t:Arguments', ns) is None
+assert 'cmd.exe' not in (root/'ops/clawctl-agent.task.xml').read_text().lower()
 installer = (root/'ops/install-agent-windows.ps1').read_text()
 for text in ('jobs_enabled', '--monitor-only', 'Register-ScheduledTask', 'enroll --hub $Hub --token-file $TokenFile'):
     assert text in installer, text
