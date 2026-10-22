@@ -45,6 +45,7 @@ import (
 var version = "dev"
 
 type config struct {
+	ProxyURL                 string `json:"proxy_url,omitempty"`
 	HubURL                   string `json:"hub_url"`
 	MachineID                string `json:"machine_id"`
 	AgentToken               string `json:"agent_token"`
@@ -102,33 +103,53 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
 	log.SetPrefix("clawctl-agent: ")
 
+	args, console := consoleArgs(os.Args[1:])
+	action := dispatch(args)
+	if err := setupPlatformLogging(action == actAgent, console); err != nil {
+		log.Fatalf("initialize logging: %v", err)
+	}
+	if runtime.GOOS == "windows" && action == actAgent {
+		defer func() {
+			if logRecoveredPanic(recover()) {
+				os.Exit(2)
+			}
+		}()
+	}
+
 	// ⚠⚠ 這裡刻意沒有 default: runAgent()。每一條路都要指名 ——
 	// 「掉下去就跑 daemon」正是 unknownArgError 記的那個六小時故障。
-	switch dispatch(os.Args[1:]) {
+	switch action {
 	case actSecretsPull:
-		runSecretsPull(os.Args[2:])
+		runSecretsPull(args[1:])
 	case actAgent:
 		runAgent()
 	case actEnroll:
-		runEnroll(os.Args[2:])
+		runEnroll(args[1:])
 	case actProbe:
-		runProbeOnce(os.Args[2:])
+		runProbeOnce(args[1:])
 	case actVerify:
-		runVerify(os.Args[2:])
+		runVerify(args[1:])
 	case actVerifier:
-		runVerifier(os.Args[2:])
+		runVerifier(args[1:])
+	case actLogPath:
+		p, err := defaultAgentLogPath()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(p)
 	case actVersion:
 		fmt.Println(version)
 	case actHelp:
 		fmt.Print(usage)
 	default:
-		log.Fatal(unknownArgError(os.Args[1]))
+		log.Fatal(unknownArgError(args[0]))
 	}
 }
 
 // dispatch 認得的動作。⚠ actUnknown 不是一個「大概是 daemon」的預設值，
 // 它是一個必須讓程式停下來的答案。
 const (
+	actLogPath     = "log-path"
 	actAgent       = "agent"
 	actEnroll      = "enroll"
 	actProbe       = "probe"
@@ -153,6 +174,8 @@ func dispatch(args []string) string {
 		return actAgent // 沒有參數才是 daemon —— 那是 systemd 用的那一條
 	}
 	switch args[0] {
+	case "log-path":
+		return actLogPath
 	case "secrets-pull":
 		return actSecretsPull
 	case "enroll":
@@ -182,6 +205,11 @@ Usage:
       --token-file T --targets F            Run as standalone verifier to verify jobs assigned by Hub
   clawctl-agent secrets-pull --config F --ref R --output F  Pull a configured secret to a private file
   clawctl-agent version                     Print version
+  clawctl-agent log-path                    Print absolute default log file path
+  clawctl-agent --console [command]         Also log to stderr; attach parent console on Windows
+
+Windows daemon logs: %LOCALAPPDATA%\clawctl\logs\agent.log (5 MiB, 5 backups).
+Runtime stderr and crash traces: agent-crash.log beside agent.log.
 `
 
 // unknownArgError 是「認不得的第一個參數」。
@@ -370,6 +398,10 @@ func runVerify(args []string) {
 	if err != nil {
 		log.Fatalf("failed to read config: %v", err)
 	}
+	if err := configureHTTPClient(httpClient, cfg.ProxyURL); err != nil {
+		log.Fatal(err)
+	}
+
 	if cfg.MachineID == "" {
 		log.Fatal("config missing machine_id")
 	}
@@ -454,6 +486,10 @@ func runAgent() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("cannot read config (has `clawctl-agent enroll` been run?): %v", err)
+	}
+
+	if err := configureHTTPClient(httpClient, cfg.ProxyURL); err != nil {
+		log.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -9,10 +9,24 @@ $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRo
 if ($parseErrors.Count -ne 0) { throw 'join.ps1 has PowerShell parse errors.' }
 $null = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\install-agent-windows.ps1'), [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw 'Windows installer has PowerShell parse errors.' }
-foreach ($name in @('Read-JoinBlock', 'Expand-JoinBundle', 'Protect-JoinInstallerOutput', 'Invoke-JoinInstaller')) {
+foreach ($name in @('Set-JoinProxyConfig', 'Read-JoinBlock', 'Expand-JoinBundle', 'Protect-JoinInstallerOutput', 'Invoke-JoinInstaller')) {
   $function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name}, $true)
   Invoke-Expression $function.Extent.Text
 }
+# Stub Windows ACL/reparse operations while exercising config serialization.
+function Assert-NoReparsePoint([string]$Path) { }
+$script:privateCalls = 0
+function Set-JoinPrivate([string]$Path, [bool]$Directory) { $script:privateCalls++ }
+$configPath = Join-Path $Fixtures 'agent.json'
+$original = '{"agent_token":"fixture-token","jobs_enabled":false,"unknown":{"value":1}}'
+[IO.File]::WriteAllText($configPath, $original)
+Set-JoinProxyConfig $configPath ''
+if ([IO.File]::ReadAllText($configPath) -cne $original -or $script:privateCalls -ne 0) { throw 'No-proxy config was modified.' }
+Set-JoinProxyConfig $configPath 'http://proxy.example:8080'
+$bytes = [IO.File]::ReadAllBytes($configPath)
+if ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { throw 'Config has a UTF-8 BOM.' }
+$config = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
+if ($config.proxy_url -ne 'http://proxy.example:8080' -or $config.agent_token -ne 'fixture-token' -or $config.jobs_enabled -ne $false -or $config.unknown.value -ne 1 -or $script:privateCalls -ne 2) { throw 'Proxy config did not preserve fields and private ACL calls.' }
 foreach ($mode in @('valid', 'traversal', 'backslash', 'absolute', 'symlink', 'hardlink', 'duplicate', 'missing', 'truncated')) {
   $destination = Join-Path $Fixtures $mode
   [void][IO.Directory]::CreateDirectory($destination)

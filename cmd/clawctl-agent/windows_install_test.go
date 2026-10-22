@@ -126,3 +126,25 @@ func TestLinuxInstallerNamesAWindowsInstallerThatExists(t *testing.T) {
 		t.Fatalf("Linux 安裝腳本指出的 %s 不是存在的一般檔", windowsPath)
 	}
 }
+
+func TestWindowsScheduledTaskHiddenDirectExec(t *testing.T) {
+	task := readOpsFile(t, "clawctl-agent.task.xml")
+	var parsed struct {
+		Settings struct{ Hidden bool }
+		Actions  struct {
+			Exec struct {
+				Command   string
+				Arguments string
+			}
+		}
+	}
+	if err := xml.Unmarshal([]byte(task), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.Settings.Hidden {
+		t.Fatal("scheduled task must be hidden")
+	}
+	if parsed.Actions.Exec.Command != "@@CLAWCTL_AGENT_BIN@@" || parsed.Actions.Exec.Arguments != "" || strings.Contains(strings.ToLower(task), "cmd.exe") {
+		t.Fatal("scheduled task must launch agent directly without a wrapper")
+	}
+}

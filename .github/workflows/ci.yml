@@ -56,7 +56,9 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           for target in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-            GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./cmd/clawctl-agent
+            flags=()
+            case "$target" in windows/*) flags=(-ldflags=-H=windowsgui) ;; esac
+            GOOS="${target%/*}" GOARCH="${target#*/}" go build "${flags[@]}" -o /dev/null ./cmd/clawctl-agent
           done
 
   race:

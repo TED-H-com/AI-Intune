@@ -1,6 +1,7 @@
 package main
 
 import (
+	"debug/pe"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,11 +22,21 @@ func TestAgentStillCompilesForWindows(t *testing.T) {
 	for _, arch := range []string{"amd64", "arm64"} {
 		arch := arch
 		t.Run(arch, func(t *testing.T) {
-			cmd := exec.Command(goPath, "build", "-o", os.DevNull, ".")
+			binary := filepath.Join(t.TempDir(), "agent.exe")
+			cmd := exec.Command(goPath, "build", "-ldflags=-H=windowsgui", "-o", binary, ".")
 			cmd.Env = append(os.Environ(), "GOOS=windows", "GOARCH="+arch, "CGO_ENABLED=0")
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("無法為 windows/%s 編譯 clawctl-agent。編譯器輸出：\n%s", arch, output)
+			}
+			f, err := pe.Open(binary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			h, ok := f.OptionalHeader.(*pe.OptionalHeader64)
+			if !ok || h.Subsystem != 2 {
+				t.Fatalf("expected Windows GUI subsystem, got %#v", f.OptionalHeader)
 			}
 		})
 	}

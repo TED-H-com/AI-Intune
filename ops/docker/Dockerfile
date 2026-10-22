@@ -94,7 +94,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath \
 
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=windows GOARCH="$arch" go build -buildvcs=false -trimpath \
-    -ldflags "$ldflags" -o "/src/build/clawctl-agent-windows-$arch" ./cmd/clawctl-agent
+    -ldflags "$ldflags -H=windowsgui" -o "/src/build/clawctl-agent-windows-$arch" ./cmd/clawctl-agent
 done
 
 /src/ops/build-agent-bundles.sh "$version" linux
