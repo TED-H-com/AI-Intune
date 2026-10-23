@@ -644,7 +644,11 @@ protects the last active admin. User mutations are audit logged without password
 
 Management requires a human admin session and MFA. Creation requires at least one exact registered method/route-pattern entry, each explicitly eligible; malformed or empty lists are rejected at creation and authentication. Route eligibility is checked on every bearer request independently of its allowlist. Tokens support `view`, `operate`, and `operator-admin` scopes, expiry and immediate revocation checks.
 
-The boundary receives the Hub's configured `clientip.Resolver`: CIDRs, failure limiter keys, principal source and audit source use the resolved client address. `Fly-Client-IP` or `X-Forwarded-For` is trusted only when the connection peer matches `CLAWCTL_TRUSTED_PROXIES`, with `CLAWCTL_CLIENT_IP_HEADER` selecting the configured header. Untrusted peers cannot supply their own client identity; IPv6 limiter keys retain the shared /64 grouping.
+The boundary receives the Hub's configured `clientip.Resolver`: CIDRs, failure limiter keys, principal source and audit source use the resolved client address. `Fly-Client-IP`, `CF-Connecting-IP`, or `X-Forwarded-For` (selected case-insensitively) is trusted only when the connection peer matches `CLAWCTL_TRUSTED_PROXIES`, with `CLAWCTL_CLIENT_IP_HEADER` selecting the configured header. Untrusted peers cannot supply their own client identity; IPv6 limiter keys retain the shared /64 grouping.
+
+### Cloudflare Tunnel client IP
+
+When `cloudflared` runs on the host and Hub uses Docker bridge networking, the peer is the Docker bridge gateway (for example, `172.17.0.1`). Set `CLAWCTL_CLIENT_IP_HEADER=CF-Connecting-IP` and `CLAWCTL_TRUSTED_PROXIES=<gateway>/32` using the actual gateway, such as `172.17.0.1/32`. Never trust broad ranges. Only a trusted peer's single valid, unscoped IP value is honoured; invalid or multiple values fall back to the peer. See [Cloudflare Tunnel configuration](AUTOPILOT.md#cloudflare-tunnel).
 
 Service request audit is written once after CSRF and downstream handling complete. The first final HTTP status determines success (`<400`); implicit responses are 200 and informational headers do not determine the outcome. Denied requests use the bounded operator-denial ledger. Audit write failures after a response are logged without rewriting the completed response.
 
