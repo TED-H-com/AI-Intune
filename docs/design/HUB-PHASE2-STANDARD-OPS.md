@@ -70,17 +70,18 @@ the product. It is not a requirement of the product.
 
 ## 2. Baseline and references
 
-The Phase 1 design, `docs/design/HUB-AS-HANDS.md`, belongs to draft PR #45,
-branch `docs/hub-as-hands`, not main. Its origin ref was unavailable in this
-checkout; this draft uses the supplied summary and inspected implementation.
+The [Phase 1 architecture and migration plan](HUB-AS-HANDS.md) records the original
+inventory and the implemented foundation, reconciled on 2026-10-23. Deployment
+state requires fresh host evidence; the original inventory is historical.
 
 Phase 1 delivered:
 
 - `script_v1`: hash-pinned catalog scripts, read/write modes, `execution_mode`
   pinned in specs and schedules, bounded and redacted execution evidence.
 - Scheduler: cron slots, overlap prevention, hash/mode-change pause.
-- Scoped service tokens: view/operate, exact route allowlists, read-only scripts
-  for tokens, self-rotation with overlap and revocable chains.
+- Scoped service tokens: view/operate/operator-admin, exact route allowlists,
+  read-only ad hoc scripts and explicitly delegated routine administration.
+  Credential creation and replacement require a human admin; tokens cannot rotate themselves.
 - Supervision: `jobs_summary`, `approvals_summary`, `hub_status`.
 - BAT sweep report-only pilot. Its catalog mode is **write** because its execution
   behavior is write-equivalent; “report-only” alone does not determine permissions.
@@ -147,10 +148,12 @@ Execution success and the Hub's post-action health verdict remain separate facts
 ### 3.2 Scopes, approvals and optional agent delegation
 
 Human `view`, `operate`, `admin` are exact grants, without implied inheritance.
-Service tokens remain view/operate plus exact method/route-pattern admission.
+Service tokens use view/operate/operator-admin plus exact method/route-pattern admission.
 Generic token `script_run_preview`/`script_run_apply` remains **read scripts only**.
-Schedule create/update/enable/run-now remains human-only; current schedule reads
-are also human-only unless a separate route-policy change is reviewed.
+Schedule reads and create/update/enable/run-now accept explicitly allowlisted
+operator-admin tokens, including approved write schedules. View/operate tokens
+cannot manage schedules. Dedicated disk approvals remain human-admin-only; see
+[the current token contract](../OPERATOR-AGENT.md#delegating-routine-administration).
 
 A safe cleanup schedule is an admin-approved standing authorization with pinned
 policy and script bytes. The scheduler creates its write jobs.
@@ -549,17 +552,16 @@ no-store, matching the initiating human or the admin's explicit recovery authori
 It returns URL/code/expiry from memory, never from evidence; service tokens are
 ineligible. Metadata reports run `17 */6 * * *`; CLI hygiene runs `20 7 * * *`, with
 offsets. Check-in probes stay primary; Hub evaluates warnings each minute. Never
-schedule login. Optional agent self-rotation uses existing GET
-`/v1/operator/service-tokens/self`, POST `/v1/operator/service-tokens/rotate`.
-Preserve 10-minute predecessor overlap, chain deadlines, rate limits and atomic
-private-file replacement; warn before a chain deadline needs the admin's reissuance.
+schedule login. Optional agents may read their credential status but cannot rotate
+credentials. Warn before expiry; a human admin creates a replacement, installs it
+in a private token file and revokes the old token. Do not schedule unattended rotation.
 
 ### 5.4 Supervision, tests, migration and rollback
 
 Track completion latency, timeout/cancel rate, stale observations, provider auth
-failures, renewal reminders and rotation failures, without challenge contents. Warn
+failures, renewal reminders and credential replacement failures, without challenge contents. Warn
 after 10m awaiting user, two failed starts or report age >24h; urgent for expired
-required credentials or failed optional-agent token rotation within 24h of expiry.
+required credentials or an optional-agent token within 24h of expiry without a replacement.
 Three failed starts per provider/machine/hour blocks more starts pending admin
 review. An optional agent (for example Hermes) triages/reminds; a human operator (or
 a Grok Bot acting for one) helps private host setup only when explicitly asked and
@@ -841,6 +843,6 @@ Remaining questions:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Disk safe | `disk-safe-preview-v2`, `disk-safe-clean-v2` | Daily root/user | Generic scripts/schedules, `disk_ops_status` | View; admin setup | Admin standing policy after canary | Review pressure/skips | Investigate exceptional locks with the admin |
 | Disk deep | `disk-deep-report-v1`, `disk-approved-quarantine-v1`, `disk-approved-delete-v1`, `disk-quarantine-expire-v1`, `disk-quarantine-restore-v1` | Weekly/>80% report; daily approved TTL | `disk_report_get`, action preview/decide, restore preview/apply | Operate only for explicit low-risk delegation; otherwise admin | Exact digest; the admin outside policy | Rank/recommend only (delegation off, §9) | Supervised recovery/process investigation |
-| AI login | `ai-credential-report-v1`, `ai-cli-check-v1`, `ai-login-start-v1`, `ai-login-cancel-v1` | Six-hour metadata/daily hygiene; no login schedule | Credentials status; login start/status/cancel | View; human admin mutations/reveal | The admin starts/completes provider auth | Remind/diagnose; rotate own service token | Private setup assistance when asked |
+| AI login | `ai-credential-report-v1`, `ai-cli-check-v1`, `ai-login-start-v1`, `ai-login-cancel-v1` | Six-hour metadata/daily hygiene; no login schedule | Credentials status; login start/status/cancel | View; human admin mutations/reveal | The admin starts/completes provider auth | Remind/diagnose; human admin replaces service token | Private setup assistance when asked |
 | Managed apps | Inventory/plan/apply/health/rollback/remove scripts | Daily inventory/15m health | Status, desired, rollout, continue, rollback, decisions | View; admin writes | Admin adoption/exact rollout/continuation | Explain drift and gate evidence | Approved repair/recovery |
 | Agent upgrade | `agent-self-upgrade-v1` | Approved windows only | App rollout/status/rollback | Admin rollout; machine-bound fetch | Admin helper bootstrap/target approval | Observe check-in/rollback | Supervised SSH recovery; the admin handles sudo |

@@ -1,6 +1,9 @@
 # Hub as hands: moving bot procedures onto the Hub
 
-Status: **DRAFT for review.** No code in this PR.
+Status: **Architecture and migration plan**, reconciled with public main `cee5908` on 2026-10-23.
+This document records the intended operating model and the implemented foundation. Remaining
+migration steps require their own evidence; merging this document does not run jobs or change host policy.
+The host inventory below is a historical observation from 2026-10-10, not a current fleet check.
 
 ## Opening principle: three layers, two tools
 
@@ -9,7 +12,7 @@ Status: **DRAFT for review.** No code in this PR.
 1. **Intune (the Fly Hub) is the SaaS.** Anything that can be configured inside it is configured there first,
    including scheduling. Fixed jobs (daily check, disk-clean audit, BAT sweep, backups, restore drill) are Hub
    schedules running catalog scripts, with a scope, an audit record, and approval for dangerous operations.
-   The Hub is the only executor.
+   The Hub authorizes and schedules execution; enrolled agents execute the catalog jobs on their hosts.
 2. **Hermes is the AI assistant agent** (on the always-on cloud VM C4). It runs cron and judgment jobs **through the
    Hub MCP** and takes direction from the Grok Bots. It does not SSH into hosts or run scripts itself.
 3. **Grok Bots are treated as people** (operators: the box bot and the per-host bots). They direct Hermes through the
@@ -26,14 +29,15 @@ Status: **DRAFT for review.** No code in this PR.
   scheduling or audit, the Hub schedules it and calls bat-agent-connector. The development logic stays in
   bat-agent-connector. BAT itself is not one of the two tools.
 
-C4 is the fallback executor when Fly is down (§6). Grok Bots supervise both layers (§5).
+A read-only fallback executor on C4 remains proposed (§6); it is not shipped by this repository. Grok Bots supervise both layers (§5).
 
 Host labels used here: **W1** GPU workstation, **W2** corporate-network workstation, **C1–C4** cloud VMs (C3 = production
 web app, C4 = agent-runtime host). The real-name mapping lives in the private overlay, never in this repo.
 
-## 1. Inventory: what runs where today
+## 1. Historical inventory: 2026-10-10
 
-The box and all six hosts were checked read-only on 2026-10-10.
+The original inventory records read-only checks of the box and six hosts on 2026-10-10.
+Recheck each host before retiring or enabling any routine; code availability is not deployment evidence.
 
 ### 1a. Operator box: Grok Bot last-resort access (kept)
 The box state (ssh aliases, tunnels, connector installs, credentials) is **kept and maintained**. It is the
@@ -62,7 +66,7 @@ rebuildable from a repo checklist (private overlay).
 | task-events-sweep | every 30m | disabled | `task-events-sweep.py` (safety net for milestones the task service never got acknowledged) |
 | (main profile) fw-dispatch-watch | gate script | | free-workshop work-order queue |
 
-So today **the BAT sweep and the fleet health check are not running anywhere**.
+At that inspection, **the BAT sweep and fleet health check were not running anywhere**. Their current host state has not been reverified here.
 
 ### 1c. Per-host timers and services (outside the distros' own)
 | Host | Fleet maintenance | Host-specific jobs (stay local; reported as evidence only) |
@@ -75,7 +79,7 @@ So today **the BAT sweep and the fleet health check are not running anywhere**.
 | C4 | — | podman-auto-update, adb keepalive |
 | all | `clawctl-agent.service` (Hub agent), `clawctl-hermes.service`, `openclaw-gateway.service` | |
 
-The `fleet-daily-check` timer (merged in #40) is not installed on any host yet.
+The `fleet-daily-check` timer (merged in #40) was not installed on any inspected host at that time.
 
 ### 1d. Per-bot routines
 Each per-host chat bot (W1, W2, C1–C4) has its own scheduled routines (daily check, reminders). Those routine
@@ -84,13 +88,17 @@ definitions are not visible from the box. **Action:** export each bot's routine 
 ## 2. Mapping: target tool, scheduler, scope, approval
 
 **Layer** is who owns the procedure first; escalation goes down the layers only on failure. **Tool**: Intune = operations, bat-agent-connector = development.
-Scopes follow the Hub's existing grant levels: `view` < `operate` < `admin`. **Approval** means the call returns a
-preview digest, and a human confirms in the Hub UI (or Telegram link) before the apply call runs. The existing
-`*_preview` / `*_apply` + `preview_digest` pattern is reused.
+Human scopes `view`, `operate`, and `admin` are exact grants, not an inheritance ladder.
+Service tokens have `view`, `operate`, or `operator-admin` and an exact eligible-route allowlist.
+[Operator authentication](../OPERATOR-AUTH.md) and [token admission](../OPERATOR-AGENT.md#service-token-client)
+define current authority. **Approval** below is a proposed requirement for the named operation;
+preview/apply digest binding does not by itself create a human approval ledger entry.
+Chat links open the Hub; notification delivery is not approval. Tool names in this target mapping
+are proposals unless the implementation table in §3 identifies an existing entry.
 
-| Procedure | Hub tool / script | Scheduler | Scope | Approval |
-|---|---|---|---|---|
-| BAT hourly sweep, report only | bat-agent-connector | 1 SaaS (Hub schedule → bat-agent-connector) | `bat_sweep_preview` (script `bat-sweep`, read mode) | Hub `17 * * * *` | view | no |
+| Procedure | Tool | Layer | Hub tool / script | Scheduler | Scope | Approval |
+|---|---|---|---|---|---|---|
+| BAT hourly sweep, report only | bat-agent-connector | 1 SaaS (Hub schedule → bat-agent-connector) | `bat_sweep_preview` (script `bat-sweep`, read mode) | Hub `17 * * * *` | admin-approved write schedule | human catalog/schedule approval |
 | BAT: approve non-destructive permission prompts | bat-agent-connector | 1 SaaS (policy) / 2 Hermes (exceptions) | `bat_permission_approve` (per toolUseId, policy-checked) | Hub (sweep) | operate | no for the allowlist; **yes** for anything else |
 | BAT: quota failover, session cleanup, idle nudge | bat-agent-connector | 1 SaaS / 2 Hermes | `bat_session_failover`, `bat_session_cleanup`, `bat_session_nudge` | Hub (sweep); agent runtime ad hoc | operate | no (CLEAN_ONLY/KEEP); **yes** for MERGE_AND_CLEAN, ESCALATE |
 | Fleet health daily (reachability, disk, failed units, backups, cert expiry, error counts) | Intune | 1 SaaS | `fleet_daily_check` → existing `fleet-daily-check` summaries collected by the agent | Hub `23 7 * * *` | view | no |
@@ -116,39 +124,37 @@ cleanup, idle nudges), the task-events safety sweep, and free-workshop dispatch.
 are host maintenance, so Intune audits them as evidence. **Intune (operations):** everything else in the table.
 For these the Hub only schedules and audits; the actions are bat-agent-connector calls (its MCP: `bat-connector-mcp` / `bat-agent-connector-mcp`).
 
-## 3. What the Hub lacks
+## 3. Implemented foundation and remaining work
 
-1. **Script runner.** Today the Hub runs no scripts on hosts. Agents only claim jobs with a fixed executor (`device_sync_v1`).
-   Proposed: a new executor `script_v1`.
-   - It runs only scripts from a Hub-published, content-hashed **catalog** (scripts in this repo, pinned by commit).
-     Arguments are validated against a per-script JSON schema.
-   - It runs as the agent user, with root only for steps marked `root` in the catalog and a sudoers rule limited to those exact paths.
-   - Output is capped, redacted with the `fleet_redact` patterns, stored as job evidence, and limited by a timeout and a lease.
-2. **Scheduler.** An in-process cron table in the Hub DB: job, cron expression, target selector, catalog entry, enabled flag.
-   - It survives restarts, does not catch up on missed runs by default, and uses a single-flight lock per job.
-   - Every run is a normal Job, so it appears in `/jobs` and the audit log.
-3. **Scoped MCP token for the agent runtime.** The public Hub's operator API is session plus MFA only. Add **service principals**:
-   - The token is hashed at rest, scoped (`view` / `operate`, never `admin` without an approval), can be bound to a tool
-     allowlist and a source IP or tailnet node, expires, and can be rotated and revoked from the UI.
-   - Over HTTPS, `clawctl-operator mcp` takes `--token-file`.
-   - Approval-gated tools return a pending approval that only a human session can confirm.
-4. **Secrets.** Fly secrets hold the Hub's own keys (R2, Telegram, Fly API for snapshots). Per-host script secrets are not sent
-   from the Hub. They stay on the host in root-owned 0600 files referenced by name in the catalog.
-   - The Hub DB holds password hashes and TOTP secrets, so the R2 replica is credential material. Keep it on its own key.
-5. **Audit and supervision feeds.** Extend the audit log with principal, tool, arguments digest, approval ID, job ID, exit status, and output digest.
-   Add an export and a Telegram digest for every approval-gated action. Add the read-only summary tools that §5 relies on (`jobs_summary`, `approvals_summary`, `hub_status`, `hermes_decisions_list`) and the Hermes decision-log write path.
-6. **Notifications.** Route sweep and check digests through the Hub notifier (Telegram today; add Discord webhooks per channel).
-7. **Fallback runner on C4.** A small `hub-fallback` mode: the same catalog and scheduler, read-only tools by default,
-   enabled only when the dead-man check says the Hub is down.
+These are repository facts at the baseline above, not claims about what is enabled on a host.
+
+| Capability | Implemented contract and source | Remaining work |
+|---|---|---|
+| Catalog executor | `internal/scriptcatalog/catalog.go` embeds hash-pinned scripts, closed argument schemas, OS, mode, timeout and output caps. `run_linux.go` refuses root execution and arbitrary commands; output is bounded and redacted. | New procedures need reviewed entries and complete UI/API/evidence paths. A `root` catalog flag is not a supported privilege mechanism. |
+| Durable scheduler | `internal/store/schedules.go` persists schedules and slots, prevents overlap, and pauses on catalog hash/mode changes. Web and operator clients support preview/apply, enable and run now. | Refresh fleet targets and approve each migration schedule. Do not infer a live schedule from its implementation. |
+| Service tokens | Human admins create/revoke tokens. Exact route allowlists, optional source CIDRs and expiry apply. `operate` can run read-class scripts; `operator-admin` additionally permits listed routine operations, including approved schedules and deployments. | Choose the smallest allowlist per automation. Tokens cannot create/rotate credentials, manage users/MFA, delete machines/tenants or approve disk actions. Unknown routes stay human-only. |
+| BAT report pilot | `bat-sweep-report-v1` pins the connector tree. Its catalog mode is **write** because execution is write-equivalent, even in report-only mode. Ad hoc execution is human-admin-only; an explicitly delegated operator-admin token can manage an already approved write schedule. | Verify report parity and audit on the selected hosts before rollout. Permission approvals, failover and cleanup in §2 are separate development-tool work. |
+| Fleet reports | Read-class `fleet-probe-v1`, `network-watch-v1`, `oci-cost-report-v1` and `bat-release-check-v1` exist. Scheduled-check results are shown in the Hub. | Install/verify the required local collectors and replace each old routine only after evidence matches. |
+| Supervision | MCP `jobs_summary`, `approvals_summary`, `hub_status` and corresponding JSON APIs exist. Missing metrics are null/typed unavailable; bounded scans disclose truncation. | Hermes decision-log ingestion and `hermes_decisions_list`/`hermes_status` remain proposed. Do not fabricate cadence, pending-approval or replica-lag metrics. |
+| Disk operations | Dedicated policy, report, approval, manifest, execution-grant and quarantine paths exist; see [disk maintenance](../MAINTENANCE-DISK-CLEAN.md). | Fleet activation and drills follow the private deployment decisions. These signed helpers do not grant generic root scripts. |
+| Notifications and fallback | Existing notifier and external dead-man procedures remain usable. | A general Discord digest integration and `hub-fallback` executor require separate implementation and drills. |
+
+Secrets remain deployment configuration: host secrets stay in restricted local files; Hub secrets
+stay in its secret store. Never place credentials in script args, evidence or public inventory.
+Restore drills use a private, unique **disk-backed** directory and remove it on completion;
+no test databases or fixtures go in tmpfs. The DB and replicas remain sensitive credential material.
+
+See [Phase 2](HUB-PHASE2-STANDARD-OPS.md) for later workflows. Its proposed names are not a substitute
+for the current route manifest and runtime authorization checks.
 
 ## 4. Migration order
 
 0. **Freeze the inventory.** Export each chat bot's routines (§1d). Move `fleet-health.py` and the box daily-check logic into this repo.
    For each box-held credential the Hub or Hermes also needs, add a copy as a Fly secret or host file (the box keeps its own).
 1. **Pilot: BAT sweep.**
-   - Port `bat_hourly_sweep.py` into the catalog. Ship `script_v1`, the scheduler, and a service token (view/operate).
+   - Use the existing `bat-sweep-report-v1` catalog entry and durable scheduler. A human approves its write-class catalog/schedule; any schedule delegation requires exact `operator-admin` routes. A view/operate token cannot run it.
    - Run it in report-only mode from the Hub on W1 and W2 for one week, next to a manual comparison.
-   - Then enable the allowlisted auto-approvals. Anything outside the allowlist goes through Hub approval.
+   - Keep the pilot report-only. Development actions need their own reviewed bat-agent-connector workflow and approval rules before being enabled.
    - Success criteria: the same digest as the old script, zero unapproved destructive actions, and every action visible in the audit log.
 2. **Fleet daily check.** Install `fleet-daily-check` timers on all hosts (#40), then add the Hub `fleet_daily_check` job.
    Retire the box `*-daily-state.json` routines and the `fleet-health-daily` cron.
@@ -156,7 +162,7 @@ For these the Hub only schedules and audits; the actions are bat-agent-connector
 4. **Hermes as the only judgment client.** Point Hermes (C4) at the Hub MCP with its service token.
    Grok Bots switch to directing Hermes through the Hub MCP, and go direct only on failure (record each fallback as a gap). The box `~/.hermes` copy may stay for last-resort use, with its cron jobs disabled.
 5. **Admin tools behind approval.** Timers install, AI-CLI install, net fixes, bootstrap, migration, tool removal, Hub upgrade.
-6. **Fallback.** Enable `hub-fallback` on C4, run a drill (stop the Fly machine in a window, confirm the C4 takeover is read-only), and document it.
+6. **Fallback.** Implement and review `hub-fallback` first; then enable it on C4 and run a drill (stop the Fly machine in a window, confirm the C4 takeover is read-only), and document it.
 7. **Box as last-resort access.** Keep the box ssh config, tunnels, connector, and credentials maintained for the Grok Bot layer. Write the rebuild checklist into the private overlay. Confirm no scheduled job or only-copy data remains on the box (scripts and runbooks mirrored in the Hub or repo).
 
 ## 5. Supervision: Grok Bots watch the layers below them
@@ -168,13 +174,14 @@ dashboard. They investigate in person only when a layer **fails or degrades**. D
 ### Metrics and where they are read
 | Layer | Metric (rolling 24 h and 7 d) | Where it is read |
 |---|---|---|
-| Hub jobs | success / failure / timeout count per job and per host; last success time per scheduled job | Hub MCP `jobs_summary` (new; read-only, `view`) and the `/jobs` page |
+| Hub jobs | success / failure / timeout count per job and per host; last success time per scheduled job | Hub MCP `jobs_summary` (existing; read-only, `view`; unavailable metrics stay null) and the `/jobs` page |
 | Hub jobs | run latency p50 / p95 vs that job's own 7-day baseline; schedule lag (start time minus scheduled time) | `jobs_summary` |
-| Hub approvals | requests, approved / denied / expired, time to decision | `approvals_summary` (new; `view`) |
-| Hub itself | `/healthz`, Litestream replica lag, last backup snapshot, last restore drill result | `hub_status` (new; `view`); the external dead-man check on C2 |
-| Hermes | decisions taken, tool calls by tool, error rate, actions needing approval vs auto, escalations raised | **Hermes decision log**: one append-only record per decision (input digest, tools called, outcome, approval ID), written through the Hub so it lands in the audit log; read with `hermes_decisions_list` (new; `view`) |
-| Hermes | liveness: last heartbeat or run, cron jobs enabled vs expected | `hermes_status` via the Hub agent on C4 |
+| Hub approvals | requests, approved / denied / expired, time to decision | `approvals_summary` (existing; `view`; only observed metrics) |
+| Hub itself | `/healthz`, Litestream replica lag, last backup snapshot, last restore drill result | `hub_status` (existing; `view`; unavailable telemetry stays null); the external dead-man check on C2 |
+| Hermes | decisions taken, tool calls by tool, error rate, actions needing approval vs auto, escalations raised | **Hermes decision log**: one append-only record per decision (input digest, tools called, outcome, approval ID), written through the Hub so it lands in the audit log; read with `hermes_decisions_list` (proposed; `view`) |
+| Hermes | liveness: last heartbeat or run, cron jobs enabled vs expected | `hermes_status` (proposed) via the Hub agent on C4 |
 
+This is the target supervision routine; only metrics actually returned by the current API may trigger it.
 A Grok Bot reads these on a fixed routine (daily summary; hourly for the pilot week). The Hub posts the same
 summary to the Telegram/Discord digest, so a person sees what the bots see.
 
@@ -201,12 +208,12 @@ change would have handled it at layer 1 or 2. The note goes into the gap list fo
 
 | Risk | Mitigation |
 |---|---|
-| **Central point of control.** A compromised Hub or token can act on every host. | `admin` actions are never available to service tokens without human approval. Catalog scripts are hash-pinned, and there is no free-form command. Agents verify the catalog signature or hash. Per-host allowlists. Rate limits. Approval notices go to Telegram. Keep MFA on human logins. |
-| **Fly outage.** No scheduler and no tools. | The dead-man check on C2 detects it. `hub-fallback` on C4 runs read-only checks. Host timers (disk-clean, daily check) keep running locally because they never depended on the Hub. A restore from R2 to C4 is the documented rebuild path (restore drill: ~25 s for the DB). |
-| **Hub DB or backup leak.** It holds TOTP secrets, hashes, and tokens. | Separate R2 key, private bucket, restore only to tmpfs, no persistent DB copies on the box, a key rotation runbook. |
-| **Script runs as root on many hosts at once.** | Canary, then batches (reuse the rollout/canary model). Preview digests. Per-job single-flight. Timeouts. Root only for catalog steps marked `root`. |
-| **Agent runtime makes a bad judgment call.** | It holds view/operate only. Destructive tools need a human approval. Every call is audited. |
+| **Central point of control.** A compromised Hub or token can act on every host. | Use exact token route admission; routine `operator-admin` delegation does not permit credential, account or disk-approval actions. Catalog bytes are hash-pinned; no free-form command. Keep MFA on human logins and audit delegated actions. |
+| **Fly outage.** No scheduler and no tools. | The dead-man check on C2 detects it. `hub-fallback` is proposed and cannot be relied on until implemented and drilled. Host timers (disk-clean, daily check) keep running locally because they never depended on the Hub. A restore from R2 to C4 is the documented rebuild path. |
+| **Hub DB or backup leak.** It holds TOTP secrets, hashes, and tokens. | Separate R2 key, private bucket, restore to a private disk-backed scratch directory, remove drill copies on exit, a key rotation runbook. |
+| **Script runs as root on many hosts at once.** | Canary, then batches (reuse the rollout/canary model). Preview digests. Per-job single-flight. Timeouts. Generic catalog execution refuses root; privileged disk work uses its dedicated signed helpers. |
+| **Agent runtime makes a bad judgment call.** | Grant only required routes. Read-script access and routine operator-admin delegation have different limits; dedicated destructive approvals remain human-only. Every call is audited. |
 | **Network paths differ** (W2 corporate proxy, userspace-tailnet hosts). | The executor runs on the host through the existing agent link, so there is no SSH from the Hub. The proxy drop-in already ships with the agent installer. |
 | **Box drift:** last-resort access rots unused (expired Access tokens, stale aliases). | Periodic Grok Bot check of the box path (read-only ssh to each host); rebuild checklist in the private overlay. |
-| **Migration gap:** a procedure stops while it is moving. | Run old and new side by side (report-only) per step. The BAT sweep and the health check are already stopped today, so the pilot only adds coverage. |
+| **Migration gap:** a procedure stops while it is moving. | Run old and new side by side (report-only) per step. Recheck the historical stopped jobs before changing their owners; do not retire an active routine without replacement evidence. |
 | **Secrets drift between Fly secrets, host files, and the box.** | A single list in the private overlay of which secret lives where (Fly, host, box). Box copies are for last-resort access only; the Hub never depends on them. |
