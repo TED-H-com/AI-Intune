@@ -287,3 +287,32 @@ func TestIPv6LoginKeysConcurrent(t *testing.T) {
 		t.Fatal("full audit sources lost", got)
 	}
 }
+
+func TestHubPasswordPersistenceFailure(t *testing.T) {
+	fastAccountHashes(t)
+	s := newTestStore(t)
+	a, err := s.CreateFirstAdmin("admin", testAdminPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.VerifyPassword("admin", "wrong", "192.0.2.1"); !errors.Is(err, ErrAccountAuth) {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`CREATE TRIGGER reject_login_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	// A rejected password remains a rejection when best-effort persistence fails.
+	for _, user := range []string{"admin", "unknown"} {
+		if _, err := s.VerifyPassword(user, "wrong", "192.0.2.1"); !errors.Is(err, ErrAccountAuth) {
+			t.Fatalf("%s: %v", user, err)
+		}
+	}
+	// A correct password cannot succeed without committing its failure clear.
+	if _, err := s.VerifyPassword("admin", testAdminPassword, "192.0.2.1"); err == nil {
+		t.Fatal("success despite failed audit commit")
+	}
+	var failed int
+	if err := s.rdb.QueryRow(`SELECT failed_attempts FROM hub_login_failures WHERE account_id=? AND client_ip=?`, a.AccountID, "192.0.2.1").Scan(&failed); err != nil || failed != 1 {
+		t.Fatalf("failure clear/increment was not rolled back: %d, %v", failed, err)
+	}
+}

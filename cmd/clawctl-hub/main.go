@@ -478,7 +478,21 @@ func serve(argv []string) {
 	reportAt := fs.String("report-at", "08:00", "local time HH:MM to send daily report each day")
 	stamp := fs.String("report-stamp", os.Getenv("CLAWCTL_REPORT_STAMP"),
 		"write unix timestamp to this file after daily report delivery; read by external dead man's switch (see ops/deadman.sh)")
+	if raw := os.Getenv("CLAWCTL_HUB_ARGON_CONCURRENCY"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			log.Fatal("CLAWCTL_HUB_ARGON_CONCURRENCY must be a positive integer")
+		}
+		store.SetMaxConcurrentPasswordHashes(n)
+	}
 	def := store.DefaultRetention()
+	if raw := os.Getenv("CLAWCTL_KEEP_OBSERVATIONS"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatal("CLAWCTL_KEEP_OBSERVATIONS must be a duration")
+		}
+		def.Observations = d
+	}
 	keepObs := fs.Duration("keep-observations", def.Observations, "how long to keep observations")
 	keepCheckins := fs.Duration("keep-checkins", def.Checkins, "how long to keep check-ins")
 	keepOccupancy := fs.Duration("keep-occupancy", def.Occupancy, "how long to keep ticket occupancy records")
