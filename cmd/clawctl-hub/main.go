@@ -473,10 +473,10 @@ func serve(argv []string) {
 	growthWindow := fs.String("disk-growth-window-minutes", os.Getenv("CLAWCTL_DISK_GROWTH_WINDOW_MINUTES"), "disk growth window minutes (default 30)")
 	diskOpsV2Writes := fs.Bool("disk-ops-v2-writes", false, "enable human-admin disk policy changes and safe cleanup jobs; targets require disk_ops_v2")
 	authModeFlag := fs.String("auth-mode", os.Getenv("CLAWCTL_AUTH_MODE"), "operator auth mode: tailscale (default), local, or both")
-	addr := fs.String("listen", "127.0.0.1:8770", "listen address (literal Tailscale IP:port; reads $CLAWCTL_LISTEN when unset). Flag default 127.0.0.1:8770 is a fail-closed placeholder that Hub rejects. No production default port; 8787 is only a convention example in docs; grant dst, CLAWCTL_PUBLIC_URL, agent --hub, and tunnel origin must use the same port as this address")
+	addr := fs.String("listen", "127.0.0.1:8770", "listen address (literal Tailscale IP:port, required; reads $CLAWCTL_LISTEN when unset, and the loopback default is rejected); grant dst, CLAWCTL_PUBLIC_URL, agent --hub, and tunnel origin must use the same port as this address")
 	dbPath := fs.String("db", defaultDB(), "path to SQLite database")
 	hubHost := fs.String("hub-host", hostname(), "name of this host; used to detect whether Hub is running on a machine it manages")
-	notify := fs.String("notify-cmd", os.Getenv("CLAWCTL_NOTIFY_CMD"), "legacy command that receives the report on stdin; when set, built-in channels are not used")
+	notify := fs.String("notify-cmd", os.Getenv("CLAWCTL_NOTIFY_CMD"), "command that receives the report on stdin; when set, built-in channels are not used")
 	notifyEnv := fs.String("notify-env", os.Getenv("CLAWCTL_NOTIFY_ENV"), "path to the notify env file (Telegram/webhook secrets; never taken from flags or the process environment)")
 	reportAt := fs.String("report-at", "08:00", "local time HH:MM to send daily report each day")
 	stamp := fs.String("report-stamp", os.Getenv("CLAWCTL_REPORT_STAMP"),
