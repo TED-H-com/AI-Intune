@@ -750,7 +750,7 @@ func serve(argv []string) {
 
 	srv := &http.Server{
 		Addr:    *addr,
-		Handler: maintenanceMiddleware(upgradeMaintenanceMarker(*dbPath), handler),
+		Handler: loggingMiddleware(maintenanceMiddleware(upgradeMaintenanceMarker(*dbPath), handler)),
 		// ⚠ 這幾個 timeout 不是裝飾。一個卡住的連線會佔著 goroutine，
 		// 而 Hub 是單點 —— 它不能因為一台機器的網路很爛就變慢。
 		ReadHeaderTimeout: 10 * time.Second,
