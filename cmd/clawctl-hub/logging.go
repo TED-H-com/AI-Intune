@@ -25,12 +25,6 @@ func (w *loggingResponseWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
 }
-func (w *loggingResponseWriter) Write(data []byte) (int, error) {
-	if w.status == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	return w.ResponseWriter.Write(data)
-}
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	thresholdStr := os.Getenv("CLAWCTL_SLOW_REQUEST_MS")
