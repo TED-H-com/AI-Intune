@@ -342,6 +342,22 @@ You can tune replication parameters by setting these Fly secrets (using the `sec
 | `LITESTREAM_SYNC_INTERVAL` | `60s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
 | `LITESTREAM_SNAPSHOT_INTERVAL` | `24h` | How often a full database snapshot is written. | Lower = faster restore time, but uses more R2 storage and PUTs. |
 | `LITESTREAM_RETENTION` | `168h` | How long snapshots and WAL files are kept. | Higher = longer recovery window, but uses more R2 storage. Must be >= snapshot interval. |
+| `LITESTREAM_L0_RETENTION_CHECK_INTERVAL` | `5m` | How often Litestream checks for expired, already-compacted L0 files. | Longer intervals reduce R2 LIST requests but leave eligible L0 files in local and remote storage longer. |
+
+Litestream 0.5.17's L0 cleanup scans the retained L1 file history on every pass.
+Its upstream `15s` default repeats that scan 5,760 times per day, with more LIST
+pages as history grows. This image uses `5m` (288 passes per day). This changes
+cleanup scheduling only: the `60s` sync interval, compaction intervals, `24h`
+snapshot interval, and `168h` snapshot retention remain unchanged. Expired L0
+files can remain until the next cleanup pass; they are still removed only after
+compaction and the L0 retention period. Set the new variable to `15s` to restore
+the previous cadence. Changing the sync interval alone does not change cleanup
+polling. Total request savings depend on the backup history and other operations.
+
+After an upgrade, verify the `starting L0 retention monitor` log reports
+`interval=5m0s`, run the restore drill above, and compare the bucket's hourly
+`ListObjects` counts. The setting requires this version of the image; setting
+the environment variable alone on an older image does not change its config.
 
 ## Volume layout and Litestream
 
