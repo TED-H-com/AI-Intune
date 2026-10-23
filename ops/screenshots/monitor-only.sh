@@ -20,7 +20,7 @@ if [[ -z "$browser_path" ]]; then
   printf 'No browser found; fixture HTML saved to %s\n' "$output_dir"
   exit 0
 fi
-browser_profile="$(mktemp -d /tmp/monitor-only-browser.XXXXXX)"
+browser_profile="$(mktemp -d "${TMPDIR:-/tmp}/monitor-only-browser.XXXXXX")"
 trap 'rm -rf -- "$browser_profile"' EXIT
 for width in 390 768 1440; do
   for fixture in "$output_dir"/*.html; do
