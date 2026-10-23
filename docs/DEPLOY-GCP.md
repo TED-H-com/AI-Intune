@@ -85,7 +85,9 @@ Cloudflare account and tunnel token. Setup installs Docker, Tailscale and
 cloudflared using their apt repositories, builds `ops/docker/Dockerfile`
 target `hub-fly`, and runs restartable Hub and tunnel containers. The Hub
 publishes only on host loopback; cloudflared uses the host network. Container
-health checks query SQLite; setup also probes `/healthz`. Docker restart
+health checks query SQLite in read-only mode (the image has no curl or wget).
+Setup waits up to 180 seconds for Docker health to become healthy, then prints
+the loopback `/healthz` response body. Docker restart
 policy restarts exited processes, not unhealthy processes: monitor both health
 and tunnel connectivity externally. Proxy header trust is disabled by default;
 review the repository's proxy guidance before enabling it.
@@ -97,11 +99,37 @@ the database mount and Tailscale state. Schedule upgrades accordingly.
 Container env files are root-only; Docker administrators can read secrets.
 Do not dump container environments or startup logs containing setup codes.
 
+For validation or staged setups, set any of these flags to `1` in the
+environment or the private secrets file:
+
+- `GCP_SKIP_TAILSCALE=1`: skip host Tailscale installation and joining.
+- `GCP_SKIP_TUNNEL=1`: skip the tunnel token requirement, cloudflared
+  installation and tunnel startup; remove any stale `clawctl-tunnel`
+  container and `tunnel.env`.
+- `GCP_SKIP_LITESTREAM=1`: skip R2 requirements and replication; rewrite
+  `hub.env` without `LITESTREAM_REQUIRED` or R2 variables.
+
+Each skipped service prints a `SKIPPED:` line. Preview reads flags from the
+environment only; it does not source the secrets file. For example:
+
+```bash
+GCP_SKIP_TAILSCALE=1 GCP_SKIP_TUNNEL=1 GCP_SKIP_LITESTREAM=1 \
+  bash ops/gcp/host-setup.sh --dry-run
+```
+
+Hub still uses `CLAWCTL_AUTH_MODE=local` and requires `CLAWCTL_PUBLIC_URL`
+as an HTTPS origin on apply. The container receives no Tailscale auth key.
+With replication skipped, the existing image entrypoint starts Hub directly.
+The loopback listener remains available for validation when the tunnel is
+skipped. Reapply without the skip flags and with the required credentials to
+enable those services. Skipping host Tailscale leaves existing membership
+unchanged.
+
 ## Litestream to R2 and budgets
 
 The image already includes Litestream 0.5.17 and
 [the shared configuration](../ops/fly/litestream.yml). R2 replication is required
-by this setup. Use bucket-scoped read/write keys. The default replica prefix is
+by default. Use bucket-scoped read/write keys. The default replica prefix is
 `clawctl/litestream/clawctl.sqlite`, with 10-second sync, daily snapshots, and
 seven-day retention. Existing databases are never overwritten at startup;
 a missing database is restored if a replica exists. Do not start a fresh VM

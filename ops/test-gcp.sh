@@ -23,6 +23,34 @@ for flag in default --dry-run; do
   TS_AUTHKEY=secret-sentinel CLOUDFLARE_TUNNEL_TOKEN=secret-sentinel PATH="$tmp/bin:$PATH" bash "$root/ops/gcp/host-setup.sh" "${args[@]}" > "$tmp/host"
   if grep -Fq secret-sentinel "$tmp/host"; then exit 1; fi
 done
+# Exercise every combination independently; previews must stay offline.
+for tailscale in 0 1; do
+  for tunnel in 0 1; do
+    for litestream in 0 1; do
+      GCP_SKIP_TAILSCALE=$tailscale GCP_SKIP_TUNNEL=$tunnel GCP_SKIP_LITESTREAM=$litestream \
+        TS_AUTHKEY=secret-sentinel CLOUDFLARE_TUNNEL_TOKEN=secret-sentinel \
+        R2_SECRET_ACCESS_KEY=secret-sentinel PATH="$tmp/bin:$PATH" \
+        bash "$root/ops/gcp/host-setup.sh" --dry-run > "$tmp/skip"
+      if grep -Fq secret-sentinel "$tmp/skip"; then exit 1; fi
+      for service in Tailscale 'Cloudflare Tunnel' Litestream; do
+        case $service in
+          Tailscale) skipped=$tailscale; active='Install Tailscale' ;;
+          'Cloudflare Tunnel') skipped=$tunnel; active='Install cloudflared' ;;
+          Litestream) skipped=$litestream; active='Require R2 variables' ;;
+        esac
+        if [[ $skipped == 1 ]]; then
+          grep -Fxq "SKIPPED: $service" "$tmp/skip"
+          if grep -Fq "$active" "$tmp/skip"; then exit 1; fi
+        else
+          grep -Fq "$active" "$tmp/skip"
+          if grep -Fxq "SKIPPED: $service" "$tmp/skip"; then exit 1; fi
+        fi
+      done
+      grep -Fq 'sqlite3 -readonly' "$tmp/skip"
+      grep -Fq 'print /healthz body' "$tmp/skip"
+    done
+  done
+done
 GCP_BILLING_ACCOUNT='<billing-account>' GCP_BUDGET_AMOUNT=60USD PATH="$tmp/bin:$PATH" bash "$root/ops/gcp/provision.sh" --dry-run > "$tmp/budget"
 for threshold in 0.5 0.9 1.0; do grep -Fq "percent=$threshold" "$tmp/budget"; done
 [[ ! -e $GCP_TEST_SENTINEL ]]
