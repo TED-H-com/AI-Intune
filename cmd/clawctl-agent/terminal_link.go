@@ -105,6 +105,9 @@ func runTerminalLink(ctx context.Context, cfg config) {
 }
 
 func runTerminalLinkWithDeps(ctx context.Context, cfg config, deps terminalLinkDeps) {
+	if !cfg.executionAllowed() {
+		return
+	}
 	// The catalog has no bat-server build for other operating systems. This
 	// check must precede even path discovery so unsupported agents do no I/O.
 	if deps.goos != agentrelay.TerminalOS {
@@ -205,6 +208,9 @@ func reapTerminalRecord(ctx context.Context, invoker agentpty.Invoker, record *t
 }
 
 func runTerminalLinkAttempt(ctx context.Context, cfg config, deps terminalLinkDeps) terminalAttemptResult {
+	if !cfg.executionAllowed() {
+		return terminalAttemptResult{}
+	}
 	home, err := deps.userHomeDir()
 	if err != nil {
 		return terminalAttemptResult{}
@@ -246,11 +252,17 @@ func runTerminalLinkAttempt(ctx context.Context, cfg config, deps terminalLinkDe
 	}
 	reapTerminalRecord(ctx, profile, record, invocation, invocationOK)
 
+	terminalClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	if err := configureHTTPClient(terminalClient, cfg.ProxyURL); err != nil {
+		closeBATWithoutMapper(profile, batSession)
+		result.logMessage = "Invalid proxy_url in agent config"
+		return result
+	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, agentTerminalDialTimeout)
 	conn, response, err := deps.dialHub(dialCtx, strings.TrimRight(cfg.HubURL, "/")+agentTerminalPath, &websocket.DialOptions{
-		HTTPClient: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
+		HTTPClient:      terminalClient,
 		HTTPHeader:      http.Header{"Authorization": []string{"Bearer " + cfg.AgentToken}},
 		Subprotocols:    []string{agentTerminalSubprotocol},
 		CompressionMode: websocket.CompressionDisabled,

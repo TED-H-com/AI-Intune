@@ -68,6 +68,7 @@ case "${0##*/}" in
 import hashlib,json,sys
 d=dict(state='approved',display_name='Host-B',hub_url='https://hub.example.com',enroll_token='fixture-enrollment-secret',bundle=dict(sha256=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()),tailscale=dict(auth_key='fixture-tailscale-secret',tags=['tag:fleet'],hostname='host-b'))
 import os
+if os.environ['JOIN_TEST_MODE']=='monitor-only': d['monitor_only']=True
 if os.environ['JOIN_TEST_MODE']=='no-tailscale': d.pop('tailscale')
 if os.environ['JOIN_TEST_MODE']=='checksum-failure': d['bundle']['sha256']='0'*64
 json.dump(d,sys.stdout)
@@ -83,7 +84,7 @@ chmod +x "$TEST_DIR/bin/stub"
 for tool in uname id hostname systemctl sshd chown sleep sudo tailscale curl; do ln -s stub "$TEST_DIR/bin/$tool"; done
 export PATH="$TEST_DIR/bin:$PATH"
 runs=0
-for mode in approved no-tailscale no-fleet rejected expired download-failure checksum-failure installer-failure; do
+for mode in approved monitor-only no-tailscale no-fleet rejected expired download-failure checksum-failure installer-failure; do
   rm -f "$TEST_DIR/installed" "$TEST_DIR/applied"
   if [[ $mode == no-fleet ]]; then
     tar -czf "$TEST_DIR/bundle.tar.gz" -C "$TEST_DIR/stage" install-agent.sh
@@ -99,6 +100,7 @@ for mode in approved no-tailscale no-fleet rejected expired download-failure che
   TMPDIR="$TEST_DIR/tmp" SUDO_USER='' bash "$ROOT/ops/join/join.sh" --user operator --hub https://hub.example.com --root-prefix "$TEST_DIR/root" >"$TEST_DIR/output" 2>&1 || rc=$?
   case "$mode" in
     approved|no-tailscale) if [[ $rc != 0 ]]; then cat "$TEST_DIR/output"; fi; [[ $rc == 0 && -f $TEST_DIR/installed && -f $TEST_DIR/applied ]]; grep -q 'Joined as Host-B' "$TEST_DIR/output" ;;
+    monitor-only) [[ $rc == 0 && -f $TEST_DIR/installed && ! -f $TEST_DIR/applied ]] ;;
     no-fleet) [[ $rc == 0 && -f $TEST_DIR/installed && ! -f $TEST_DIR/applied ]] ;;
     rejected) [[ $rc == 3 ]];grep -q 'Join rejected' "$TEST_DIR/output" ;;
     expired) [[ $rc == 4 ]];grep -q 'Join expired' "$TEST_DIR/output" ;;
@@ -141,6 +143,23 @@ for text in ('function Protect-JoinInstallerOutput', 'function Invoke-JoinInstal
 capture = s[s.index('function Invoke-JoinInstaller'):s.index('function Read-JoinBlock')]
 assert capture.index('Protect-JoinInstallerOutput ([string]$_)') < capture.index('Add-Content')
 assert 'Write-Host' not in capture and '[Console]' not in capture.split('$engine =', 1)[1]
+assert "[string]$Proxy = ''" in s
+assert 'if ($Proxy) { Set-JoinProxyConfig' in s
+helper = s[s.index('function Set-JoinProxyConfig'):s.index('function Write-JoinProgress')]
+assert 'if (-not $Proxy) { return }' in helper
+assert '-NotePropertyName proxy_url -NotePropertyValue $Proxy' in helper
+assert 'Text.UTF8Encoding($false)' in helper and 'Set-JoinPrivate $Path $false' in helper
+assert s.index('Invoke-JoinInstaller (Join-Path $stage') < s.index('if ($Proxy) { Set-JoinProxyConfig')
+assert '$env:HTTP_PROXY = $Proxy' in s and '$env:HTTPS_PROXY = $Proxy' in s
+assert '$proxyOptions.Proxy = $Proxy' in s
+assert s.count('@proxyOptions') == 3
+import xml.etree.ElementTree as ET
+task = ET.fromstring((root/'ops/clawctl-agent.task.xml').read_text())
+ns = {'t': 'http://schemas.microsoft.com/windows/2004/02/mit/task'}
+assert task.find('t:Settings/t:Hidden', ns).text == 'true'
+assert task.find('t:Actions/t:Exec/t:Command', ns).text == '@@CLAWCTL_AGENT_BIN@@'
+assert task.find('t:Actions/t:Exec/t:Arguments', ns) is None
+assert 'cmd.exe' not in (root/'ops/clawctl-agent.task.xml').read_text().lower()
 installer = (root/'ops/install-agent-windows.ps1').read_text()
 for text in ('jobs_enabled', '--monitor-only', 'Register-ScheduledTask', 'enroll --hub $Hub --token-file $TokenFile'):
     assert text in installer, text

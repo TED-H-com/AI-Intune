@@ -179,26 +179,28 @@ var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
 // has a dedicated class checked against job kind and catalog mode at use time.
 // Lifecycle self/rotate are exceptions for the authenticated token itself.
 var operatorRoutePolicies = map[string]operatorRoutePolicy{
-	"POST /machines/{id}/disks/approve":         {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"POST /machines/{id}/disks/cancel":          {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/machines/{id}/disks":      {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"GET /machines/host-profile":                {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"POST /machines/host-profile":               {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/host-profile":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"GET /machines/join":                        {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"POST /machines/join/decide":                {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/joins":                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /readiness":                            {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"POST /readiness":                           {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/machines/{id}/readiness":  {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"GET /tenant/certificates":                  {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"POST /tenant/certificates":                 {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
-	"GET /v1/operator/certificates":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"GET /v1/operator/certificates/{id}":        {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
-	"POST /v1/operator/certificates":            {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"PUT /v1/operator/certificates/{id}":        {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"DELETE /v1/operator/certificates/{id}":     {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
-	"POST /v1/operator/certificates/{id}/probe": {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/{id}/execution-policy/preview": {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/{id}/execution-policy/apply":   {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/{id}/disks/approve":            {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/{id}/disks/cancel":             {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/machines/{id}/disks":         {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /machines/host-profile":                   {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/host-profile":                  {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/host-profile":                {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /machines/join":                           {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /machines/join/decide":                   {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/joins":                       {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /readiness":                               {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /readiness":                              {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/machines/{id}/readiness":     {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /tenant/certificates":                     {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/certificates":                    {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"GET /v1/operator/certificates":                {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/certificates/{id}":           {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"POST /v1/operator/certificates":               {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"PUT /v1/operator/certificates/{id}":           {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"DELETE /v1/operator/certificates/{id}":        {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /v1/operator/certificates/{id}/probe":    {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 
 	"GET /v1/operator/machines/{id}/oom-kills":         {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/service-tokens/self":             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligibleSelf},
@@ -590,7 +592,14 @@ func newHubHTTPHandler(h *hub, ui *web.Server, authorizer operatorRequestAuthori
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		return nil, err
 	}
-	boundary := newOperatorBoundary(operatorMux, authorizer, h.store, operatorRoutePolicies, authority, cloud...)
+	policies := make(map[string]operatorRoutePolicy, len(operatorRoutePolicies)+1)
+	for pattern, policy := range operatorRoutePolicies {
+		policies[pattern] = policy
+	}
+	if h.pprofEnabled {
+		registerPprof(operatorMux, policies)
+	}
+	boundary := newOperatorBoundary(operatorMux, authorizer, h.store, policies, authority, cloud...)
 	boundary.clientIP = h.clientIP
 	root.Handle("/", boundary)
 	return root, nil
@@ -738,6 +747,7 @@ func validateOperatorRoutePolicies(registered []string, policies map[string]oper
 
 func (b *operatorBoundary) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, pattern := b.next.Handler(r)
+	r.Pattern = pattern
 	if pattern == "" {
 		// No registered control route matched. Preserve ServeMux's canonical
 		// 404/405 response; there is no handler here that could mutate state.

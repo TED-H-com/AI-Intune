@@ -21,6 +21,17 @@ spec = importlib.util.spec_from_file_location('sweep', SCRIPT)
 sweep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sweep)
 
+# Fixtures are created under a service umask: the sweep refuses group- or
+# other-writable trees, and a login umask of 002 would make every fixture unsafe.
+_saved_umask = None
+
+def setUpModule():
+    global _saved_umask
+    _saved_umask = os.umask(0o022)
+
+def tearDownModule():
+    os.umask(_saved_umask)
+
 class SweepTests(unittest.TestCase):
     def test_classification(self):
         now = FIXED_NOW

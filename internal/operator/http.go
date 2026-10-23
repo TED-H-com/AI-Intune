@@ -24,7 +24,7 @@ func HTTPError(err error) (status int, code, detail string) {
 	}
 	status = http.StatusBadRequest
 	switch rejection.Code {
-	case "FORBIDDEN", "SCRIPT_SCOPE_REQUIRED", "SERVICE_TOKEN_READ_SCRIPTS_ONLY":
+	case "MACHINE_MONITOR_ONLY", "FORBIDDEN", "SCRIPT_SCOPE_REQUIRED", "SERVICE_TOKEN_READ_SCRIPTS_ONLY":
 		status = http.StatusForbidden
 	case store.OperatorCodeMachineNotFound, store.OperatorCodeDeploymentNotFound,
 		store.OperatorCodeMachineProfileNotFound,

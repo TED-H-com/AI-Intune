@@ -1607,10 +1607,10 @@ expect 'agent install enables persistence before service start' 0 is_silent
 run appears_in_order3 'sudo systemctl reset-failed clawctl-agent.service' 'sudo systemctl restart clawctl-agent.service' '"$BIN_FILE" verify --hub "$HUB" --since "$SERVICE_STARTED_AT" --timeout 2m' "$INSTALL_AGENT"
 expect 'agent install resets the restart gate before start and requires a fresh Hub receipt' 0 is_silent
 
-run appears_before '"$BIN_FILE" verify --hub' 'echo "Managed:' "$INSTALL_AGENT"
+run appears_before '"$BIN_FILE" verify --hub' 'echo "Installed:' "$INSTALL_AGENT"
 expect 'agent install loads the system unit before retiring the legacy user service' 0 is_silent
 
-run appears_before '[[ "$AGENT_COUNT" == "1" ]]' 'echo "Managed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active jobs=enabled"' "$INSTALL_AGENT"
+run appears_before '[[ "$AGENT_COUNT" == "1" ]]' 'echo "Installed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active; execution follows the enrollment profile."' "$INSTALL_AGENT"
 expect 'agent install publishes success only after exact process validation' 0 is_silent
 
 run grep -E '⚠|temporary|暫時|disclaimer|可能缺少|可能需要' "$INSTALL_AGENT"
@@ -1659,9 +1659,9 @@ home_ancestor_symlink_fixture() {
 run home_ancestor_symlink_fixture
 expect "install-agent accepts a symlinked home ancestor only when its target is a private user-owned directory" 0 true
 run agent_installer_complete_fixture root
-expect 'root installer drops privileges for enrollment without password prompts' 0 has 'Managed: agent=test-version'
+expect 'root installer drops privileges for enrollment without password prompts' 0 has 'Installed: agent=test-version'
 run agent_installer_complete_fixture
-expect 'agent installer completes Tailscale, enrollment, service and Hub receipt in one run' 0 has 'Managed: agent=test-version tailscale=100.64.0.77 service=active jobs=enabled'
+expect 'agent installer completes Tailscale, enrollment, service and Hub receipt in one run' 0 has 'Installed: agent=test-version tailscale=100.64.0.77 service=active; execution follows the enrollment profile.'
 
 run macos_agent_installer_complete_fixture
 expect 'macOS install script substitutes all placeholders in launchd plist' 0 true
@@ -2673,6 +2673,12 @@ else
 fi
 
 if bash "$ROOT/ops/test-oci.sh"; then
+	passed=$((passed + 1))
+else
+	failed=$((failed + 1))
+fi
+
+if bash "$ROOT/ops/test-gcp.sh"; then
 	passed=$((passed + 1))
 else
 	failed=$((failed + 1))

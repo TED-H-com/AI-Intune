@@ -309,6 +309,9 @@ func (s *Store) OpenAgentSession(req OpenAgentSessionRequest) (AgentSessionResul
 		return AgentSessionResult{}, fmt.Errorf("store: begin agent session open: %w", err)
 	}
 	defer tx.Rollback()
+	if err := executionAllowedTx(tx, req.MachineID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return AgentSessionResult{}, err
+	}
 	writerNow := s.now().UTC().Truncate(time.Second)
 	audit.At = writerNow
 
@@ -456,6 +459,9 @@ func (s *Store) CloseAgentSession(req CloseAgentSessionRequest) (AgentSessionRes
 		return AgentSessionResult{}, fmt.Errorf("store: begin agent session close: %w", err)
 	}
 	defer tx.Rollback()
+	if err := executionAllowedTx(tx, req.MachineID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return AgentSessionResult{}, err
+	}
 	writerNow := s.now().UTC().Truncate(time.Second)
 	audit.At = writerNow
 

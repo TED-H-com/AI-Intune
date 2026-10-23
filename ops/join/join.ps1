@@ -4,6 +4,7 @@
 param(
   [string]$Hub = '@@CLAWCTL_PUBLIC_URL@@',
   [string]$LogFile = (Join-Path $env:ProgramData 'clawctl\join.log'),
+  [string]$Proxy = '',
   [switch]$JobsEnabled
 )
 Set-PSDebug -Off
@@ -34,6 +35,15 @@ function Set-JoinPrivate([string]$Path, [bool]$Directory) {
   $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', $inheritance, 'None', 'Allow')
   $acl.SetAccessRule($rule)
   Set-Acl -LiteralPath $Path -AclObject $acl
+}
+function Set-JoinProxyConfig([string]$Path, [string]$Proxy) {
+  if (-not $Proxy) { return }
+  Assert-NoReparsePoint $Path
+  $config = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+  $config | Add-Member -NotePropertyName proxy_url -NotePropertyValue $Proxy -Force
+  Set-JoinPrivate $Path $false
+  [IO.File]::WriteAllText($Path, ($config | ConvertTo-Json -Depth 100), (New-Object Text.UTF8Encoding($false)))
+  Set-JoinPrivate $Path $false
 }
 function Write-JoinProgress([string]$Message) {
   Write-Host $Message
@@ -148,6 +158,17 @@ try {
     throw 'Provide a public HTTPS Hub URL.'
   }
   $Hub = $Hub.TrimEnd('/')
+  $proxyOptions = @{}
+  if ($Proxy) {
+    $proxyUri = [uri]$Proxy
+    if (-not $proxyUri.IsAbsoluteUri -or $proxyUri.Scheme -notin @('http', 'https') -or -not $proxyUri.Host -or $proxyUri.UserInfo -or $proxyUri.Query -or $proxyUri.Fragment -or $Proxy -match '\s') {
+      throw 'Provide an absolute HTTP or HTTPS proxy URL without credentials, query or fragment.'
+    }
+    $env:HTTP_PROXY = $Proxy
+    $env:HTTPS_PROXY = $Proxy
+    # Windows PowerShell 5.1 web cmdlets also need an explicit proxy.
+    $proxyOptions.Proxy = $Proxy
+  }
   $arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
     'X64' { 'amd64' }
     'Arm64' { 'arm64' }
@@ -168,7 +189,7 @@ try {
   $step = 'starting join'
   Write-JoinProgress 'Starting Windows join.'
   $body = @{hostname = [Environment]::MachineName; os = 'windows'; arch = $arch; user = [Environment]::UserName} | ConvertTo-Json -Compress
-  $started = Invoke-RestMethod -Uri "$Hub/v1/join/start" -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 30 -MaximumRedirection 0
+  $started = Invoke-RestMethod @proxyOptions -Uri "$Hub/v1/join/start" -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 30 -MaximumRedirection 0
   if ($started.join_code -cnotmatch '^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$' -or $started.device_secret -cnotmatch '^[A-Za-z0-9_-]{43}$' -or $started.poll_seconds -lt 1 -or $started.poll_seconds -gt 60) { throw 'Invalid join response.' }
   $expires = [DateTimeOffset]::Parse($started.expires_at)
   Write-JoinProgress "Join code: $($started.join_code)"
@@ -177,14 +198,14 @@ try {
   # Download before poll redemption ends device-secret authority, exactly as join.sh.
   $archive = Join-Path $work 'bundle.tar.gz'
   $headers = @{Authorization = 'Bearer ' + $started.device_secret}
-  Invoke-WebRequest -UseBasicParsing -Uri "$Hub/v1/join/bundle/windows-$arch" -Headers $headers -OutFile $archive -TimeoutSec 120 -MaximumRedirection 0 | Out-Null
+  Invoke-WebRequest @proxyOptions -UseBasicParsing -Uri "$Hub/v1/join/bundle/windows-$arch" -Headers $headers -OutFile $archive -TimeoutSec 120 -MaximumRedirection 0 | Out-Null
   if ((Get-Item -LiteralPath $archive).Length -gt 64MB) { throw 'Agent bundle is too large.' }
   $step = 'waiting for approval'
   $pollBody = @{device_secret = $started.device_secret} | ConvertTo-Json -Compress
   while ([DateTimeOffset]::UtcNow -lt $expires) {
     Start-Sleep -Seconds $started.poll_seconds
     try {
-      $response = Invoke-WebRequest -UseBasicParsing -Uri "$Hub/v1/join/poll" -Method Post -ContentType 'application/json' -Body $pollBody -TimeoutSec 30 -MaximumRedirection 0
+      $response = Invoke-WebRequest @proxyOptions -UseBasicParsing -Uri "$Hub/v1/join/poll" -Method Post -ContentType 'application/json' -Body $pollBody -TimeoutSec 30 -MaximumRedirection 0
     } catch {
       if ($null -ne $_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 410) { throw 'Join rejected or expired; run the join command again.' }
       throw 'The Hub could not check this join.'
@@ -210,6 +231,7 @@ try {
   if ($JobsEnabled) { $jobs = 'true' }
   # One-time enrollment token from approval, never an operator token or argv secret.
   Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1') $Hub $tokenFile $jobs @($approved.enroll_token, $started.device_secret)
+  if ($Proxy) { Set-JoinProxyConfig (Join-Path $env:APPDATA 'clawctl\agent.json') $Proxy }
   Write-JoinProgress "Joined. jobs_enabled=$jobs. Progress: $Hub/readiness"
 } catch {
   # Never serialize exceptions/responses: they may contain device/enrollment secrets.

@@ -274,7 +274,7 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	patterns = append(patterns, s.checksRoutes(mux)...)
 	// Mutation routes are POST-only and delegate to the canonical operator service.
 	patterns = append(patterns, s.offlineAlertsRoutes(mux)...)
-	return append(append(append(append(append(patterns, append(s.channelRoutes(mux), s.signinRoutes(mux)...)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), s.diskSetupRoutes(mux)...)...)...)...)...)
+	return append(append(append(append(append(patterns, append(s.channelRoutes(mux), s.signinRoutes(mux)...)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), append(s.diskSetupRoutes(mux), s.executionPolicyRoutes(mux)...)...)...)...)...)...)
 }
 
 type maintenancePageView struct {
@@ -392,6 +392,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	ExecutionPolicy           *executionPolicyPage
 	OfflineAlerts             *offlineAlertsPage
 	DiskSetup                 *diskSetupPage
 	HostProfile               *hostProfilePage
@@ -1407,9 +1408,21 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "Read checks", err)
 		return
 	}
+	policy, err := s.operator.MachineExecutionPolicy(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Read machine profile", err)
+		return
+	}
+	monitorOnly := policy.Mode != "managed"
+	actions := machineActionsViewFrom(catalogue)
+	if monitorOnly {
+		actions = nil
+		terminalOpen = nil
+	}
 	s.render(w, r, "machine.html", page{
 		MachineChecks:           checks,
-		DiskSetup:               &diskSetupPage{Machine: machine.Item.MachineID, Inventory: disks, Manage: principal.Has(operatorauth.Admin), Owner: owner},
+		ExecutionPolicy:         &executionPolicyPage{MachineID: machine.Item.MachineID, Mode: policy.Mode, Revision: policy.Revision, Manage: humanWebAdmin(r), MonitorOnly: monitorOnly, Pending: policy.ObservedRevision != policy.Revision},
+		DiskSetup:               &diskSetupPage{Machine: machine.Item.MachineID, Inventory: disks, Manage: principal.Has(operatorauth.Admin) && !monitorOnly, Owner: owner},
 		Readiness:               &readinessPage{Items: []store.HostChecklist{checklist}, Manage: principal.Has(operatorauth.Admin)},
 		DiskGrowth:              growth,
 		Loops:                   &loopsPage{Items: loopItems, Machine: machine.Item.MachineID},
@@ -1420,7 +1433,7 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		MachineDetail:           &machine,
 		Machine:                 machineView,
 		MachineConnect:          &connect,
-		MachineActions:          machineActionsViewFrom(catalogue),
+		MachineActions:          actions,
 		TerminalOpen:            terminalOpen,
 		PendingEnrollment:       pendingEnrollment,
 		MachineEvidence:         &evidence,
@@ -1847,9 +1860,9 @@ func subNavigationFor(data page) subNavigation {
 		}
 		// 動作那一節只有在這個操作員真的有動作可做時才存在，所以選單也只在那時
 		// 才指得過去。這個問題由 operator 回答，單機的每一頁才會給同一份選單。
-		if operator.MachineActionsReachable(operator.MachineActionGrant{
+		if (data.ExecutionPolicy == nil || !data.ExecutionPolicy.MonitorOnly) && (operator.MachineActionsReachable(operator.MachineActionGrant{
 			Operate: data.Access.CanOperate, Admin: data.Access.CanAdmin,
-		}) || current == "動作" {
+		}) || current == "動作") {
 			items = append(items, subNavigationItem{Label: "動作", Href: base + "#actions"})
 		}
 		items = append(items, subNavigationItem{Label: "事件時間軸", Href: base + "/timeline"})
@@ -2098,6 +2111,15 @@ var funcs = template.FuncMap{
 		}
 	},
 	"unusedDisk": model.UnusedDisk,
+	"signinEligibleCount": func(g store.SigninGroup) int {
+		n := 0
+		for _, h := range g.Hosts {
+			if !h.MonitorOnly && store.SigninSupported(h.CLI, h.Slot) && (h.Status == "logged_out" || h.Status == "failing" || h.Status == "expiring") {
+				n++
+			}
+		}
+		return n
+	},
 	"diskAvailable": func(d model.BlockDevice, jobs []store.DiskSetupRecord) bool {
 		for _, j := range jobs {
 			if j.Job.Device == d.Path && (j.State == "pending" || j.State == "delivered") {

@@ -16,11 +16,15 @@ type Resolver struct {
 
 func Parse(proxies, header string) (Resolver, error) {
 	r := Resolver{Header: header}
-	if header == "" {
+	switch strings.ToLower(header) {
+	case "", "x-forwarded-for":
 		r.Header = "X-Forwarded-For"
-	}
-	if r.Header != "X-Forwarded-For" && r.Header != "Fly-Client-IP" {
-		return r, fmt.Errorf("CLAWCTL_CLIENT_IP_HEADER must be X-Forwarded-For or Fly-Client-IP")
+	case "fly-client-ip":
+		r.Header = "Fly-Client-IP"
+	case "cf-connecting-ip":
+		r.Header = "CF-Connecting-IP"
+	default:
+		return r, fmt.Errorf("CLAWCTL_CLIENT_IP_HEADER must be X-Forwarded-For, Fly-Client-IP, or CF-Connecting-IP")
 	}
 	for _, entry := range strings.FieldsFunc(proxies, func(c rune) bool { return c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r' }) {
 		p, err := netip.ParsePrefix(entry)
@@ -76,8 +80,8 @@ func (r Resolver) Resolve(req *http.Request) string {
 	if !r.trusted(peer) {
 		return peer.String()
 	}
-	if r.Header == "Fly-Client-IP" {
-		values := req.Header.Values("Fly-Client-IP")
+	if r.Header == "Fly-Client-IP" || r.Header == "CF-Connecting-IP" {
+		values := req.Header.Values(r.Header)
 		if len(values) == 1 {
 			if a, err := parseIP(values[0]); err == nil {
 				return a.String()

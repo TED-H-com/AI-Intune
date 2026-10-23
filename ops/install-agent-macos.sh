@@ -22,9 +22,6 @@ cleanup() {
   done
 }
 
-trap on_error ERR
-trap cleanup EXIT
-
 usage() {
   echo "Usage: $0 --hub URL [--token TOKEN | --token-file FILE] [--binary FILE]"
   echo "  --hub http://<tailscale-ipv4>:<port>  (same address as the operator UI)"
@@ -120,6 +117,45 @@ accept_agent_hub_url() {
   esac
 }
 
+set_permissions() {
+  chmod "$1" "$2"
+}
+
+ensure_home_ancestor() {
+  local path="$1"
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -d "$path" && ! -L "$path" ]] || fail "Home path is not safe: $path"
+    [[ "$(stat -f '%u' "$path")" == "$EUID" ]] || fail "Home path owner is not $USER: $path"
+  else
+    mkdir -- "$path"
+  fi
+}
+
+ensure_directory() {
+  local directory="$1"
+  local mode="$2"
+  if [[ -e "$directory" ]]; then
+    [[ -d "$directory" && ! -L "$directory" ]] || fail "Directory must not be a symlink: $directory"
+    [[ "$(stat -f '%u' "$directory")" == "$EUID" ]] || fail "Directory must be owned by the current user: $directory"
+  else
+    mkdir -m "$mode" -- "$directory"
+  fi
+  set_permissions "$mode" "$directory"
+  [[ "$(stat -f '%Lp' "$directory")" == "${mode#0}" ]] || fail "Could not set permissions on directory: $directory"
+}
+
+xml_escape() {
+  local value="$1"
+  value="${value//&/\&amp;}"
+  value="${value//</\&lt;}"
+  value="${value//>/\&gt;}"
+  printf '%s' "$value"
+}
+
+main() {
+trap on_error ERR
+trap cleanup EXIT
+
 while (($#)); do
   case "$1" in
     --hub)
@@ -201,29 +237,6 @@ AGENT_DIR="$HOME/Library/LaunchAgents"
 PLIST_FILE="$AGENT_DIR/com.clawctl.agent.plist"
 LABEL="com.clawctl.agent"
 
-ensure_home_ancestor() {
-  local path="$1"
-  if [[ -e "$path" || -L "$path" ]]; then
-    [[ -d "$path" && ! -L "$path" ]] || fail "Home path is not safe: $path"
-    [[ "$(stat -f '%u' "$path")" == "$EUID" ]] || fail "Home path owner is not $USER: $path"
-  else
-    mkdir -- "$path"
-  fi
-}
-
-ensure_directory() {
-  local directory="$1"
-  local mode="$2"
-  if [[ -e "$directory" ]]; then
-    [[ -d "$directory" && ! -L "$directory" ]] || fail "Directory must not be a symlink: $directory"
-    [[ "$(stat -f '%u' "$directory")" == "$EUID" ]] || fail "Directory must be owned by the current user: $directory"
-  else
-    mkdir -m "$mode" -- "$directory"
-  fi
-  chmod "$mode" -- "$directory"
-  [[ "$(stat -f '%Lp' "$directory")" == "${mode#0}" ]] || fail "Could not set permissions on directory: $directory"
-}
-
 ensure_home_ancestor "$HOME/.local"
 ensure_directory "$BIN_DIR" 0755
 ensure_home_ancestor "$HOME/Library"
@@ -256,7 +269,7 @@ if [[ ! -e "$CONFIG_FILE" ]]; then
     [[ -n "$TOKEN" ]] || fail "Enrollment token is required"
     TOKEN_FILE="$(mktemp "${TMPDIR:-/tmp}/clawctl-token.XXXXXX")"
     SECRET_FILES+=("$TOKEN_FILE")
-    chmod 0600 -- "$TOKEN_FILE"
+    set_permissions 0600 "$TOKEN_FILE"
     printf '%s\n' "$TOKEN" >"$TOKEN_FILE"
     TOKEN=""
   fi
@@ -268,13 +281,6 @@ elif [[ ! -f "$CONFIG_FILE" || -L "$CONFIG_FILE" ]]; then
 fi
 
 STEP="launchd service"
-xml_escape() {
-  local value="$1"
-  value="${value//&/\&amp;}"
-  value="${value//</\&lt;}"
-  value="${value//>/\&gt;}"
-  printf '%s' "$value"
-}
 BIN_XML="$(xml_escape "$BIN_FILE")"
 LOG_XML="$(xml_escape "$LOG_FILE")"
 PLIST_CONTENT="$(<"$PLIST_TEMPLATE")"
@@ -282,7 +288,7 @@ PLIST_CONTENT="${PLIST_CONTENT//@@CLAWCTL_AGENT_BIN@@/$BIN_XML}"
 PLIST_CONTENT="${PLIST_CONTENT//@@CLAWCTL_AGENT_LOG@@/$LOG_XML}"
 [[ "$PLIST_CONTENT" != *@@* ]] || fail "LaunchAgent plist contains an unresolved placeholder"
 printf '%s\n' "$PLIST_CONTENT" >"$PLIST_FILE.new"
-chmod 0644 -- "$PLIST_FILE.new"
+set_permissions 0644 "$PLIST_FILE.new"
 mv -f -- "$PLIST_FILE.new" "$PLIST_FILE"
 
 STEP="launchd load"
@@ -295,3 +301,9 @@ STEP="Hub readiness"
 "$BIN_FILE" verify --hub "$HUB" --since "$SERVICE_STARTED_AT" --timeout 2m --require-platform-evidence
 
 echo "Managed: agent=$AGENT_VERSION service=$LABEL config=\"$CONFIG_FILE\""
+}
+
+# Allow helper and preflight tests without installing or requiring Hub credentials.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+  main "$@"
+fi

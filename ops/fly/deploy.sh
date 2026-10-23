@@ -17,17 +17,21 @@ skip_snapshot=${FLY_SKIP_SNAPSHOT:-0}
 snapshot_timeout=${FLY_SNAPSHOT_TIMEOUT:-180}
 verify_attempts=${FLY_VERIFY_ATTEMPTS:-6}
 verify_timeout=${FLY_VERIFY_TIMEOUT:-10}
+vm_size=${FLY_VM_SIZE:-}
+vm_memory=${FLY_VM_MEMORY:-}
 dry_run=0
 destroy=0
 fail() { echo "deploy: $*" >&2; exit 1; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --org|--app|--region|--secrets-file|--public-url|--builder|--verify-attempts|--verify-timeout)
+    --vm-size|--vm-memory|--org|--app|--region|--secrets-file|--public-url|--builder|--verify-attempts|--verify-timeout)
       [[ $# -ge 2 ]] || fail "missing flag value"
       case "$1" in
         --verify-attempts) verify_attempts=$2 ;;
         --verify-timeout) verify_timeout=$2 ;;
         --builder) builder=$2 ;;
+        --vm-size) [[ -n "$2" ]] || fail "VM size must not be empty"; vm_size=$2 ;;
+        --vm-memory) [[ -n "$2" ]] || fail "VM memory must not be empty"; vm_memory=$2 ;;
         --org) org=$2 ;; --app) app=$2 ;; --region) region=$2 ;; --secrets-file) secrets_file=$2 ;;
         --public-url) url=$2; public_url_given=1 ;;
       esac
@@ -42,6 +46,18 @@ done
 [[ "$snapshot_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || fail "FLY_SNAPSHOT_TIMEOUT must be 1..9999 seconds"
 [[ "$verify_attempts" =~ ^[1-9][0-9]?$ ]] || fail "verification attempts must be 1..99"
 [[ "$verify_timeout" =~ ^[1-9][0-9]{0,2}$ ]] || fail "verification timeout must be 1..999 seconds"
+# Validate overrides before any Fly calls, including dry-run. Never echo raw input.
+if [[ -n "$vm_size" ]]; then
+  [[ "$vm_size" =~ ^(shared-cpu|performance)-([1-9][0-9]?)x$ ]] || fail "VM size must be shared-cpu-Nx or performance-Nx (N=1..64)"
+  (( BASH_REMATCH[2] <= 64 )) || fail "VM CPU count must be 1..64"
+fi
+if [[ -n "$vm_memory" ]]; then
+  [[ "$vm_memory" =~ ^([1-9][0-9]{0,5})(mb|gb)$ ]] || fail "VM memory must be an integer followed by mb or gb"
+  memory_mb=${BASH_REMATCH[1]}
+  [[ "${BASH_REMATCH[2]}" != gb ]] || memory_mb=$((memory_mb * 1024))
+  (( memory_mb >= 256 && memory_mb <= 131072 )) || fail "VM memory must be 256..131072mb"
+  vm_memory="${memory_mb}mb"
+fi
 if [[ "$destroy" == 0 && "$skip_snapshot" == 1 ]]; then
   echo "WARNING: SNAPSHOT SAFETY GATE DISABLED; deploying without a verified recovery snapshot!" >&2
 fi
@@ -86,7 +102,13 @@ if [[ "$dry_run" == 1 ]]; then
     plan volumes destroy '<clawctl_data-volume-id>' -a "$app" --yes
     plan apps destroy "$app" --yes
   else
-    echo "Plan: create only missing resources; one 1024mb machine and a 3GB volume. Config copied outside the repo."
+    echo "Plan: create only missing resources; one machine and a 3GB volume. Config copied outside the repo."
+    if [[ -n "$vm_size$vm_memory" ]]; then
+      echo "VM sizing source: override (CPU: ${vm_size:-preserved, or fly.toml default on first deploy}; memory: ${vm_memory:-preserved, or fly.toml default on first deploy})."
+    else
+      echo "VM sizing source: preserved if machines exist; fly.toml default on first deploy (resolved during deployment)."
+    fi
+    plan machines list -a "$app" --json
     plan apps create "$app" --org "$org"
     plan volumes create clawctl_data --region "$region" --size 3 -a "$app" --yes
     if [[ -n "$secrets_file" ]]; then plan secrets import --stage -a "$app"; echo "Read secrets from the supplied file via stdin."; fi
@@ -173,6 +195,68 @@ json_items "$work/apps" apps > "$work/names"
 if ! grep -Fxq "$app" "$work/names"; then
   "$fly" apps create "$app" --org "$org" >/dev/null 2>&1 || fail "app creation failed"
 fi
+# Resolve sizing before provisioning volumes or taking snapshots.
+"$fly" machines list -a "$app" --json > "$work/machines" 2> "$work/machine-log" || fail "cannot inventory machine sizing"
+python3 - "$work/machines" "$work/fly.toml" "$vm_size" "$vm_memory" <<'PY_VM'
+import json, re, sys
+from pathlib import Path
+
+def fail(message):
+    sys.exit('deploy: ' + message)
+
+try:
+    machines = json.loads(Path(sys.argv[1]).read_text())
+    if not isinstance(machines, list):
+        raise ValueError()
+    guests = []
+    for machine in machines:
+        guest = machine['config']['guest']
+        kind, cpus, memory = (guest[k] for k in ('cpu_kind', 'cpus', 'memory_mb'))
+        if (kind not in ('shared', 'performance') or type(cpus) is not int
+                or not 1 <= cpus <= 64 or type(memory) is not int
+                or not 256 <= memory <= 131072):
+            raise ValueError()
+        guests.append((kind, cpus, memory))
+except (ValueError, KeyError, TypeError):
+    fail('invalid machine guest sizing inventory')
+
+size, memory = sys.argv[3:5]
+# These defaults match the generic checked-in [[vm]]; read them rather than
+# duplicating the values. No tomllib dependency (older Python 3 is supported).
+path = Path(sys.argv[2])
+text = path.read_text()
+pattern = r'(?ms)^\[\[vm\]\]\s*\n.*?(?=^\[|\Z)'
+blocks = list(re.finditer(pattern, text))
+if len(blocks) != 1:
+    fail('expected exactly one default [[vm]] block')
+block = blocks[0].group()
+if not guests and not size and not memory:
+    print('VM sizing source: fly.toml default')
+    sys.exit(0)
+if not size:
+    cpu_choices = {g[:2] for g in guests}
+    if len(cpu_choices) > 1:
+        fail('machines disagree on CPU sizing; supply --vm-size')
+    if cpu_choices:
+        kind, cpus = cpu_choices.pop()
+    else:
+        default_size = re.search(r'^\s*size = "([^"]+)"', block, re.M).group(1)
+        kind = 'shared' if default_size.startswith('shared-cpu-') else 'performance'
+        cpus = int(default_size.rsplit('-', 1)[1][:-1])
+else:
+    kind = 'shared' if size.startswith('shared-cpu-') else 'performance'
+    cpus = int(size.rsplit('-', 1)[1][:-1])
+if not memory:
+    memory_choices = {g[2] for g in guests}
+    if len(memory_choices) > 1:
+        fail('machines disagree on memory sizing; supply --vm-memory')
+    memory = (str(memory_choices.pop()) + 'mb' if memory_choices else
+              re.search(r'^\s*memory = "([^"]+)"', block, re.M).group(1))
+replacement = '[[vm]]\n  cpu_kind = "{}"\n  cpus = {}\n  memory = "{}"\n\n'.format(kind, cpus, memory)
+path.write_text(text[:blocks[0].start()] + replacement + text[blocks[0].end():])
+source = 'override' if size or sys.argv[4] else 'preserved'
+print('VM sizing source: {} ({} CPU, {} CPUs, {}).'.format(source, kind, cpus, memory))
+PY_VM
 "$fly" volumes list -a "$app" --json > "$work/volumes"
 json_items "$work/volumes" volumes > "$work/ids"
 if [[ ! -s "$work/ids" ]]; then

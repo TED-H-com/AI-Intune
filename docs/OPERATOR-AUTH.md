@@ -173,11 +173,11 @@ example.com/cap/clawctl-admin
 
 另外一條 non-operator route 是 opt-in signed chat webhook `POST /v1/channels/{id}/inbound`，有獨立 provider authentication；見 [CHANNELS.md](CHANNELS.md)。
 
-目前 code route manifest 固定為 353 operations：30 條 non-operator，加上 323 條 operator
-routes；operator manifest 的 exact capability tally 是 `view=128`、`operate=34`、`admin=161`，
-其中 `/v1/operator/*` JSON routes 共 159 條、HTML/BFF/CSV/download 共 164 條。這些數字由 route manifest 測試固定，不能靠
+目前 code route manifest 固定為 355 operations：30 條 non-operator，加上 325 條 operator
+routes；operator manifest 的 exact capability tally 是 `view=128`、`operate=34`、`admin=163`，
+其中 `/v1/operator/*` JSON routes 共 159 條、HTML/BFF/CSV/download 共 166 條。這些數字由 route manifest 測試固定，不能靠
 較高 capability 的隱含繼承湊數。
-353-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
+355-operation boundary 包含 machine-bearer bootstrap readiness receipt、operator-only bundle download、Tailnet Settings、Retention Maintenance、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名／備註、verifier registry 與派工、disk-clean 摘要與發布；完整 route 與 ledger 證據的實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 Disk policy and approval-decision JSON applies accept boundary-authorized human
 Tailscale admins or local admins with a current session MFA proof, checked before
@@ -644,7 +644,11 @@ protects the last active admin. User mutations are audit logged without password
 
 Management requires a human admin session and MFA. Creation requires at least one exact registered method/route-pattern entry, each explicitly eligible; malformed or empty lists are rejected at creation and authentication. Route eligibility is checked on every bearer request independently of its allowlist. Tokens support `view`, `operate`, and `operator-admin` scopes, expiry and immediate revocation checks.
 
-The boundary receives the Hub's configured `clientip.Resolver`: CIDRs, failure limiter keys, principal source and audit source use the resolved client address. `Fly-Client-IP` or `X-Forwarded-For` is trusted only when the connection peer matches `CLAWCTL_TRUSTED_PROXIES`, with `CLAWCTL_CLIENT_IP_HEADER` selecting the configured header. Untrusted peers cannot supply their own client identity; IPv6 limiter keys retain the shared /64 grouping.
+The boundary receives the Hub's configured `clientip.Resolver`: CIDRs, failure limiter keys, principal source and audit source use the resolved client address. `Fly-Client-IP`, `CF-Connecting-IP`, or `X-Forwarded-For` (selected case-insensitively) is trusted only when the connection peer matches `CLAWCTL_TRUSTED_PROXIES`, with `CLAWCTL_CLIENT_IP_HEADER` selecting the configured header. Untrusted peers cannot supply their own client identity; IPv6 limiter keys retain the shared /64 grouping.
+
+### Cloudflare Tunnel client IP
+
+When `cloudflared` runs on the host and Hub uses Docker bridge networking, the peer is the Docker bridge gateway (for example, `172.17.0.1`). Set `CLAWCTL_CLIENT_IP_HEADER=CF-Connecting-IP` and `CLAWCTL_TRUSTED_PROXIES=<gateway>/32` using the actual gateway, such as `172.17.0.1/32`. Never trust broad ranges. Only a trusted peer's single valid, unscoped IP value is honoured; invalid or multiple values fall back to the peer. See [Cloudflare Tunnel configuration](AUTOPILOT.md#cloudflare-tunnel).
 
 Service request audit is written once after CSRF and downstream handling complete. The first final HTTP status determines success (`<400`); implicit responses are 200 and informational headers do not determine the outcome. Denied requests use the bounded operator-denial ledger. Audit write failures after a response are logged without rewriting the completed response.
 

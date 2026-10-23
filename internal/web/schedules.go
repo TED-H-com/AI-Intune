@@ -25,6 +25,7 @@ type scheduleRow struct {
 	store.Schedule
 	TargetsLabel, NextLocal, NextUTC string
 	Results                          []operator.JobSummary
+	ExecutionBlocked                 bool
 }
 type scheduleMachine struct {
 	ID, Name string
@@ -109,6 +110,9 @@ func (s *Server) scheduleRow(v store.Schedule, names map[string]string) (schedul
 	row := scheduleRow{Schedule: v}
 	labels := []string{}
 	for _, id := range v.Targets {
+		if s.store.MachineExecutionAllowed(id) != nil {
+			row.ExecutionBlocked = true
+		}
 		name := names[id]
 		if name == "" {
 			name = id
@@ -171,7 +175,7 @@ func (s *Server) scheduleEditView(req store.ScheduleRequest) (*schedulePage, err
 		return nil, err
 	}
 	for _, m := range list.Items {
-		if m.RetiredAt != nil {
+		if m.RetiredAt != nil || s.store.MachineExecutionAllowed(m.MachineID) != nil {
 			continue
 		}
 		selected := false

@@ -33,6 +33,7 @@ kill_timeout = "30s"
     CLAWCTL_VERSION = "dev"
 
 [env]
+  LITESTREAM_SYNC_INTERVAL = "60s"
   CLAWCTL_AUTH_MODE = "tailscale"
   CLAWCTL_PORT = "8787"
   CLAWCTL_OPERATOR_CAPABILITY_PREFIX = "example.com/cap/clawctl"

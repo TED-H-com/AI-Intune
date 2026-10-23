@@ -346,6 +346,7 @@ func (s *Store) scriptEvidenceReady(jobID string) (required, ready bool, err err
 func validateScriptTargetsTx(tx dbTx, req ScriptRunRequest, e scriptcatalog.Entry) error {
 	var failures []string
 	for _, id := range req.Targets {
+
 		var name, osName string
 		var retired, checkin sql.NullString
 		var enabled, capable sql.NullBool
@@ -360,6 +361,9 @@ func validateScriptTargetsTx(tx dbTx, req ScriptRunRequest, e scriptcatalog.Entr
 			return ge
 		}
 		var reasons []string
+		if err := executionAllowedTx(tx, id); err != nil {
+			reasons = append(reasons, "monitor only: execution unavailable")
+		}
 		if retired.Valid {
 			reasons = append(reasons, "retired")
 		}

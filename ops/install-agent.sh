@@ -881,7 +881,7 @@ if [[ -e "$LEGACY_UNIT_FILE" || -L "$LEGACY_UNIT_FILE" ]]; then
   as_agent rm -f -- "$LEGACY_UNIT_FILE"
   as_agent systemctl --user daemon-reload
 fi
-echo "Managed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active jobs=enabled"
+echo "Installed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active; execution follows the enrollment profile."
 if [[ -n "${BACKUP_CONFIG:-}" ]]; then
   echo ""
   echo "Re-enrollment successful. The old configuration was backed up to:"

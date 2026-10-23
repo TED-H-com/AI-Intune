@@ -166,6 +166,8 @@ assert hashlib.sha256((p/'bundle.tar.gz').read_bytes()).hexdigest()==d['bundle']
 for name,value in [('token',d['enroll_token']),('name',d['display_name'])]:
     assert isinstance(value,str) and value and len(value)<=4096 and '\n' not in value
     (p/name).write_text(value)
+assert type(d.get('monitor_only',False)) is bool
+(p/'monitor-only').write_text('true' if d.get('monitor_only',False) else 'false')
 if d.get('tailscale'):
     t=d['tailscale']; assert all(re.fullmatch('tag:[a-z0-9-]{1,63}',x) for x in t['tags'])
     assert re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}',t['hostname'])
@@ -204,7 +206,7 @@ PY
 begin_step 'installing agent'
 logged bash "$work/bundle/install-agent.sh" --user "$agent_user" --hub "$hub" \
   --token-file "$work/token" --no-tailscale
-if [[ -f $work/bundle/fleet-apply/install.sh ]]; then
+if [[ $(<"$work/monitor-only") != true && -f $work/bundle/fleet-apply/install.sh ]]; then
   begin_step 'installing fleet applier'
   logged bash "$work/bundle/fleet-apply/install.sh" --agent-user "$agent_user"
 fi

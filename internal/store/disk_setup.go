@@ -27,7 +27,7 @@ func (s *Store) MachineDisks(machine string) (MachineDisks, error) {
 		return out, e
 	}
 	var raw string
-	e := s.rdb.QueryRow(`SELECT payload FROM observed_state WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,rowid DESC LIMIT 1`, machine).Scan(&raw)
+	e := s.rdb.QueryRow(`SELECT payload FROM observed_latest WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,measured_at DESC,observation_sequence DESC LIMIT 1`, machine).Scan(&raw)
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return out, e
 	}
@@ -71,12 +71,15 @@ func (s *Store) ApproveDiskSetup(machine string, j model.DiskJob, a AuditEntry) 
 		return "", e
 	}
 	defer tx.Rollback()
+	if e := executionAllowedTx(tx, machine); e != nil {
+		return "", e
+	}
 	var osName string
 	if e = tx.QueryRow(`SELECT os FROM machine_registry WHERE machine_id=?`, machine).Scan(&osName); e != nil || osName != "linux" {
 		return "", fmt.Errorf("Disk setup requires a Linux machine")
 	}
 	var raw string
-	if e = tx.QueryRow(`SELECT payload FROM observed_state WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,rowid DESC LIMIT 1`, machine).Scan(&raw); e != nil {
+	if e = tx.QueryRow(`SELECT payload FROM observed_latest WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,measured_at DESC,observation_sequence DESC LIMIT 1`, machine).Scan(&raw); e != nil {
 		return "", fmt.Errorf("Disk inventory is unavailable")
 	}
 	var disks []model.BlockDevice
@@ -133,6 +136,9 @@ func (s *Store) CancelDiskSetup(machine, id string, a AuditEntry) error {
 	return tx.Commit()
 }
 func (s *Store) DeliverDiskJobs(machine string) ([]model.DiskJob, error) {
+	if err := s.MachineExecutionAllowed(machine); err != nil {
+		return nil, err
+	}
 	out := []model.DiskJob{}
 	tx, e := s.beginWrite(context.Background(), "disk_setup_delivery")
 	if e != nil {
@@ -174,15 +180,40 @@ func (s *Store) DeliverDiskJobs(machine string) ([]model.DiskJob, error) {
 
 // Results are bound to both the authenticated machine and delivered job. The
 // terminal transition and its audit row share the observation transaction.
-func (s *Store) recordDiskSetupResults(tx dbTx, machine string, results []model.DiskJobResult, now time.Time) error {
+type preparedDiskSetupResult struct {
+	result model.DiskJobResult
+	body   string
+}
+
+func prepareDiskSetupResults(results []model.DiskJobResult) ([]preparedDiskSetupResult, error) {
 	if len(results) > 128 {
-		return fmt.Errorf("Too many disk setup results")
+		return nil, fmt.Errorf("Too many disk setup results")
 	}
+	prepared := make([]preparedDiskSetupResult, 0, len(results))
 	for _, r := range results {
 		if !r.Valid() {
-			return fmt.Errorf("Invalid disk setup result")
+			return nil, fmt.Errorf("Invalid disk setup result")
 		}
-		body, _ := json.Marshal(r)
+		body, err := json.Marshal(r)
+		if err != nil {
+			return nil, err
+		}
+		prepared = append(prepared, preparedDiskSetupResult{r, string(body)})
+	}
+	return prepared, nil
+}
+
+func (s *Store) recordDiskSetupResults(tx dbTx, machine string, results []model.DiskJobResult, now time.Time) error {
+	prepared, err := prepareDiskSetupResults(results)
+	if err != nil {
+		return err
+	}
+	return s.recordPreparedDiskSetupResults(tx, machine, prepared, now)
+}
+
+func (s *Store) recordPreparedDiskSetupResults(tx dbTx, machine string, results []preparedDiskSetupResult, now time.Time) error {
+	for _, prepared := range results {
+		r, body := prepared.result, prepared.body
 		changed, e := tx.Exec(`UPDATE disk_setup_jobs SET state=?,result=? WHERE id=? AND machine_id=? AND state='delivered'`, r.State, string(body), r.ID, machine)
 		if e != nil {
 			return e

@@ -34,6 +34,7 @@ type diskPolicyReviewPage struct {
 	WritesEnabled                bool
 }
 type diskApprovalsPage struct {
+	MonitorOnly               map[string]bool
 	Items                     []store.OpsApproval
 	State, Machine, Operation string
 	WritesEnabled             bool
@@ -291,7 +292,11 @@ func (s *Server) diskApprovals(w http.ResponseWriter, r *http.Request) {
 		s.diskOpsError(w, r, err, diskApprovalsBack)
 		return
 	}
-	s.render(w, r, "disk_approvals.html", page{Title: "Approvals", Nav: "tenant-approvals", DiskApprovals: &diskApprovalsPage{Items: items, State: q.Get("state"), Machine: q.Get("machine_id"), Operation: q.Get("operation"), WritesEnabled: s.operator.DiskOpsWritesEnabled()}})
+	monitor := map[string]bool{}
+	for _, item := range items {
+		monitor[item.MachineID] = s.store.MachineExecutionAllowed(item.MachineID) != nil
+	}
+	s.render(w, r, "disk_approvals.html", page{Title: "Approvals", Nav: "tenant-approvals", DiskApprovals: &diskApprovalsPage{MonitorOnly: monitor, Items: items, State: q.Get("state"), Machine: q.Get("machine_id"), Operation: q.Get("operation"), WritesEnabled: s.operator.DiskOpsWritesEnabled()}})
 }
 func (s *Server) previewDiskApproval(w http.ResponseWriter, r *http.Request) {
 	if !diskOpsForm(w, r, "id", "decision", "reason") {

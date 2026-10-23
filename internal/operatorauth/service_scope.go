@@ -28,6 +28,8 @@ func DangerousAction(route string) string {
 		return ""
 	}
 	switch {
+	case strings.Contains(path, "/execution-policy/"):
+		return "changing a machine monitoring profile"
 	case strings.HasSuffix(path, "/disks/approve") || strings.HasSuffix(path, "/disks/cancel"):
 		return "approving or cancelling disk setup"
 	case strings.HasPrefix(path, "/signins/"):

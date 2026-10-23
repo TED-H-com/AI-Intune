@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -434,5 +435,189 @@ func TestRegenerateRecoveryCodes(t *testing.T) {
 				t.Fatal("audit contains code")
 			}
 		}
+	}
+}
+
+func TestMFAAccountLockAcrossClientKeys(t *testing.T) {
+	fastAccountHashes(t)
+	s := newTestStore(t)
+	now := time.Unix(1800000000, 0)
+	s.nowFn = func() time.Time { return now }
+	a, err := s.CreateFirstAdmin("admin", testAdminPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := s.BeginTOTPEnrollment(a.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := totp.Code(secret, now.Unix()/30)
+	codes, err := s.ConfirmTOTP(a.AccountID, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := 0
+	freshKey := func() string {
+		keys++
+		return fmt.Sprintf("2001:db8:%x::1", keys)
+	}
+	// A six-digit code outside the accepted skew window: indistinguishable in
+	// shape from a real guess, but never valid.
+	wrong := func() string {
+		valid := map[string]bool{}
+		for d := int64(-1); d <= 1; d++ {
+			c, _ := totp.Code(secret, now.Unix()/30+d)
+			valid[c] = true
+		}
+		for n := 0; ; n++ {
+			if c := fmt.Sprintf("%06d", n); !valid[c] {
+				return c
+			}
+		}
+	}
+	fail := func(n int, key func() string) {
+		t.Helper()
+		for range n {
+			if err := s.VerifySecondFactor(a.AccountID, key(), wrong()); !errors.Is(err, ErrAccountAuth) {
+				t.Fatal(err)
+			}
+		}
+	}
+	nextCode := func() string {
+		now = now.Add(30 * time.Second)
+		c, _ := totp.Code(secret, now.Unix()/30)
+		return c
+	}
+	accountRow := func() (failed int, locked sql.NullString, ok bool) {
+		t.Helper()
+		err := s.rdb.QueryRow(`SELECT failed_attempts,locked_until FROM hub_mfa_failures WHERE account_id=?`, a.AccountID).Scan(&failed, &locked)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, locked, false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return failed, locked, true
+	}
+	lockouts := func() []string {
+		t.Helper()
+		rows, err := s.rdb.Query(`SELECT detail FROM audit_log WHERE action=? AND auth_subject=? AND detail IS NOT NULL ORDER BY audit_id`, AuditHubLockout, "local-user:"+a.AccountID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var details []string
+		for rows.Next() {
+			var d string
+			if err := rows.Scan(&d); err != nil {
+				t.Fatal(err)
+			}
+			details = append(details, d)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return details
+	}
+	lockDetail := func(at time.Time) string {
+		return "second factor: 10 consecutive failures across client keys; authenticator codes locked until " + fmtTime(at.Add(time.Hour))
+	}
+
+	// One below the limit, a valid code from any key still completes and resets the count.
+	fail(9, freshKey)
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), nextCode()); err != nil {
+		t.Fatal("below the account limit", err)
+	}
+	if _, _, ok := accountRow(); ok {
+		t.Fatal("success kept the account count")
+	}
+
+	// The tenth consecutive failure, each from a different /64, locks authenticator codes everywhere.
+	fail(10, freshKey)
+	lockedAt := now
+	if got := lockouts(); len(got) != 1 || got[0] != lockDetail(lockedAt) {
+		t.Fatalf("account lockout audit: %q", got)
+	}
+	locked := nextCode()
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), locked); !errors.Is(err, ErrAccountAuth) {
+		t.Fatal("login accepted authenticator code during account lock", err)
+	}
+	if err = s.VerifyAdminTOTP(a.AccountID, freshKey(), locked); !errors.Is(err, ErrAccountAuth) {
+		t.Fatal("step-up accepted authenticator code during account lock", err)
+	}
+	var last int64
+	if err = s.rdb.QueryRow(`SELECT last_used_step FROM hub_account_mfa WHERE account_id=?`, a.AccountID).Scan(&last); err != nil || last >= now.Unix()/30 {
+		t.Fatal("refused code consumed its step", last, err)
+	}
+	// Submissions refused by the lock neither extend nor reset it.
+	fail(25, freshKey)
+	lockedKey := freshKey()
+	fail(5, func() string { return lockedKey })
+	var keyFailures int
+	if err = s.rdb.QueryRow(`SELECT count(*) FROM hub_login_failures WHERE account_id=? AND client_ip=?`, a.AccountID, lockedKey).Scan(&keyFailures); err != nil || keyFailures != 0 {
+		t.Fatal("account-lock refusals consumed the per-key budget", keyFailures, err)
+	}
+	if failed, until, _ := accountRow(); failed != 10 || until.String != fmtTime(lockedAt.Add(time.Hour)) {
+		t.Fatal("refused submissions changed the account lock", failed, until)
+	}
+	now = lockedAt.Add(time.Hour - 31*time.Second) // nextCode advances 30s: one second before expiry
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), nextCode()); !errors.Is(err, ErrAccountAuth) {
+		t.Fatal("account lock ended early", err)
+	}
+	// After expiry the count starts over instead of continuing from the limit.
+	now = lockedAt.Add(time.Hour)
+	fail(9, freshKey)
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), nextCode()); err != nil {
+		t.Fatal("account lock did not expire or the count continued", err)
+	}
+
+	// A recovery code still completes login during the lock, and clears it.
+	fail(10, freshKey)
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), codes[0]); err != nil {
+		t.Fatal("recovery code refused during account lock", err)
+	}
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), nextCode()); err != nil {
+		t.Fatal("recovery code did not clear the account lock", err)
+	}
+
+	// Submissions refused by a per-key lock do not count toward the account.
+	same := freshKey()
+	fail(25, func() string { return same })
+	if failed, _, _ := accountRow(); failed != 5 {
+		t.Fatal("per-key refusals counted toward the account", failed)
+	}
+	fail(4, freshKey)
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), nextCode()); err != nil {
+		t.Fatal("per-key refusals locked the account", err)
+	}
+
+	// Failures older than a day no longer count.
+	fail(9, freshKey)
+	now = now.Add(24*time.Hour + time.Second)
+	fail(1, freshKey)
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), nextCode()); err != nil {
+		t.Fatal("day-old failures still counted", err)
+	}
+
+	// Password reset and MFA reset both clear the account lock.
+	fail(10, freshKey)
+	if err = s.ChangePassword(a.AccountID, testAdminPassword+" changed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := accountRow(); ok {
+		t.Fatal("password reset kept the account lock")
+	}
+	if err = s.VerifySecondFactor(a.AccountID, freshKey(), nextCode()); err != nil {
+		t.Fatal("password reset did not clear the account lock", err)
+	}
+	fail(10, freshKey)
+	if err = s.DisableMFA(a.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := accountRow(); ok {
+		t.Fatal("MFA reset kept the account lock")
+	}
+	if got := lockouts(); len(got) != 4 {
+		t.Fatalf("account lockout audits: %q", got)
 	}
 }

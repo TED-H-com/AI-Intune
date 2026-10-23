@@ -135,7 +135,7 @@ func parseMachineIndexRequest(r *http.Request) (operator.MachineListRequest, err
 	if legacy != "" {
 		if len(request.States) > 0 || request.Lifecycle != "" || request.Reporting != "" ||
 			request.Channel != "" || request.MachineID != "" || request.DisplayName != "" || request.Cursor != "" {
-			return operator.MachineListRequest{}, errors.New("legacy machine filter cannot be mixed with canonical filters")
+			return operator.MachineListRequest{}, errors.New("the machines filter cannot be combined with other machine filters")
 		}
 		request.Lifecycle = operator.MachineLifecycleActive
 		switch legacy {
@@ -149,7 +149,7 @@ func parseMachineIndexRequest(r *http.Request) (operator.MachineListRequest, err
 				}
 			}
 		default:
-			return operator.MachineListRequest{}, errors.New("unknown legacy machine filter")
+			return operator.MachineListRequest{}, errors.New("unknown machines filter value")
 		}
 	}
 	if err := operator.ValidateMachineListRequest(request); err != nil {

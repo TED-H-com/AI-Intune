@@ -541,8 +541,8 @@ const enrollTTLSeconds = int64(enrollTTL / time.Second)
 // second credential under a conveniently new key.
 func (s *Server) previewEnrollToken(w http.ResponseWriter, r *http.Request) {
 	preview, err := s.operator.PreviewEnrollToken(operator.EnrollTokenPreviewRequest{
-		DisplayName: r.FormValue("name"),
-		TTLSeconds:  enrollTTLSeconds,
+		MonitorOnly: r.FormValue("monitor_only") == "true", DisplayName: r.FormValue("name"),
+		TTLSeconds: enrollTTLSeconds,
 	})
 	if err != nil {
 		status, _, detail := operator.HTTPError(err)
@@ -572,7 +572,7 @@ func (s *Server) previewEnrollToken(w http.ResponseWriter, r *http.Request) {
 		Title: "確認 " + preview.DisplayName + " 的 enroll 票", Nav: "machines-enrollment",
 		Now: time.Now().Local().Format("2006-01-02 15:04"),
 		EnrollPreview: &enrollPreviewResult{
-			Name: preview.DisplayName, Reason: strings.TrimSpace(r.FormValue("reason")),
+			MonitorOnly: preview.MonitorOnly, Name: preview.DisplayName, Reason: strings.TrimSpace(r.FormValue("reason")),
 			PreviewDigest: preview.PreviewDigest, IdempotencyKey: key,
 			ExpiresAt:                  preview.ExpiresAtIfCreatedNow.Local().Format("2006-01-02 15:04"),
 			TTL:                        (time.Duration(preview.TTLSeconds) * time.Second).String(),
@@ -621,7 +621,7 @@ func (s *Server) doEnrollToken(w http.ResponseWriter, r *http.Request) {
 	// secret-bearing handler safe when embedded or tested without that wrapper.
 	w.Header().Set("Cache-Control", "no-store")
 	result, err := s.operator.CreateEnrollToken(operator.EnrollTokenCreateRequest{
-		DisplayName:    r.FormValue("name"),
+		MonitorOnly: r.FormValue("monitor_only") == "true", DisplayName: r.FormValue("name"),
 		TTLSeconds:     enrollTTLSeconds,
 		PreviewDigest:  r.FormValue("preview_digest"),
 		Reason:         r.FormValue("reason"),
@@ -821,6 +821,7 @@ type tokenResult struct {
 }
 
 type enrollPreviewResult struct {
+	MonitorOnly                                 bool
 	Name, Reason, PreviewDigest, IdempotencyKey string
 	ExpiresAt, TTL                              string
 	CreatesExpectedMachine                      bool
@@ -852,6 +853,10 @@ func (s *Server) doConnect(w http.ResponseWriter, r *http.Request) {
 			Outcome: operator.MachineConnectAuditDetailUnavailable, MachineID: id,
 		})
 		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.MachineExecutionAllowed(id); err != nil {
+		s.renderActionStatus(w, r, 403, "Monitor only", "Actions are unavailable", "只監控 / Monitor only: this machine only reports observations.", "/machines/"+id)
 		return
 	}
 	connect, err := s.operator.MachineConnect(machine)

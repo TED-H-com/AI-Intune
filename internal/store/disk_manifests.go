@@ -205,6 +205,9 @@ func (s *Store) DiskManifestForJob(machine, job, id, digest string) (json.RawMes
 }
 
 func diskManifestForJobTx(tx dbTx, machine, job, id, digest string, now time.Time) (json.RawMessage, time.Time, error) {
+	if err := executionAllowedTx(tx, machine); err != nil {
+		return nil, time.Time{}, err
+	}
 	var body, stored, expiry, spec, state, lease string
 	err := tx.QueryRow(`SELECT m.body,m.digest,m.expires_at,d.spec,j.state,COALESCE(j.lease_expires_at,'') FROM ops_manifests m JOIN ops_approvals a ON a.id=m.approval_id JOIN jobs j ON j.job_id=a.job_id JOIN desired_state d ON d.desired_id=j.desired_id WHERE m.id=? AND m.machine_id=? AND j.machine_id=? AND j.job_id=? AND a.state='consumed'`, id, machine, machine, job).Scan(&body, &stored, &expiry, &spec, &state, &lease)
 	if err == sql.ErrNoRows {
