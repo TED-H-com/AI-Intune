@@ -8,6 +8,10 @@ import (
 // Status evidence is agent supplied. Only fixed categories and numeric fields
 // cross MCP; free-form notes, mount names and protections become digests.
 func redactedDiskStatus(s store.DiskOpsStatus) map[string]any {
+	growth := []any{}
+	for _, g := range s.Growth {
+		growth = append(growth, map[string]any{"mount_digest": "sha256:" + scriptcatalog.Digest([]byte(g.Mount)), "gb_per_hour": g.GBPerHour, "window_minutes": g.WindowMinutes, "coverage_minutes": g.CoverageMinutes, "samples": g.Samples, "known": g.Known, "sustained": g.Sustained, "time_to_full_hours": g.TimeToFullHours, "measured_at": g.MeasuredAt})
+	}
 	mounts := []any{}
 	for _, m := range s.Mounts {
 		mounts = append(mounts, map[string]any{"mount_digest": "sha256:" + scriptcatalog.Digest([]byte(m.Mount)), "total_bytes": m.TotalBytes, "available_bytes": m.AvailableBytes, "percent": m.Percent})
@@ -52,5 +56,5 @@ func redactedDiskStatus(s store.DiskOpsStatus) map[string]any {
 			v[scope] = map[string]any{"required_days": c.RequiredDays, "agreed_days": c.AgreedDays, "satisfied": c.Satisfied}
 		}
 		return v
-	}(), "ignored_mounts": s.IgnoredMounts, "actions": s.Actions, "supervision": supervision, "machine_id": s.MachineID, "mounts": mounts, "thresholds": s.Thresholds, "last_safe_tier": project(s.LastSafeTier), "preview": project(s.Preview), "skip_count": len(s.Skips), "ownership": ownership, "writes_enabled": s.WritesEnabled}
+	}(), "growth": growth, "ignored_mounts": s.IgnoredMounts, "actions": s.Actions, "supervision": supervision, "machine_id": s.MachineID, "mounts": mounts, "thresholds": s.Thresholds, "last_safe_tier": project(s.LastSafeTier), "preview": project(s.Preview), "skip_count": len(s.Skips), "ownership": ownership, "writes_enabled": s.WritesEnabled}
 }

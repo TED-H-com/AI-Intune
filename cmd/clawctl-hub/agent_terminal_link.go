@@ -91,7 +91,7 @@ func (l *wsLink) Send(frame agentrelay.Downstream) error {
 	// is the only Send path that closes the link.
 	overFrames := len(l.queue) >= agentTerminalInputQueueFrames
 	overBytes := int64(l.queuedBytes)+int64(payloadBytes) > int64(agentTerminalQueueByteBudget)
-	if (frame.Type == agentrelay.DownstreamInput && (overFrames || overBytes)) ||
+	if ((frame.Type == agentrelay.DownstreamInput || frame.Type == agentrelay.DownstreamSignin) && (overFrames || overBytes)) ||
 		(frame.Type == agentrelay.DownstreamResize && overFrames) {
 		l.mu.Unlock()
 		return agentlink.ErrLinkBusy

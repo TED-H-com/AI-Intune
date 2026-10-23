@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"math"
 	"strings"
@@ -323,6 +324,13 @@ func operatorDiagnosticNoopRejectionAuditDetail(code, detail string) string {
 // immutable replay receipt and audit row. It never leaves the orphan desired
 // state that the historical two-transaction CLI path could leave behind.
 func (s *Store) ApplyOperatorDiagnosticNoop(req OperatorDiagnosticNoopRequest) (OperatorDiagnosticNoopResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorDiagnosticNoopResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return OperatorDiagnosticNoopResult{}, operatorError(OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略")
 	}
@@ -382,7 +390,7 @@ func (s *Store) ApplyOperatorDiagnosticNoop(req OperatorDiagnosticNoopRequest) (
 	if !validOperatorDiagnosticNoopTimeout(req.ExecutionTimeout) {
 		return reject(OperatorCodeBadDiagnosticTimeout)
 	}
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired)
 	}
 	if strings.TrimSpace(req.PreviewDigest) == "" {
@@ -620,7 +628,7 @@ func validateOperatorDiagnosticNoopAudit(tx dbTx, req OperatorDiagnosticNoopRequ
 	err := tx.QueryRow(`SELECT COUNT(*) FROM audit_log
 	 WHERE action=? AND machine_id=? AND COALESCE(reason,'')=? AND idempotency_key=? AND request_digest=?
 	   AND at=? AND outcome=? AND COALESCE(detail,'')=?`,
-		string(AuditDiagnosticNoop), req.MachineID, truncAudit(req.Reason, auditMaxReason),
+		string(AuditDiagnosticNoop), req.MachineID, truncReason(req.Reason),
 		req.IdempotencyKey, req.RequestDigest, createdAt, outcomeOf(ok), truncAudit(detail, auditMaxReason)).Scan(&count)
 	return count == 1, err
 }

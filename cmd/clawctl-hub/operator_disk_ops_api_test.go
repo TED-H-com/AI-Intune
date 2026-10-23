@@ -160,7 +160,7 @@ func TestDiskWebRoutesEnforceCSRFAndLockedCSP(t *testing.T) {
 		r.RemoteAddr = "100.100.10.20:4321"
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
-		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), "<script") {
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(strings.ReplaceAll(w.Body.String(), "<script data-audit-reason>", ""), "<script") {
 			t.Fatalf("render/CSP %d %s", w.Code, w.Body.String())
 		}
 	}
@@ -291,5 +291,24 @@ func TestDiskScriptAndScheduleJSONFreshGateBeforeDecodeAndReplay(t *testing.T) {
 	h.operatorRoutes(f.mux)
 	for _, path := range []string{"/v1/operator/script-runs", "/v1/operator/schedules/upsert/apply", "/v1/operator/schedules/set-enabled/apply", "/v1/operator/schedules/fixture/run-now"} {
 		assertDiskJSONLocalDenied(t, f.mux, path, "retry-key", `invalid JSON`)
+	}
+}
+
+func TestDiskGrowthStatusAPI(t *testing.T) {
+	f := newJobsFixture(t, "example-device")
+	h := &hub{store: f.store, artifactsDir: f.artifactsDir}
+	h.operatorRoutes(f.mux)
+	r := verifiedOperatorRequest(httptest.NewRequest("GET", "/v1/operator/disk-ops/status/"+f.machine.id, nil), operatorauth.View)
+	w := httptest.NewRecorder()
+	f.mux.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d %s", w.Code, w.Body.String())
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body["growth"]) != "[]" {
+		t.Fatalf("expected empty growth array: %s", body["growth"])
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"strings"
 	"time"
 
@@ -82,6 +83,14 @@ func CompliancePolicyPreviewDigest(policyID string, expected int64, p compliance
 // 重新發佈同一組規則不會產生新的 revision：判決不會因此改變，而每一台被指派
 // 的機器都得重新解釋自己為什麼還是那個判決。
 func (s *Store) ApplyOperatorCompliancePolicy(req OperatorCompliancePolicyRequest) (OperatorCompliancePolicyResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorCompliancePolicyResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorCompliancePolicyResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -132,7 +141,7 @@ func (s *Store) ApplyOperatorCompliancePolicy(req OperatorCompliancePolicyReques
 	if err := validPolicyID(req.PolicyID); err != nil {
 		return reject(OperatorCodeCompliancePolicyInvalid, err.Error())
 	}
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired, "reason 不可省略：這一份規則會改變機隊的判決")
 	}
 	if req.ConfirmPolicyID != req.PolicyID {
@@ -248,6 +257,14 @@ func ComplianceAssignmentPreviewDigest(scope compliance.Scope, scopeID, policyID
 
 // ApplyOperatorComplianceAssignment pins one published rule set to one scope.
 func (s *Store) ApplyOperatorComplianceAssignment(req OperatorComplianceAssignmentRequest) (OperatorComplianceAssignmentResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorComplianceAssignmentResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorComplianceAssignmentResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -298,7 +315,7 @@ func (s *Store) ApplyOperatorComplianceAssignment(req OperatorComplianceAssignme
 		return OperatorComplianceAssignmentResult{}, err
 	}
 
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired, "reason 不可省略：這一份指派會改變這些機器的判決")
 	}
 	if req.ConfirmScopeID != req.ScopeID {

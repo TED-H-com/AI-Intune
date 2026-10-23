@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"strings"
 	"time"
@@ -274,6 +275,13 @@ func operatorVerifierSuccessDetail(receipt operatorVerifierReceipt) string {
 // registration. The registry row, credential hash, redacted replay receipt and
 // audit evidence either commit together or not at all.
 func (s *Store) ApplyOperatorVerifier(req OperatorVerifierCreateRequest) (OperatorVerifierCreateResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorVerifierCreateResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorVerifierCreateResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -495,7 +503,7 @@ func validateOperatorVerifierRejectionEvidence(tx dbTx, cached operatorCachedReq
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='failed'
 	   AND COALESCE(detail,'')=?`,
 		string(AuditVerifierRegister), truncAudit(req.DisplayName, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		cached.CreatedAt, cached.ErrorDetail.String).Scan(&count)
 	if err != nil {
 		return false, err
@@ -527,7 +535,7 @@ func validateOperatorVerifierSuccessEvidence(tx dbTx, receipt operatorVerifierRe
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='ok'
 	   AND COALESCE(detail,'')=?`,
 		string(AuditVerifierRegister), truncAudit(receipt.DisplayName, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		fmtTime(receipt.CreatedAt), operatorVerifierSuccessDetail(receipt)).Scan(&count)
 	if err != nil {
 		return false, err

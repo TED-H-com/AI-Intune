@@ -11,6 +11,7 @@ import (
 )
 
 func TestObservationUsesRulesAndTokenFromOneAtomicPolicyBundle(t *testing.T) {
+	fakeDiskInventory(t)
 	dir := t.TempDir()
 	oldPath := filepath.Join(dir, "old.jsonl")
 	newPath := filepath.Join(dir, "new.jsonl")
@@ -53,9 +54,20 @@ func TestObservationUsesRulesAndTokenFromOneAtomicPolicyBundle(t *testing.T) {
 }
 
 func TestObservationBeforeFirstCheckinCarriesNoInventedPolicyToken(t *testing.T) {
+	fakeDiskInventory(t)
 	obs := model.ObservationBatch{MeasuredAt: time.Now().UTC()}
 	applyWorkloadPolicy(&obs, nil)
 	if obs.WorkloadPolicyToken != "" || obs.Artifacts != nil || obs.Events != nil {
 		t.Fatalf("pre-checkin observation invented policy evidence: %+v", obs)
 	}
+}
+
+// These policy tests must not enumerate the test runner's real block devices.
+func fakeDiskInventory(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lsblk"), []byte("#!/bin/sh\nprintf '%s\\n' '{\"blockdevices\":[]}'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

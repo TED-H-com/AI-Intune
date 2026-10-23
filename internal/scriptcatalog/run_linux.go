@@ -149,7 +149,7 @@ func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	defer cancel()
 	interpreter := "/bin/sh"
 	home := dir
-	if e.ID == "bat-sweep-report-v1" || IsDisk(e.ID) {
+	if e.ID == "bat-sweep-report-v1" || IsDisk(e.ID) || IsReadReport(e.ID) {
 		interpreter = "/usr/bin/python3"
 		account, err := user.Current()
 		if err != nil || account.HomeDir == "" {
@@ -158,7 +158,7 @@ func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 		home = account.HomeDir
 	}
 	argv := []string{path}
-	if e.ID == "bat-sweep-report-v1" || IsDisk(e.ID) {
+	if e.ID == "bat-sweep-report-v1" || IsDisk(e.ID) || IsReadReport(e.ID) {
 		argv = []string{"-I", "-S", "-B", path}
 	}
 	cmd := exec.CommandContext(ctx, interpreter, argv...)
@@ -243,6 +243,12 @@ func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	}
 	result.TimedOut = ctx.Err() == context.DeadlineExceeded
 	result.Stdout, result.Stderr = stdout.text(), stderr.text()
+	if IsReadReport(e.ID) {
+		result.Stdout = ""
+		if stdout.count <= int64(stdout.cap) {
+			result.Stdout = RedactReadReportJSON(e.ID, stdout.buf.Bytes())
+		}
+	}
 	if IsDisk(e.ID) {
 		result.Stdout = ""
 		if stdout.count <= int64(stdout.cap) {

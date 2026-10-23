@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/store"
+	"strings"
 	"time"
 )
 
@@ -68,7 +70,20 @@ func (h *hub) sendDiskAlerts(now time.Time) {
 						continue
 					}
 				}
-				delivered := h.deliver(kind, fmt.Sprintf("Disk %s %s · machine %s · episode %s · %s\nAuthenticated details: /machines/%s/disk", a.Severity, state, a.MachineID, a.ID, a.ConditionKey, a.MachineID), now)
+				growthDetail := ""
+				if strings.HasPrefix(a.ConditionKey, "growth:") {
+					if items, e := h.store.DiskGrowthRead(a.MachineID); e == nil {
+						for _, g := range items {
+							if g.Known && a.ConditionKey == "growth:"+scriptcatalog.Digest([]byte(g.Mount)) {
+								growthDetail = fmt.Sprintf(" · latest %.2f GB/hour over %d min (%d samples)", g.GBPerHour, g.WindowMinutes, g.Samples)
+								if g.TimeToFullHours != nil {
+									growthDetail += fmt.Sprintf(" · estimated %.1f hours to full", *g.TimeToFullHours)
+								}
+							}
+						}
+					}
+				}
+				delivered := h.deliver(kind, fmt.Sprintf("Disk %s %s · machine %s · episode %s · %s\nAuthenticated details: /machines/%s/disk", a.Severity, state, a.MachineID, a.ID, a.ConditionKey+growthDetail, a.MachineID), now)
 				if reservation != 0 {
 					_ = h.store.FinishDiskAlertDelivery(reservation, delivered)
 				}

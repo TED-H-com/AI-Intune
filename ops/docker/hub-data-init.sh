@@ -103,6 +103,21 @@ for name in "$amd64" "$arm64" "$sums"; do
   fi
 done
 
+optional_bundles=''
+for os in darwin windows; do
+  first="clawctl-agent-bootstrap-$os-amd64.tar.gz"
+  second="clawctl-agent-bootstrap-$os-arm64.tar.gz"
+  if [ -e "$seed/$first" ] || [ -L "$seed/$first" ] || [ -e "$seed/$second" ] || [ -L "$seed/$second" ]; then
+    for name in "$first" "$second"; do
+      if [ -L "$seed/$name" ] || [ ! -f "$seed/$name" ]; then
+        echo "hub-data-init: incomplete $os image seed" >&2
+        exit 1
+      fi
+      optional_bundles="$optional_bundles $name"
+    done
+  fi
+done
+
 if [ -L "$dest_root" ] || [ -L "$dest" ]; then
   echo "hub-data-init: refusing symlink in the agent bootstrap path" >&2
   exit 1
@@ -110,7 +125,7 @@ fi
 mkdir -p "$dest_root"
 
 if [ -d "$dest" ]; then
-  for name in "$amd64" "$arm64" "$sums"; do
+  for name in "$amd64" "$arm64" "$sums" $optional_bundles; do
     if [ -L "$dest/$name" ] || [ ! -f "$dest/$name" ]; then
       echo "hub-data-init: $dest is incomplete; remove that directory and start again" >&2
       exit 1
@@ -128,6 +143,11 @@ else
   }
   trap cleanup EXIT
   cp -p "$seed/$amd64" "$seed/$arm64" "$seed/$sums" "$stage/"
+  for name in $optional_bundles; do
+    cp -p "$seed/$name" "$stage/$name"
+    chmod 0644 "$stage/$name"
+    chown "$hub_uid:$hub_gid" "$stage/$name"
+  done
   chmod 0700 "$stage"
   chmod 0644 "$stage/$amd64" "$stage/$arm64" "$stage/$sums"
   chown "$hub_uid:$hub_gid" "$stage" "$stage/$amd64" "$stage/$arm64" "$stage/$sums"

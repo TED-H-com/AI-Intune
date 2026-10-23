@@ -1,5 +1,29 @@
 # New Linux host
 
+## Fastest path: join command
+
+From the non-root account that will run the agent:
+
+```sh
+curl -fsSL https://hub.example.com/join.sh | sudo bash
+```
+
+Open the displayed Hub link (`/machines/join`), match the code, choose a name,
+and click **Approve** with a fresh administrator MFA session. No credentials
+need to be copied. The command prepares OpenSSH, optionally connects Tailscale
+with a Hub-issued pre-authorised key, verifies the agent bundle, and runs the
+agent installer as root for your non-root account. Python 3 is installed if missing.
+The initial command needs sudo access. Use `--user NAME` when invoking from a root shell
+(download the script first, then run `bash join.sh --user NAME`).
+
+Requests last 15 minutes. Rejection or expiry exits without installing the
+agent; run the command again for a new code. If the Hub restarts after approval,
+ask the administrator to approve again while the request is valid. Temporary
+credential files are private and shredded on exit. The optional bundled
+`fleet-apply/install.sh` runs when present. Check `/readiness` after joining.
+
+The longer manual bootstrap path follows.
+
 Use Ubuntu 22.04, 24.04, or 26.04, or Oracle Linux 9. Use amd64 or arm64.
 Create the VM with a non-root account named `ops`, an SSH key, and sudo access.
 Keep enough free disk for the agent, its jobs, and a 500 MB journal.
@@ -102,3 +126,25 @@ bash ops/fleet/net/ntp-check.sh
 
 Check the latest check-in and evidence on the Hub. Review timer status and disk
 space. Disk-clean behavior is described in [maintenance](../../ops/maintenance/README.md).
+
+## Automatic host setup
+
+Install the root applier for the agent service account, then open
+**Machines → Configuration → Host setup profile** to choose Linux settings.
+The initial profile manages nothing. Preview and apply the bootstrap phase:
+
+```sh
+bash ops/fleet/bootstrap/bootstrap-host.sh --phases applier
+sudo bash ops/fleet/bootstrap/bootstrap-host.sh --apply --resume --phases applier
+```
+
+Bootstrap selects `fleet-apply/install.sh` from a supplied `--package-dir` when
+present; otherwise it uses the checkout installer. Plan prints the root step;
+apply records success only after installation, and resume retries failures.
+The installer needs the non-root agent account (`--agent-user` when run directly).
+See [Host setup profile](../HOST-PROFILE.md) for drift repair, status and rollback.
+
+For a new empty Linux data disk, use the machine's **Disks → Approve disk setup**
+form after installing the root applier. Review the identity and owner first. See
+[New disk setup](../HOST-PROFILE.md#new-disk-setup) for safety checks and results;
+existing disks are never wiped or reused.

@@ -4,7 +4,9 @@
 GO ?= $(shell command -v go 2>/dev/null || echo $(HOME)/.local/go/bin/go)
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)
 
 # ⚠ CGO_ENABLED=0 是硬性要求，不是偏好。
 #
@@ -56,8 +58,8 @@ agent-bundles-darwin: cross-darwin
 # user scheduled-task template. This is the LaunchAgent analog, not LocalSystem.
 cross-windows:
 	@mkdir -p build
-	GOOS=windows GOARCH=amd64 $(BUILD) -o build/clawctl-agent-windows-amd64 ./cmd/clawctl-agent
-	GOOS=windows GOARCH=arm64 $(BUILD) -o build/clawctl-agent-windows-arm64 ./cmd/clawctl-agent
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -trimpath -ldflags "$(LDFLAGS) -H=windowsgui" -o build/clawctl-agent-windows-amd64 ./cmd/clawctl-agent
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -trimpath -ldflags "$(LDFLAGS) -H=windowsgui" -o build/clawctl-agent-windows-arm64 ./cmd/clawctl-agent
 	@ls -la build/clawctl-agent-windows-*
 
 agent-bundles-windows: cross-windows

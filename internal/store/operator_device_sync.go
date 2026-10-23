@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"math"
 	"strings"
@@ -351,6 +352,13 @@ func operatorDeviceSyncRejectionAuditDetail(code, detail string) string {
 // immutable idempotency receipt and audit evidence. It has no transport route;
 // callers must first obtain a preview from the same Store authority.
 func (s *Store) ApplyOperatorDeviceSync(req OperatorDeviceSyncRequest) (OperatorDeviceSyncResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorDeviceSyncResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorDeviceSyncResult{}, operatorError(OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
 	}
@@ -406,7 +414,7 @@ func (s *Store) ApplyOperatorDeviceSync(req OperatorDeviceSyncRequest) (Operator
 	if !validOperatorDeviceSyncTimeout(req.ExecutionTimeout) {
 		return reject(OperatorCodeBadDeviceSyncTimeout)
 	}
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired)
 	}
 	if strings.TrimSpace(req.PreviewDigest) == "" {
@@ -919,7 +927,7 @@ func validateOperatorDeviceSyncAudit(tx dbTx, req OperatorDeviceSyncRequest, cre
 	   AND COALESCE(auth_capability,'')=? AND COALESCE(auth_method,'')=?
 	   AND COALESCE(auth_decision,'')=? AND COALESCE(boundary_decision,'')=?
 	   AND COALESCE(source_kind,'')=?`,
-		string(AuditDeviceSync), req.MachineID, truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey,
+		string(AuditDeviceSync), req.MachineID, truncReason(req.Reason), req.IdempotencyKey,
 		req.RequestDigest, createdAt, subject, truncAudit(subject, auditMaxReason), outcomeOf(ok),
 		truncAudit(detail, auditMaxReason), sourceAddr, req.Audit.WhoNode, req.Audit.WhoUser,
 		req.Audit.WhoUnavailable, truncAudit(req.Audit.UserAgent, 200), req.Audit.AuthSubject,

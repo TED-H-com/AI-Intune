@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"strings"
 	"time"
@@ -355,6 +356,13 @@ func operatorMachineLifecycleOperation(machineID string) string {
 // projection, append-only transition, immutable receipt, and original audit
 // evidence either all commit or none do.
 func (s *Store) ApplyOperatorMachineLifecycle(req OperatorMachineLifecycleRequest) (OperatorMachineLifecycleResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorMachineLifecycleResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return OperatorMachineLifecycleResult{}, operatorError(OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略")
 	}
@@ -423,7 +431,7 @@ func (s *Store) ApplyOperatorMachineLifecycle(req OperatorMachineLifecycleReques
 	if !validMachineLifecycleState(req.DesiredState) {
 		return reject(OperatorCodeBadLifecycle)
 	}
-	if strings.TrimSpace(req.Reason) == "" {
+	if !validAuditReason(req.Reason) {
 		return reject(OperatorCodeReasonRequired)
 	}
 	if req.ExpectedRevision == nil {
@@ -761,7 +769,7 @@ func validateOperatorMachineLifecycleAuditEvidence(tx dbTx, req OperatorMachineL
 	err := tx.QueryRow(`SELECT COUNT(*) FROM audit_log
 	 WHERE action=? AND machine_id=? AND COALESCE(reason,'')=?
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome=? AND COALESCE(detail,'')=?`,
-		string(AuditMachineLifecycle), req.MachineID, truncAudit(req.Reason, auditMaxReason),
+		string(AuditMachineLifecycle), req.MachineID, truncReason(req.Reason),
 		req.IdempotencyKey, req.RequestDigest, at, outcomeOf(ok), detail).Scan(&count)
 	return count == 1, err
 }

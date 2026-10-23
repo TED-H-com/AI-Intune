@@ -21,7 +21,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
-var serviceTokenPatterns = []string{"GET /v1/operator/service-tokens/self", "POST /v1/operator/service-tokens/rotate", "GET /account/service-tokens", "POST /account/service-tokens/create", "POST /account/service-tokens/revoke"}
+var serviceTokenPatterns = []string{"GET /v1/operator/service-tokens/self", "POST /v1/operator/service-tokens/rotate", "GET /account/service-tokens", "POST /account/service-tokens/create", "POST /account/service-tokens/revoke", "POST /account/service-tokens/routes"}
 
 type serviceFormRoute struct {
 	Pattern, Label, Description string
@@ -29,6 +29,7 @@ type serviceFormRoute struct {
 }
 type serviceFormData struct {
 	Tokens                                                []store.ServiceToken
+	TokenRoutes                                           map[string][]serviceFormRoute
 	Message, ErrorField, Secret, CreatedID, CreatedExpiry string
 	Name, Scope, Expiry, CIDRs, MaxLifetime               string
 	Routes                                                []serviceFormRoute
@@ -40,7 +41,7 @@ const serviceTokenCopyScript = `const t=document.getElementById("issued-token");
 var serviceTokenForm = template.Must(template.New("service-tokens").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{{if .ErrorField}}Error: {{end}}Service tokens</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem}label{display:block;margin:.6rem 0}input,select,textarea,button{font:inherit}table{border-collapse:collapse}th,td{padding:.5rem;border:1px solid #ccc;text-align:left}small{display:block}fieldset{margin:1rem 0}.error{background:#fff0f0;color:#8b0000;border:3px solid #b00020;padding:1rem;font-weight:bold}[aria-invalid="true"]{outline:2px solid #b00020}</style></head><body><a href="/account/security">Account security</a><h1>Service tokens</h1>{{if .ErrorField}}<div class="error" role="alert">{{.Message}}</div>{{else}}<p>{{.Message}}</p>{{end}}
 <h2>Create token</h2><form method="post" action="/account/service-tokens/create">
 {{if eq .ErrorField "name"}}<p class="error" id="name-error">{{.Message}}</p>{{end}}<label for="name">Name</label><input id="name" {{if eq .ErrorField "name"}}aria-invalid="true" aria-errormessage="name-error"{{end}} name="name" value="{{.Name}}" required maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" aria-describedby="name-help"><small id="name-help">Letters, digits, - and _ only; 1–64 characters.</small>
-{{if eq .ErrorField "scope"}}<p class="error" id="scope-error">{{.Message}}</p>{{end}}<label for="scope">Scope</label><select id="scope" {{if eq .ErrorField "scope"}}aria-invalid="true" aria-errormessage="scope-error"{{end}} name="scope"><option value="view" {{if eq .Scope "view"}}selected{{end}}>view</option><option value="operate" {{if eq .Scope "operate"}}selected{{end}}>operate</option></select><small>view: read-only routes. operate: view plus running READ-only catalog scripts.</small>
+{{if eq .ErrorField "scope"}}<p class="error" id="scope-error">{{.Message}}</p>{{end}}<label for="scope">Scope</label><select id="scope" {{if eq .ErrorField "scope"}}aria-invalid="true" aria-errormessage="scope-error"{{end}} name="scope"><option value="view" {{if eq .Scope "view"}}selected{{end}}>view</option><option value="operate" {{if eq .Scope "operate"}}selected{{end}}>operate</option><option value="operator-admin" {{if eq .Scope "operator-admin"}}selected{{end}}>Operator admin — routine fleet administration</option></select><small>Operator admin: enroll machines, manage and run schedules, assign profiles, and run deployments. Cannot delete machines or tenants, change authentication/MFA, manage users, or create/rotate service tokens. view: read-only routes. operate: view plus running READ-only catalog scripts.</small>
 {{if eq .ErrorField "expiry_days"}}<p class="error" id="expiry_days-error">{{.Message}}</p>{{end}}<label for="expiry">Expiry</label><select id="expiry" {{if eq .ErrorField "expiry_days"}}aria-invalid="true" aria-errormessage="expiry_days-error"{{end}} name="expiry_days"><option value="30" {{if eq .Expiry "30"}}selected{{end}}>30 days</option><option value="60" {{if eq .Expiry "60"}}selected{{end}}>60 days</option><option value="90" {{if eq .Expiry "90"}}selected{{end}}>90 days</option></select>
 {{if eq .ErrorField "max_lifetime"}}<p class="error" id="max_lifetime-error">{{.Message}}</p>{{end}}<label for="max-lifetime">Maximum chain lifetime</label><select id="max-lifetime" {{if eq .ErrorField "max_lifetime"}}aria-invalid="true" aria-errormessage="max_lifetime-error"{{end}} name="max_lifetime"><option value="none">None (unlimited rotation)</option><option value="180" {{if eq .MaxLifetime "180"}}selected{{end}}>180 days</option><option value="365" {{if eq .MaxLifetime "365"}}selected{{end}}>365 days</option></select>
 <fieldset {{if eq .ErrorField "routes"}}aria-invalid="true" aria-errormessage="routes-error"{{end}}><legend>Allowed routes</legend>{{if eq .ErrorField "routes"}}<p class="error" id="routes-error">{{.Message}}</p>{{end}}<small>Select exact API routes. Script-runs requires operate scope and accepts only READ catalog scripts.</small>{{range .Routes}}<label><input type="checkbox" name="routes" value="{{.Pattern}}" {{if .Selected}}checked{{end}}> {{.Label}} — {{.Description}} <code>{{.Pattern}}</code></label>{{end}}</fieldset>
@@ -48,7 +49,7 @@ var serviceTokenForm = template.Must(template.New("service-tokens").Parse(`<!doc
 {{if eq .ErrorField "password"}}<p class="error" id="password-error">{{.Message}}</p>{{end}}<label for="password">Current password</label><input id="password" {{if eq .ErrorField "password"}}aria-invalid="true" aria-errormessage="password-error"{{end}} type="password" name="password" required autocomplete="current-password">
 {{if or (eq .ErrorField "code") (eq .ErrorField "password")}}<p class="error" id="code-error">{{.Message}}</p>{{end}}<label for="code">Authenticator code</label><input id="code" {{if or (eq .ErrorField "code") (eq .ErrorField "password")}}aria-invalid="true" aria-errormessage="code-error"{{end}} name="code" required inputmode="numeric" autocomplete="one-time-code">
 <button>Create selected routes</button><button name="preset" value="hermes-default">Create Hermes token (operate)</button><small>Hermes default: supervision summaries, job list/details, read-script evidence and script-runs preview/apply. Hermes always uses operate scope; selected routes use the scope above.</small></form>
-<h2>Existing tokens</h2><table><tr><th>ID / name</th><th>Scope</th><th>Status</th><th>Allowed routes / CIDRs</th><th>Expires</th><th>Revoke chain</th></tr>{{range .Tokens}}<tr><td>{{.ID}}<br>{{.Name}}</td><td>{{.Scope}}</td><td>{{.Status}}</td><td>{{range .Allowlist}}{{.}}<br>{{end}}{{range .SourceCIDRs}}{{.}}<br>{{end}}</td><td>{{.ExpiresAt}}</td><td><form method="post" action="/account/service-tokens/revoke"><input type="hidden" name="id" value="{{.ID}}"><label>Password <input type="password" name="password" required autocomplete="current-password"></label><label>Authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Revoke entire chain</button></form></td></tr>{{end}}</table></body></html>`))
+<h2>Existing tokens</h2><table><tr><th>ID / name</th><th>Scope</th><th>Status</th><th>Allowed routes / CIDRs</th><th>Expires</th><th>Revoke chain</th></tr>{{range .Tokens}}<tr><td>{{.ID}}<br>{{.Name}}</td><td>{{.Scope}}</td><td>{{.Status}}</td><td>{{range .Allowlist}}{{.}}<br>{{end}}{{range .SourceCIDRs}}{{.}}<br>{{end}}</td><td>{{.ExpiresAt}}</td><td>{{if eq .Status "active"}}<details><summary>Edit allowed routes</summary><p>Changes take effect immediately for this credential. Scope and expiry stay fixed. Other credentials in the rotation chain are unchanged.</p><form method="post" action="/account/service-tokens/routes"><input type="hidden" name="id" value="{{.ID}}"><fieldset><legend>Allowed routes for {{.Name}}</legend>{{range index $.TokenRoutes .ID}}<label><input type="checkbox" name="routes" value="{{.Pattern}}" {{if .Selected}}checked{{end}}> {{.Label}} — {{.Description}} <code>{{.Pattern}}</code></label>{{end}}</fieldset><label>Current password <input type="password" name="password" required autocomplete="current-password"></label><label>Fresh authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Save allowed routes</button></form></details>{{end}}<form method="post" action="/account/service-tokens/revoke"><input type="hidden" name="id" value="{{.ID}}"><label>Password <input type="password" name="password" required autocomplete="current-password"></label><label>Authenticator code <input name="code" required inputmode="numeric" autocomplete="one-time-code"></label><button>Revoke entire chain</button></form></td></tr>{{end}}</table></body></html>`))
 
 // Creation renders directly, without forms or the list, so the one-time secret is unmistakable.
 var serviceTokenSuccess = template.Must(template.New("service-token-created").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Copy your token now</title><style>body{font:18px system-ui;max-width:850px;margin:3rem auto;padding:1rem}input,button{font:inherit}input{width:100%;box-sizing:border-box}strong{display:block;padding:1rem;border:3px solid #b00020;background:#fff0f0}</style></head><body><h1>Copy your token now</h1><p>Name: {{.Name}}</p><p>Token ID: {{.CreatedID}}</p><p>Scope: {{.Scope}}</p><p>Expires: {{.CreatedExpiry}}</p><strong>This is the only time it will be shown. Store it now (e.g. in the Hermes host file ~/.config/hermes/service-token, mode 0600).</strong><p><label for="issued-token">Service token (select and copy)</label><input id="issued-token" readonly value="{{.Secret}}" autocomplete="off" spellcheck="false"></p><button id="copy-token" type="button">Copy token</button><script>` + serviceTokenCopyScript + `</script><p><a href="/account/service-tokens">I have saved it — back to service tokens</a></p></body></html>`))
@@ -75,7 +76,7 @@ func serviceTokenErrorField(message string) string {
 	}
 }
 
-var hermesServiceRoutes = []string{"GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status", "GET /v1/operator/jobs", "GET /v1/operator/jobs/{id}", "GET /v1/operator/jobs/{id}/evidence", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs"}
+var hermesServiceRoutes = store.HermesServiceRoutes()
 
 func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 	t := store.ServiceToken{Name: r.PostForm.Get("name"), Scope: r.PostForm.Get("scope"), SourceCIDRs: splitServiceList(r.PostForm.Get("source_cidrs"))}
@@ -85,8 +86,8 @@ func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 	if !serviceTokenAuditName.MatchString(t.Name) {
 		return t, "Name invalid: use 1–64 letters, digits, - or _."
 	}
-	if t.Scope != "view" && t.Scope != "operate" {
-		return t, "Scope invalid: select view or operate."
+	if t.Scope != "view" && t.Scope != "operate" && t.Scope != operatorauth.ServiceScopeOperatorAdmin {
+		return t, "Scope invalid: select view, operate, or operator-admin."
 	}
 	days := 0
 	switch r.PostForm.Get("expiry_days") {
@@ -130,7 +131,10 @@ func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 			}
 			return t, "Selected route is not eligible."
 		}
-		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly && t.Scope != "operate" {
+		if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin && t.Scope != operatorauth.ServiceScopeOperatorAdmin {
+			return t, "Route requires operator-admin scope."
+		}
+		if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly && t.Scope != "operate" && t.Scope != operatorauth.ServiceScopeOperatorAdmin {
 			return t, "Script-runs requires operate scope."
 		}
 	}
@@ -225,6 +229,18 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 					data.CreatedID = created.ID
 					data.CreatedExpiry = created.ExpiresAt.UTC().Format(time.RFC3339)
 
+				} else if strings.HasSuffix(r.URL.Path, "/routes") {
+					routes := r.PostForm["routes"]
+					if validServiceTokenEditRoutes(routes) {
+						err = st.UpdateServiceTokenRoutes(r.PostForm.Get("id"), routes, actor)
+					} else {
+						err = store.ErrServiceToken
+					}
+					if err != nil {
+						message = "Route edit rejected: check selected routes, scope and token status."
+					} else {
+						message = "Allowed routes updated immediately."
+					}
 				} else {
 					err = st.RevokeServiceToken(r.PostForm.Get("id"), actor)
 				}
@@ -279,6 +295,12 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			path := strings.TrimPrefix(strings.SplitN(route, " ", 2)[1], "/v1/operator/")
 			label := strings.ReplaceAll(path, "-", " ")
 			description := "Read " + label
+			if route == "GET /v1/operator/machines/{id}/safe" {
+				description = "scrubbed machine detail"
+			}
+			if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin {
+				description = "Routine fleet administration (operator-admin required)"
+			}
 			if policy.ServiceTokenEligible == serviceEligibleScriptEvidenceOnly {
 				description = "Read evidence for read-only catalog script jobs only"
 			}
@@ -288,6 +310,25 @@ func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver cl
 			data.Routes = append(data.Routes, serviceFormRoute{route, label, description, selected})
 		}
 		sort.Slice(data.Routes, func(i, j int) bool { return data.Routes[i].Pattern < data.Routes[j].Pattern })
+		data.TokenRoutes = map[string][]serviceFormRoute{}
+		for _, token := range tokens {
+			for _, route := range data.Routes {
+				policy := operatorRoutePolicies[route.Pattern]
+				if policy.ServiceTokenEligible == serviceEligibleOperatorAdmin && token.Scope != operatorauth.ServiceScopeOperatorAdmin {
+					continue
+				}
+				if policy.ServiceTokenEligible == serviceEligibleReadScriptsOnly && token.Scope == "view" {
+					continue
+				}
+				route.Selected = false
+				for _, grant := range token.Allowlist {
+					if grant == route.Pattern {
+						route.Selected = true
+					}
+				}
+				data.TokenRoutes[token.ID] = append(data.TokenRoutes[token.ID], route)
+			}
+		}
 		_ = serviceTokenForm.Execute(w, data)
 	}
 	for _, pattern := range serviceTokenPatterns {
@@ -308,6 +349,8 @@ func serviceTokenManagementMetadata(w http.ResponseWriter, r *http.Request, p op
 	switch r.URL.Path {
 	case "/account/service-tokens/create":
 		entry.Action, field = "service-token-create-denied", "name"
+	case "/account/service-tokens/routes":
+		entry.Action, field = "service-token-routes-edit-denied", "id"
 	case "/account/service-tokens/revoke":
 		entry.Action, field = "service-token-revoke-denied", "id"
 	}
@@ -427,16 +470,31 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 		principal.TailnetUserLogin = "service:" + token.Name
 		principal.NodeStableID = token.ID
 	}
-	if err != nil || !policy.ServiceTokenEligible.eligible() || policy.Permission == operatorauth.Admin {
+	if token.Name != "" && operatorauth.DangerousAction(pattern) != "" {
+		writeOperatorBoundaryError(response, operatorJSON, 403, "SERVICE_TOKEN_ACTION_FORBIDDEN", "This action requires a human administrator")
+		return
+	}
+	if token.Name != "" && policy.ServiceTokenEligible == serviceEligibleOperatorAdmin && token.Scope != operatorauth.ServiceScopeOperatorAdmin {
+		writeOperatorBoundaryError(response, operatorJSON, 403, "SERVICE_TOKEN_SCOPE_REQUIRED", "This action requires operator-admin scope")
+		return
+	}
+	if err != nil || !policy.ServiceTokenEligible.eligible() || (policy.Permission == operatorauth.Admin && policy.ServiceTokenEligible != serviceEligibleOperatorAdmin) {
 		b.serviceAttempts.allow(source)
 		writeOperatorBoundaryError(response, operatorJSON, 401, "UNAUTHENTICATED", "Authentication required")
 		return
 	}
+	principal.ServiceScope = token.Scope
 	principal.GrantedCapabilities.View = "view"
-	if token.Scope == "operate" {
+	if token.Scope == "operate" || token.Scope == operatorauth.ServiceScopeOperatorAdmin {
 		principal.GrantedCapabilities.Operate = "operate"
 	}
+	if token.Scope == operatorauth.ServiceScopeOperatorAdmin {
+		principal.GrantedCapabilities.Admin = "admin"
+	}
 	principal.AuthorizedCapability = policy.Permission.String()
+	if token.Scope == operatorauth.ServiceScopeOperatorAdmin {
+		principal.AuthorizedCapability = operatorauth.ServiceScopeOperatorAdmin
+	}
 	if policy.ServiceTokenEligible == serviceEligibleSelf {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "application/json")
@@ -476,4 +534,19 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	b.csrfNext.ServeHTTP(response, operatorauth.WithPrincipal(r, principal))
+}
+
+func validServiceTokenEditRoutes(routes []string) bool {
+	if len(routes) == 0 || len(routes) > 128 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, route := range routes {
+		p, ok := operatorRoutePolicies[route]
+		if !ok || !p.ServiceTokenEligible.eligible() || p.ServiceTokenEligible == serviceEligibleSelf || seen[route] {
+			return false
+		}
+		seen[route] = true
+	}
+	return true
 }

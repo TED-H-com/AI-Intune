@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -332,7 +333,9 @@ func (r PruneReport) Total() int64 {
 // The operator apply path still deletes inside its own idempotent transaction
 // via pruneReportTx; that path confirms an exact row count and keeps the log
 // in the same transaction.
-const pruneBatchSize = 5000
+const pruneBatchSize = 1000
+
+var pruneBatchYield = 50 * time.Millisecond
 
 func (s *Store) Prune(now time.Time, p RetentionPolicy, dryRun bool) (PruneReport, error) {
 	if err := p.Validate(); err != nil {
@@ -410,6 +413,9 @@ func (s *Store) pruneBatched(now time.Time, p RetentionPolicy) (PruneReport, err
 				return rep, fmt.Errorf("store: commit prune: %w", err)
 			}
 			deleted += n
+			if n > 0 {
+				time.Sleep(pruneBatchYield)
+			}
 			if n < int64(pruneBatchSize) {
 				break
 			}
@@ -418,7 +424,34 @@ func (s *Store) pruneBatched(now time.Time, p RetentionPolicy) (PruneReport, err
 			Table: j.table, Deleted: deleted, Kept: kept, Older: older,
 		})
 	}
+	if rep.Total() > 0 {
+		if _, _, _, err := s.checkpointPrune(); err != nil {
+			log.Printf("WARN prune WAL checkpoint: %v", err)
+		}
+	}
 	return rep, nil
+}
+
+// checkpointPrune checks out the writer without opening a transaction: SQLite
+// cannot checkpoint from inside a transaction.
+func (s *Store) checkpointPrune() (busy, frames, checkpointed int, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.writerWait())
+	defer cancel()
+	if err = s.gate.acquire(ctx, false); err != nil {
+		return
+	}
+	defer s.gate.release()
+	conn, e := s.db.Conn(ctx)
+	if e != nil {
+		err = e
+		return
+	}
+	defer conn.Close()
+	err = conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &checkpointed)
+	if err == nil && busy != 0 {
+		log.Printf("WARN prune WAL checkpoint busy=%d frames=%d checkpointed=%d", busy, frames, checkpointed)
+	}
+	return
 }
 
 // pruneReportTx is the single count/delete implementation used by the

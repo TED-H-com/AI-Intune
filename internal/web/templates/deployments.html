@@ -43,7 +43,7 @@
     <table><thead><tr><th>版本</th><th>SHA-256</th><th>大小</th><th>Node engines</th></tr></thead><tbody>
     {{range $p.Artifacts}}<tr><td>{{.Version}}</td><td class="mono">{{.SHA256}}</td><td>{{bytes .SizeBytes}}</td><td class="mono">{{or .EnginesNode "未宣告"}}</td></tr>{{end}}
     </tbody></table>
-    {{else}}<p class="empty">沒有 OpenClaw artifact 候選。<a href="/updates">查看 catalog</a></p>{{end}}
+    {{else}}<p class="empty">沒有 OpenClaw artifact 候選。先<a href="/apps?view=fetch">取得支援的 OpenClaw artifact</a>，再回來填入版本與 SHA-256。<a href="/machines">選擇機器並指派 canary channel</a> 後即可預覽。</p>{{end}}
   </div>
 </section>
 {{else}}
@@ -74,7 +74,7 @@
 </tbody>
 </table>
 {{else}}
-<p class="empty">{{$p.Empty}}</p>
+<p class="empty">{{$p.Empty}} <a href="/deployments?view=new">預覽新部署</a>，或<a href="/updates">查看更新準備步驟</a>。</p>
 {{end}}
 </div>
 {{end}}

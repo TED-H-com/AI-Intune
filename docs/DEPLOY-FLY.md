@@ -12,9 +12,13 @@ ops/fly/deploy.sh --org <your-org> --app <your-app-name> --region iad
 # Optional: add --secrets-file ~/clawctl-fly/secrets.env (regular file, mode 0600).
 ```
 
-The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one 1024mb Machine, and waits up to about three minutes for HTTPS `/healthz`. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
+The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one 1024mb Machine, and verifies HTTPS `/healthz`, `/version`, and `/setup` with bounded retries. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
 
-Choose `--builder auto|depot|remote|local` or set `FLY_BUILDER` (default `auto`; the flag overrides the environment). Auto starts with Depot, retries once with `--depot=false` on Depot/handshake/list-workers errors, then retries once with the same arguments plus `--local-only` if the classic builder fails with a transport error (`h2c`, `failed to dial gRPC`, `failed to get status`, `remote builder`, `Unavailable`, or `handshake`) and `docker info` succeeds. Dockerfile/build failures without these error patterns do not trigger fallback. If Docker is unavailable, the script fails with guidance to start Docker and use `--builder local` (Fly's `--local-only`). Dry-run prints the selected plan and fallback chain without probing Docker.
+Before every deploy, the wrapper creates a Fly snapshot for **each `clawctl_data` volume**, including newly provisioned volumes. It polls `flyctl volumes snapshots list --json` until a new ID (absent from the pre-request inventory) has status `created`, a creation time after the request, and age at most 300 seconds. It prints the verified ID and volume. Creation, inventory, or verification failure blocks deployment. Polling defaults to 180 seconds per volume (`FLY_SNAPSHOT_TIMEOUT=1..9999`); each snapshot CLI call also has a 15-second timeout. GNU coreutils `timeout` is required. Dry-run prints the gate without calling Fly.
+
+Emergency opt-out: `--skip-snapshot` or `FLY_SKIP_SNAPSHOT=1` emits a loud warning. Use only with a separately reviewed recovery plan. Snapshot IDs belong in private change evidence. Volume snapshots cover volume contents, not external objects or proof of SQLite application consistency; retain Litestream backups and rehearse restoration using a new volume created with `--snapshot-id`. This gate does not automatically roll back a release.
+
+Choose `--builder auto|depot|remote|local` or `FLY_BUILDER` (default `auto`). Each builder gets up to three attempts with 2s/4s backoff for transient EOF, unexpected EOF, context deadline, handshake/list-workers, gRPC/h2c/Unavailable transport errors, and HTTP 500/502/503 responses. Other errors fail immediately. Auto falls back Depot → remote → local only after transient attempts are exhausted; local requires working `docker info`. Explicit builder modes retry but do not fall back. Raw build output is kept private and removed on exit; terminal output reports stage and classification. Dry-run prints the plan without probing Docker.
 
 `depot` uses Depot without fallback; `remote` uses only `--depot=false`; `local` goes straight to `--local-only`. Classic builds can create a running `fly-builder-*` app. Both auto and remote modes compare app inventories before and after the classic build and destroy only new builder apps, even after a failed build, preserving pre-existing builders. Cleanup finishes before any local retry. Failed teardown warns with the builder name and exits non-zero; inspect and remove that specific builder after confirming its identity.
 
@@ -146,6 +150,20 @@ Hub pins the operator Host to `CLAWCTL_PUBLIC_URL`. `/` and `/login` return 421 
 
 ### 6. Enroll your first machine
 
+Fastest path: run `curl -fsSL https://hub.example.com/join.sh | sudo bash`
+on the new Linux machine, then match and approve its code at `/machines/join`.
+Set `CLAWCTL_PUBLIC_URL` to the public HTTPS origin and publish agent bundles.
+Optional Fly secret names for Hub-issued Tailscale keys:
+
+- `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`
+- `CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`
+- `CLAWCTL_TAILSCALE_JOIN_TAG`
+
+Use an OAuth client allowed to create auth keys for the chosen tag. Without
+these credentials, join works without Tailscale. See the [new host runbook](runbooks/NEW-HOST.md).
+
+The keyed installer remains available:
+
 In the Hub Web console, register a machine and download its **keyed Linux installer** for amd64 or arm64 from the token result page; the download page offers both architectures. The package contains a one-time enrollment token and the public Hub URL; transfer it privately. If lost, revoke the pending ticket and issue a new one.
 
 On the endpoint, as the non-root account that will run the agent, with sudo available:
@@ -274,7 +292,7 @@ Check `http://<that-ip>:<CLAWCTL_PORT>/healthz` and follow the shared verificati
 
 ## Cost note
 
-This shape uses one `shared-cpu-1x` machine with 1 GB (`1024mb`) of RAM and a 3 GB volume. This is roughly $7/month at the time of writing; check the [Fly pricing page](https://fly.io/docs/about/pricing/) for exact current numbers. Cloudflare R2's free tier usually covers the storage and operations needed at the default 10 s sync interval.
+This shape uses one `shared-cpu-2x` machine with 1 GB (`1024mb`) of RAM and a 3 GB volume. This is roughly $8/month (about $0.70/month more than `shared-cpu-1x`, whose 6.25% CPU baseline was too small: after a redeploy resets the Fly burst balance, litestream compaction plus Hub work got the machine quota-throttled) at the time of writing; check the [Fly pricing page](https://fly.io/docs/about/pricing/) for exact current numbers. Cloudflare R2's free tier usually covers the storage and operations needed at the default 10 s sync interval.
 
 ## Cloudflare R2 setup (optional)
 
@@ -317,7 +335,7 @@ You can tune replication parameters by setting these Fly secrets (using the `sec
 
 | Variable | Default | Description | Tradeoff |
 |---|---|---|---|
-| `LITESTREAM_SYNC_INTERVAL` | `10s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
+| `LITESTREAM_SYNC_INTERVAL` | `60s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
 | `LITESTREAM_SNAPSHOT_INTERVAL` | `24h` | How often a full database snapshot is written. | Lower = faster restore time, but uses more R2 storage and PUTs. |
 | `LITESTREAM_RETENTION` | `168h` | How long snapshots and WAL files are kept. | Higher = longer recovery window, but uses more R2 storage. Must be >= snapshot interval. |
 
@@ -389,3 +407,33 @@ Build the image locally when Docker is available:
 ```
 
 That builds the `hub-fly` target, checks `tailscaled`, `tailscale`, `litestream`, `clawctl-hub`, and the bundle files, and checks that Tailscale mode fails clearly with no `TS_AUTHKEY`. It also parses both Fly config files. For local-only static validation, run `CLAWCTL_SMOKE_STATIC_ONLY=1 bash ops/docker/smoke-build.sh`; `bash ops/test-fly.sh` uses only local stubs.
+
+### Post-deploy verification retries
+
+A rollout can succeed while an edge connection drops during verification. Each
+check gets six attempts by default, with a 10-second total curl timeout per
+attempt and 1/2/4/8/8-second backoff (8 seconds maximum). Configure
+`--verify-attempts` / `FLY_VERIFY_ATTEMPTS` (1–99) and
+`--verify-timeout` / `FLY_VERIFY_TIMEOUT` (1–999 seconds per attempt).
+Each check is bounded by attempts × timeout plus the intervening backoffs.
+Flags override environment values; dry-run makes no requests.
+
+Every failed observation is retried through that budget, including curl
+6/7/28/52/56 (DNS, refused/reset/dropped connection, timeout), HTTP 502/503/504,
+and stale or malformed version responses. Logs name the endpoint, attempt,
+status/classification, and delay without printing response bodies or curl errors.
+`/healthz` must return 200; `/version` must return 200 with a JSON `commit`
+matching the full Git HEAD passed to the image build. `/setup` accepts 200
+(first run) or 404 (already configured). The existing implicit fly.dev 421
+custom-domain guidance remains; an explicit public-origin 421 fails verification.
+
+Exit 2 means **deploy succeeded, verification failed**; exit 1 covers earlier
+configuration/provision/build failures. Inspect the deployed app and public
+origin, and recheck health and commit before deciding whether another deploy is
+needed. Setup logs are read only after all endpoint checks pass.
+
+## GCP alternative
+
+Fly remains the cheaper default. If you have GCP free credits, see
+[Deploy on a GCE VM](DEPLOY-GCP.md) for IAP-only SSH, Cloudflare Tunnel,
+R2 replication, and the migration and rollback runbook.

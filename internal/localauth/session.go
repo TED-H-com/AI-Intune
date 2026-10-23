@@ -43,7 +43,11 @@ func (a *Authorizer) Authorize(r *http.Request, required operatorauth.Permission
 	if err != nil {
 		return nil, deny
 	}
-	p := operatorauth.Principal{SourceAddr: r.RemoteAddr, NodeStableID: "local-session", DeviceName: "browser", TailnetUserID: "local:" + account.AccountID, TailnetUserLogin: account.Username, TailnetDisplayName: account.Username, AuthMethod: operatorauth.AuthMethodLocalAccountSession, GrantedCapabilities: a.Names}
+	p := AccountPrincipal(account, a.Names)
+	p.SourceAddr = r.RemoteAddr
+	if !p.Has(required) {
+		return nil, deny
+	}
 	switch required {
 	case operatorauth.View:
 		p.AuthorizedCapability = a.Names.View
@@ -55,4 +59,14 @@ func (a *Authorizer) Authorize(r *http.Request, required operatorauth.Permission
 		return nil, deny
 	}
 	return operatorauth.WithPrincipal(r, p), operatorauth.Decision{Allowed: true, HTTPStatus: 200, Code: operatorauth.Authorized, Principal: p}
+}
+
+// AccountPrincipal is shared by session and allowlisted chat adapters. Roles are
+// resolved from the current account record, never supplied by a chat caller.
+func AccountPrincipal(account store.HubAccount, names operatorauth.CapabilityNames) operatorauth.Principal {
+	p := operatorauth.Principal{MFAVerifiedAt: account.SessionMFAVerifiedAt, NodeStableID: "local-session", DeviceName: "browser", TailnetUserID: "local:" + account.AccountID, TailnetUserLogin: account.Username, TailnetDisplayName: account.Username, AuthMethod: operatorauth.AuthMethodLocalAccountSession}
+	if !account.Disabled && account.Role == "admin" {
+		p.GrantedCapabilities = names
+	}
+	return p
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -21,6 +22,15 @@ var probe []byte
 
 //go:embed bat-sweep-report-v1.py
 var batSweep []byte
+
+//go:embed oci-cost-report-v1.py
+var ociCost []byte
+
+//go:embed network-watch-v1.py
+var networkWatch []byte
+
+//go:embed bat-release-check-v1.py
+var batRelease []byte
 
 //go:embed disk-safe-preview-v2.py
 var diskPreview []byte
@@ -90,6 +100,9 @@ func deepSchema() Schema {
 }
 
 var registry = []Entry{
+	{"oci-cost-report-v1", "1", "0cb9bc5384fce7c59c592db4b5db72810be30c020eb4cb11610da1a5f0df5380", ociCostSchema(), 300, 600, 64 << 10, "read", "agent-user", []string{"linux"}, ociCost},
+	{"network-watch-v1", "1", "3f6a22ab6fd65b9a399643a2ccccba66bbfcae6906d3588be03ac347e1f0cf6a", networkWatchSchema(), 180, 300, 64 << 10, "read", "agent-user", []string{"linux"}, networkWatch},
+	{"bat-release-check-v1", "1", "bc8ac19f948a4b107650e746d1e2826bb21741ee33296035bcf2505677735ffb", Schema{Type: "object", Properties: map[string]Property{}}, 60, 120, 64 << 10, "read", "agent-user", []string{"linux"}, batRelease},
 	{"disk-approved-quarantine-v1", "1", "b331c74b57728aed88f4c4a32c286af9909f0adc76eb25be15aa14634f7de5f6", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskQuarantine},
 	{"disk-approved-delete-v1", "1", "fdc52c3cdd4c0ec5e44907e937df681aaa99820fab9ac6886643cb3ffc591a35", actionSchema(), 900, 900, 64 << 10, "write", "agent-user", []string{"linux"}, diskDelete},
 	{"disk-quarantine-expire-v1", "1", "3f61ba4510da860c47d9b6a2653bb6ba9fe265bbb688e2ac85d7617ee6f504ec", expirySchema(), 600, 600, 64 << 10, "write", "agent-user", []string{"linux"}, diskExpire},
@@ -210,6 +223,15 @@ func (e Entry) Validate(raw json.RawMessage) (json.RawMessage, error) {
 			if err != nil || p.Minimum == nil || p.Maximum == nil || i < int64(*p.Minimum) || i > int64(*p.Maximum) {
 				return nil, errors.New("args integer outside bounds")
 			}
+		case "number":
+			n, ok := v.(json.Number)
+			if !ok {
+				return nil, errors.New("args number required")
+			}
+			f, err := n.Float64()
+			if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || p.Minimum == nil || p.Maximum == nil || f < float64(*p.Minimum) || f > float64(*p.Maximum) {
+				return nil, errors.New("args number outside bounds")
+			}
 		case "boolean":
 			if _, ok := v.(bool); !ok {
 				return nil, errors.New("args boolean required")
@@ -228,6 +250,23 @@ func (e Entry) Validate(raw json.RawMessage) (json.RawMessage, error) {
 	for _, key := range e.ArgsSchema.Required {
 		if _, ok := values[key]; !ok {
 			return nil, errors.New("required args missing")
+		}
+	}
+	if e.ID == "oci-cost-report-v1" {
+		warn, urgent := 0.0, 5.0
+		if n, ok := values["warn_usd"].(json.Number); ok {
+			warn, _ = n.Float64()
+		}
+		if n, ok := values["urgent_usd"].(json.Number); ok {
+			urgent, _ = n.Float64()
+		}
+		if urgent < warn {
+			return nil, errors.New("urgent_usd must be at least warn_usd")
+		}
+	}
+	if e.ID == "network-watch-v1" {
+		if _, ok := values["baseline_listen_ports"]; ok && values["baseline_listen_digest"] == nil {
+			return nil, errors.New("baseline ports require baseline digest")
 		}
 	}
 	return json.Marshal(values)

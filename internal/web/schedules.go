@@ -494,6 +494,9 @@ func (s *Server) scheduleMachines() (operator.MachineListResult, error) {
 }
 
 func (s *Server) scheduleReauthenticate(w http.ResponseWriter, r *http.Request) bool {
+	if p, ok := operatorauth.PrincipalFromContext(r.Context()); ok && p.ActionMFAAuthorized {
+		return true
+	}
 	actor := operator.ActorFromRequest(r, operator.SourceKindWeb)
 	p, _ := operatorauth.PrincipalFromContext(r.Context())
 	actor.AuthCapability = p.GrantedCapabilities.Admin
