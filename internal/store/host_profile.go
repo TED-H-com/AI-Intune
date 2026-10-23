@@ -70,34 +70,32 @@ func (s *Store) FleetHostProfile(now time.Time) (FleetHostProfile, error) {
 	if err != nil {
 		return v, err
 	}
-	rows, err := s.rdb.Query(`SELECT machine_id,display_name FROM machine_registry WHERE os='linux' ORDER BY display_name,machine_id`)
+	// Select one observation per host inside the set query. The correlated
+	// lookup visits the small current projection, never the retained ledger.
+	rows, err := s.rdb.Query(`SELECT m.machine_id,m.display_name,o.payload,o.received_at
+ FROM machine_registry m
+ LEFT JOIN observed_latest o ON o.machine_id=m.machine_id AND o.kind='host_profile_apply'
+ AND o.subject=(SELECT x.subject FROM observed_latest x
+   WHERE x.machine_id=m.machine_id AND x.kind='host_profile_apply'
+   ORDER BY x.received_at DESC,x.measured_at DESC,x.observation_sequence DESC LIMIT 1)
+ WHERE m.os='linux' ORDER BY m.display_name,m.machine_id`)
 	if err != nil {
 		return v, err
 	}
+	defer rows.Close()
 	for rows.Next() {
-		var h HostProfileStatus
-		if err = rows.Scan(&h.MachineID, &h.DisplayName); err != nil {
-			rows.Close()
+		var host HostProfileStatus
+		var payload, received sql.NullString
+		if err = rows.Scan(&host.MachineID, &host.DisplayName, &payload, &received); err != nil {
 			return v, err
 		}
-		v.Hosts = append(v.Hosts, h)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return v, err
-	}
-	for i := range v.Hosts {
-		h := &v.Hosts[i]
+		v.Hosts = append(v.Hosts, host)
+		h := &v.Hosts[len(v.Hosts)-1]
 		h.Status = "Waiting"
-		var raw, recv string
-		err = s.rdb.QueryRow(`SELECT payload,received_at FROM observed_latest WHERE machine_id=? AND kind='host_profile_apply' ORDER BY received_at DESC,measured_at DESC,observation_sequence DESC LIMIT 1`, h.MachineID).Scan(&raw, &recv)
-		if errors.Is(err, sql.ErrNoRows) {
+		if !payload.Valid {
 			continue
 		}
-		if err != nil {
-			return v, err
-		}
+		raw, recv := payload.String, received.String
 		if json.Unmarshal([]byte(raw), &h.Result) != nil || h.Result == nil {
 			continue
 		}
@@ -116,5 +114,5 @@ func (s *Store) FleetHostProfile(now time.Time) (FleetHostProfile, error) {
 			}
 		}
 	}
-	return v, nil
+	return v, rows.Err()
 }

@@ -2681,37 +2681,56 @@ SELECT subject, payload, measured_at, received_at FROM observed_state
 	return o, true, nil
 }
 
-// LatestOpenClawDBs 拿指定這幾台各自最新的一筆 OpenClaw 觀測裡的資料庫那一段。
-//
-// ⚠⚠ 存在的理由是效能，而且兩次都是實測逼出來的：
-//
-//  1. `/metrics` 原本為了排程指標，對每一台各叫一次 `Detail()`。`Detail()` 會做
-//     十幾個查詢、還會 `credRefreshHistory()` 掃一次整張 observed_state ——
-//     在 46 MB 的真實資料庫上把 `/metrics` 從 57 ms 拖到 300 ms。
-//  2. 第一版的修法是「一個查詢拿全機隊」，只濾 `kind`。**更慢，900 ms。**
-//     因為 `ix_observed_prune` 是 `(machine_id, kind, subject, received_at DESC)`，
-//     **machine_id 打頭**；不給它就整表掃描。
-//
-// 所以這裡吃索引：一台一個 O(1) 的查詢。⚠ 要改這支之前先跑 EXPLAIN QUERY PLAN，
-// 「一個查詢一定比五個快」在有複合索引的時候是錯的。
-//
-// ⚠ 沒有觀測、或觀測裡沒有 db 那一段的機器**不在 map 裡**（不是給一個零值）。
-// 「不知道」跟「0 個工作」在這一層就要分開，到了 /metrics 才分就太晚了。
-func (s *Store) LatestOpenClawDBs(machineIDs []string) (map[string]*model.OpenClawDB, error) {
-	out := make(map[string]*model.OpenClawDB, len(machineIDs))
-	for _, id := range machineIDs {
-		obs, ok, err := s.latestObservation(id, KindOpenClaw, KindOpenClaw)
+// latestOpenClawObservations reads the requested current snapshots in bounded
+// sets. The projection's primary key makes this independent of ledger size.
+func (s *Store) latestOpenClawObservations(machineIDs []string) (map[string]observation, error) {
+	out := make(map[string]observation, len(machineIDs))
+	for offset := 0; offset < len(machineIDs); offset += 500 {
+		end := offset + 500
+		if end > len(machineIDs) {
+			end = len(machineIDs)
+		}
+		args := []any{KindOpenClaw, KindOpenClaw}
+		for _, id := range machineIDs[offset:end] {
+			args = append(args, id)
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", end-offset), ",")
+		rows, err := s.rdb.Query(`SELECT machine_id,subject,payload,measured_at,received_at
+ FROM observed_latest WHERE kind=? AND subject=? AND machine_id IN (`+placeholders+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			continue
+		for rows.Next() {
+			var id, measured, received string
+			var obs observation
+			if err = rows.Scan(&id, &obs.Subject, &obs.Payload, &measured, &received); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			obs.MeasuredAt, obs.ReceivedAt = parseTime(measured), parseTime(received)
+			out[id] = obs
 		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// LatestOpenClawDBs omits absent, undecodable and non-present DB evidence.
+func (s *Store) LatestOpenClawDBs(machineIDs []string) (map[string]*model.OpenClawDB, error) {
+	observations, err := s.latestOpenClawObservations(machineIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*model.OpenClawDB, len(machineIDs))
+	for id, obs := range observations {
 		oc, ok := unmarshalInto[model.OpenClaw](obs.Payload)
-		if !ok || oc.DB == nil || !oc.DB.Present {
-			continue
+		if ok && oc.DB != nil && oc.DB.Present {
+			out[id] = oc.DB
 		}
-		out[id] = oc.DB
 	}
 	return out, nil
 }
@@ -2754,7 +2773,18 @@ func (s *Store) latestOpenClawInstallObservations(machineIDs []string,
 // LatestOpenClawInstallObservations preserves the evidence timestamp without
 // imposing a historical cutoff.
 func (s *Store) LatestOpenClawInstallObservations(machineIDs []string) (map[string]OpenClawInstallObservation, error) {
-	return s.latestOpenClawInstallObservations(machineIDs, s.latestObservation)
+	observations, err := s.latestOpenClawObservations(machineIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]OpenClawInstallObservation, len(observations))
+	for id, obs := range observations {
+		oc, ok := unmarshalInto[model.OpenClaw](obs.Payload)
+		if ok {
+			out[id] = OpenClawInstallObservation{Install: oc.Install, MeasuredAt: obs.MeasuredAt, ReceivedAt: obs.ReceivedAt}
+		}
+	}
+	return out, nil
 }
 
 // LatestOpenClawInstallObservationsAt is the snapshot-aware adapter used by
@@ -2826,8 +2856,8 @@ SELECT o.machine_id,
        CASE WHEN m.retired_at IS NULL THEN 0 ELSE 1 END
  FROM observed_state o
   JOIN machine_registry m ON m.machine_id = o.machine_id
- WHERE o.kind = ? AND o.received_at <= ?
-GROUP BY o.machine_id, m.display_name, o.subject, m.retired_at`, KindCredential, fmtTime(evaluatedAt))
+ WHERE o.kind = 'credential' AND o.received_at <= ?
+GROUP BY o.machine_id, m.display_name, o.subject, m.retired_at`, fmtTime(evaluatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("store: credential refresh history: %w", err)
 	}
@@ -2992,6 +3022,13 @@ func (s *Store) facts(machineID string, now time.Time, refresh credRefreshFleet)
 	if err != nil {
 		return state.Facts{}, err
 	}
+	return s.factsForMachine(m, now, refresh)
+}
+
+// Overview already has the registry row; avoid looking it up again per host.
+func (s *Store) factsForMachine(m Machine, now time.Time, refresh credRefreshFleet) (state.Facts, error) {
+	machineID := m.MachineID
+	var err error
 	f := state.Facts{
 		Now:       now,
 		Artifacts: s.artifactFacts(machineID, m.DisplayName, now),
@@ -3343,7 +3380,7 @@ func (s *Store) Overview(now time.Time) (Overview, error) {
 			ov.Retired = append(ov.Retired, m)
 			continue
 		}
-		f, err := s.facts(m.MachineID, now, refresh)
+		f, err := s.factsForMachine(m, now, refresh)
 		if err != nil {
 			return Overview{}, err
 		}
