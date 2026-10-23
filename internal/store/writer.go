@@ -22,7 +22,7 @@ const (
 	sqlitePrimaryBusy   = 5
 	sqlitePrimaryLocked = 6
 
-	defaultInteractiveWriterWait = 500 * time.Millisecond
+	defaultInteractiveWriterWait = 5 * time.Second
 	defaultWriterWait            = 15 * time.Second
 	slowWriterLimit              = time.Second
 )
@@ -189,7 +189,7 @@ func (g *writerGate) release() {
 }
 
 // SetInteractiveWriterWait overrides the interactive acquisition and transaction
-// budget. Zero restores the 500ms default; SetWriterWait controls only bulk waits.
+// budget. Zero restores the 5s default (priority lane: next after the current holder); SetWriterWait controls only bulk waits.
 func (s *Store) SetInteractiveWriterWait(d time.Duration) {
 	if s != nil {
 		s.gate.interactiveWaitNS.Store(int64(d))
