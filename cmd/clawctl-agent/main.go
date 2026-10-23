@@ -632,6 +632,7 @@ func runAgent() {
 	// ⚠ 間隔每一圈重讀。以前它只在啟動時讀一次，於是 Hub 下發的觀測間隔
 	// 實際上要等 agent 重啟才會生效 —— 設定看起來送到了，其實沒在跑。
 	for {
+		observationStarted := time.Now().Round(0)
 		octx, ocancel := context.WithTimeout(ctx, 2*time.Minute)
 		obs, err := probe.Collect(octx)
 		ocancel()
@@ -655,7 +656,8 @@ func runAgent() {
 			lastObs.Store(&now)
 			observationProgress.Add(1)
 		}
-		wait := jitter(applied.Load().observation)
+		interval := applied.Load().observation
+		wait := jitter(interval)
 		var floor time.Duration
 		if postErr != nil {
 			if honored, serverFloor, busy := hubBusyWait(wait, postErr); busy {
@@ -667,7 +669,12 @@ func runAgent() {
 			}
 		}
 
-		if waitNextObservation(ctx, wait, floor, observationNudge) == observationCanceled {
+		// Collection/posting may itself span a sleep or a long stall.
+		if floor == 0 && observationOverdue(time.Now(), observationStarted, interval) {
+			continue
+		}
+		currentInterval := func() time.Duration { return applied.Load().observation }
+		if waitObservation(ctx, wait, floor, observationNudge, realObservationClock{}, interval, currentInterval) == observationCanceled {
 			return
 		}
 	}
@@ -728,52 +735,7 @@ const (
 // ⚠ nudge 不是把平常觀測調快，而是機器剛被工作單改過後，舊事實不准再掛
 // 10 分鐘。channel 只有一格且送端不阻塞；滿了代表已經有一輪排隊，丟掉也沒關係。
 func waitNextObservation(ctx context.Context, wait, floor time.Duration, nudge <-chan struct{}) observationWakeReason {
-	if wait < 0 {
-		wait = 0
-	}
-	if floor < 0 {
-		floor = 0
-	}
-	if floor > wait {
-		floor = wait
-	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	if floor <= 0 {
-		select {
-		case <-ctx.Done():
-			return observationCanceled
-		case <-timer.C:
-			return observationTimer
-		case <-nudge:
-			return observationNudged
-		}
-	}
-	if floor >= wait {
-		select {
-		case <-ctx.Done():
-			return observationCanceled
-		case <-timer.C:
-			return observationTimer
-		}
-	}
-	floorTimer := time.NewTimer(floor)
-	defer floorTimer.Stop()
-	select {
-	case <-ctx.Done():
-		return observationCanceled
-	case <-timer.C:
-		return observationTimer
-	case <-floorTimer.C:
-	}
-	select {
-	case <-ctx.Done():
-		return observationCanceled
-	case <-timer.C:
-		return observationTimer
-	case <-nudge:
-		return observationNudged
-	}
+	return waitObservation(ctx, wait, floor, nudge, realObservationClock{}, 0, nil)
 }
 
 // jitter 加 ±20% 的抖動。
