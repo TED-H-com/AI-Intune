@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
-	"time"
 
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
@@ -26,21 +25,6 @@ func registerPprof(mux *http.ServeMux, policies map[string]operatorRoutePolicy) 
 		r.Pattern = pattern
 	}))
 	policies[pattern] = operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}
-}
-
-func requestDurationLogging(next http.Handler, logf func(string, ...any)) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		response := &durationResponseWriter{serviceResponseWriter: serviceResponseWriter{ResponseWriter: w}}
-		defer func() {
-			status := response.status
-			if status == 0 {
-				status = http.StatusOK
-			}
-			logf("HTTP method=%s pattern=%q status=%d duration_ms=%.3f", r.Method, r.Pattern, status, float64(time.Since(start))/float64(time.Millisecond))
-		}()
-		next.ServeHTTP(response, r)
-	})
 }
 
 // ResponseController preserves streaming and terminal/websocket upgrades through
