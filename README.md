@@ -183,7 +183,7 @@ read current state → preview exact impact → confirm typed target
 
 ### Autopilot quick start (recommended)
 
-Follow [docs/AUTOPILOT.md](docs/AUTOPILOT.md) for Docker+Caddy, bare Linux, [Fly.io Autopilot](docs/DEPLOY-FLY.md#autopilot-on-fly-recommended), or an [Oracle Cloud VM](docs/DEPLOY-OCI.md). For Docker+Caddy:
+Follow [docs/AUTOPILOT.md](docs/AUTOPILOT.md) for Docker+Caddy, bare Linux, [Fly.io Autopilot](docs/DEPLOY-FLY.md#autopilot-on-fly-recommended), an [Oracle Cloud VM](docs/DEPLOY-OCI.md), or [GCP with free credits](docs/DEPLOY-GCP.md) (Fly remains the cheaper default). For Docker+Caddy:
 
 1. Point DNS at your Linux host and open ports 80/443.
 2. Start the standalone Docker+Caddy Autopilot pack.
@@ -229,6 +229,26 @@ Choose one of three deployment targets:
 `8787` in examples is the conventional example port, not a Hub default. The grant `dst` port, `CLAWCTL_PUBLIC_URL`, the agent `--hub` URL, and any tunnel origin must use that same port. Full steps: [docs/DEPLOY-OSS.md](docs/DEPLOY-OSS.md). Cloudflare Containers is not implemented (it would need tsnet, Litestream, and a Durable Object keep-alive).
 
 ### 4. Enroll an endpoint
+
+For Windows `amd64` or `arm64`, open **PowerShell as Administrator** under the account that will run the agent, then run (replace the example Hub):
+
+```powershell
+irm https://hub.example.com/join.ps1 | iex
+```
+
+Match the printed `Join code: XXXX-XXXX` at `https://hub.example.com/machines/join` and approve it before the printed expiry. The bootstrap verifies the approved bundle checksum and installs a user logon scheduled task. Windows joins default to **monitor-only** (`jobs_enabled=false`): observations and check-ins continue, while jobs stay disabled. The account must stay logged in for the task to run. Windows joins use the public HTTPS Hub and do not configure Tailscale.
+
+To enable supported Windows jobs, download and run with options instead:
+
+```powershell
+Invoke-WebRequest https://hub.example.com/join.ps1 -OutFile .\join.ps1
+.\join.ps1 -Hub https://hub.example.com -JobsEnabled -LogFile "$env:ProgramData\clawctl\join.log"
+```
+
+`-Hub` overrides the templated Hub URL. `-LogFile` defaults to `%ProgramData%\clawctl\join.log`; progress, code and expiry are written there for detached runs, with credentials excluded. Temporary enrollment secrets are deleted on success and failure. Existing enrolled accounts are preserved; the join command refuses to replace their configuration. Linux-only jobs are blocked server-side even with `-JobsEnabled`.
+
+Join downloads use OS-qualified keys: `/v1/join/bundle/windows-amd64`, `/windows-arm64`, `/linux-amd64`, or `/linux-arm64`. Legacy `/amd64` and `/arm64` remain Linux-only. The device secret authorizes only its requested OS and architecture, until approval is redeemed. Both scripts download while pending and verify the approved SHA-256 before extraction. Docker and Fly images include both Windows bundles; source builds can produce them with `make agent-bundles-windows` and publish alongside the required Linux pair using `ops/publish-agent-bundles.sh`.
+
 
 Open `http://100.x.y.z:8787/machines/enrollment`, create an enrollment for the machine, and download the archive matching its architecture. Extract it on the endpoint and run:
 
@@ -625,7 +645,7 @@ Hub 是控制 ledger，不是 AI 資料路徑。端點不開放 inbound 控制 p
 
 ## 快速開始
 
-建議先走本機管理員＋公開 HTTPS 的 [Autopilot 快速開始（英文）](docs/AUTOPILOT.md)（Docker、Fly.io，或 [Oracle Cloud VM](docs/DEPLOY-OCI.md)）；以下保留進階 Tailscale 路徑。
+建議先走本機管理員＋公開 HTTPS 的 [Autopilot 快速開始（英文）](docs/AUTOPILOT.md)（Docker、Fly.io，或 [Oracle Cloud VM](docs/DEPLOY-OCI.md)、[GCP VM（適合有免費額度者）](docs/DEPLOY-GCP.md)，Fly 仍是較便宜的預設選擇）；以下保留進階 Tailscale 路徑。
 
 ### 1. 準備工作（Before you start）
 

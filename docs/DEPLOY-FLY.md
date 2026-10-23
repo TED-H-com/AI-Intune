@@ -335,7 +335,7 @@ You can tune replication parameters by setting these Fly secrets (using the `sec
 
 | Variable | Default | Description | Tradeoff |
 |---|---|---|---|
-| `LITESTREAM_SYNC_INTERVAL` | `10s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
+| `LITESTREAM_SYNC_INTERVAL` | `60s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
 | `LITESTREAM_SNAPSHOT_INTERVAL` | `24h` | How often a full database snapshot is written. | Lower = faster restore time, but uses more R2 storage and PUTs. |
 | `LITESTREAM_RETENTION` | `168h` | How long snapshots and WAL files are kept. | Higher = longer recovery window, but uses more R2 storage. Must be >= snapshot interval. |
 | `LITESTREAM_L0_RETENTION_CHECK_INTERVAL` | `5m` | How often Litestream checks for expired, already-compacted L0 files. | Longer intervals reduce R2 LIST requests but leave eligible L0 files in local and remote storage longer. |
@@ -343,7 +343,7 @@ You can tune replication parameters by setting these Fly secrets (using the `sec
 Litestream 0.5.17's L0 cleanup scans the retained L1 file history on every pass.
 Its upstream `15s` default repeats that scan 5,760 times per day, with more LIST
 pages as history grows. This image uses `5m` (288 passes per day). This changes
-cleanup scheduling only: the `10s` sync interval, compaction intervals, `24h`
+cleanup scheduling only: the `60s` sync interval, compaction intervals, `24h`
 snapshot interval, and `168h` snapshot retention remain unchanged. Expired L0
 files can remain until the next cleanup pass; they are still removed only after
 compaction and the L0 retention period. Set the new variable to `15s` to restore
@@ -447,3 +447,9 @@ Exit 2 means **deploy succeeded, verification failed**; exit 1 covers earlier
 configuration/provision/build failures. Inspect the deployed app and public
 origin, and recheck health and commit before deciding whether another deploy is
 needed. Setup logs are read only after all endpoint checks pass.
+
+## GCP alternative
+
+Fly remains the cheaper default. If you have GCP free credits, see
+[Deploy on a GCE VM](DEPLOY-GCP.md) for IAP-only SSH, Cloudflare Tunnel,
+R2 replication, and the migration and rollback runbook.

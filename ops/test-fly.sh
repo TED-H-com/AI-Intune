@@ -64,11 +64,11 @@ en" TELEGRAM_CHAT_ID="chat" /bin/sh ops/fly/notify-env.sh 2>/dev/null; then
 test_r2_env() {
   # 1. defaults
   out=$(env -i /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION $LITESTREAM_L0_RETENTION_CHECK_INTERVAL"')
-  if [[ "$out" != "10s 24h 168h 5m" ]]; then echo "fail: bad defaults: $out"; return 1; fi
+  if [[ "$out" != "60s 24h 168h 5m" ]]; then echo "fail: bad defaults: $out"; return 1; fi
 
   # Cleanup cadence is independent of upload cadence and snapshot retention.
   out=$(env -i LITESTREAM_L0_RETENTION_CHECK_INTERVAL=15s /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION $LITESTREAM_L0_RETENTION_CHECK_INTERVAL"')
-  if [[ "$out" != "10s 24h 168h 15s" ]]; then echo "fail: bad cleanup override: $out"; return 1; fi
+  if [[ "$out" != "60s 24h 168h 15s" ]]; then echo "fail: bad cleanup override: $out"; return 1; fi
   for invalid in 0s 5d 1.5h -1m '5 m'; do
     if env -i LITESTREAM_L0_RETENTION_CHECK_INTERVAL="$invalid" /bin/sh -c '. ops/fly/r2-env.sh' 2>/dev/null; then
       echo "fail: accepted cleanup interval $invalid"

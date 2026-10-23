@@ -2,7 +2,7 @@
 # ${NAME} is expanded by Litestream (os.Expand), not by a shell.
 # Defaults are not written here because Litestream does not apply ${NAME:-default}.
 # The entrypoint / r2-env helper validates and exports:
-#   LITESTREAM_SYNC_INTERVAL:     default 10s
+#   LITESTREAM_SYNC_INTERVAL:     default 60s
 #   LITESTREAM_SNAPSHOT_INTERVAL: default 24h
 #   LITESTREAM_RETENTION:         default 168h
 #   LITESTREAM_L0_RETENTION_CHECK_INTERVAL: default 5m

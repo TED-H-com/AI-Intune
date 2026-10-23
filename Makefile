@@ -58,8 +58,8 @@ agent-bundles-darwin: cross-darwin
 # user scheduled-task template. This is the LaunchAgent analog, not LocalSystem.
 cross-windows:
 	@mkdir -p build
-	GOOS=windows GOARCH=amd64 $(BUILD) -o build/clawctl-agent-windows-amd64 ./cmd/clawctl-agent
-	GOOS=windows GOARCH=arm64 $(BUILD) -o build/clawctl-agent-windows-arm64 ./cmd/clawctl-agent
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -trimpath -ldflags "$(LDFLAGS) -H=windowsgui" -o build/clawctl-agent-windows-amd64 ./cmd/clawctl-agent
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -trimpath -ldflags "$(LDFLAGS) -H=windowsgui" -o build/clawctl-agent-windows-arm64 ./cmd/clawctl-agent
 	@ls -la build/clawctl-agent-windows-*
 
 agent-bundles-windows: cross-windows

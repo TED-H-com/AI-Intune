@@ -232,6 +232,21 @@ CREATE INDEX IF NOT EXISTS ix_observed_recent
 CREATE INDEX IF NOT EXISTS ix_observed_time
   ON observed_state (measured_at DESC);
 
+-- Fleet Facts asks for MAX(received_at) without restricting kind/subject.
+-- The existing machine/kind indexes must visit every retained row for that
+-- machine. This range lets SQLite answer the maximum from one index entry,
+-- including historical evaluation instants.
+CREATE INDEX IF NOT EXISTS ix_observed_machine_received
+  ON observed_state (machine_id, received_at DESC);
+
+-- Refresh history must retain every credential mtime, not just the current
+-- projection. Cover only this sparse kind to avoid random payload-table reads
+-- across the full ledger. Keeping raw JSON preserves malformed-payload behavior
+-- and avoids an expression index that could reject otherwise valid ingestion.
+CREATE INDEX IF NOT EXISTS ix_observed_credential_history
+  ON observed_state (kind, received_at, machine_id, subject, measured_at, payload)
+  WHERE kind = 'credential';
+
 -- ⚠ 這個索引供 prune（retention.go）、change read（change_read.go）與 latest 讀徑使用，而它存在的理由是量出來的。
 --
 -- 「最新」由 MAX(received_at) 定義；prune 同時保護 measured_at 與 received_at
@@ -1947,3 +1962,24 @@ CREATE TABLE IF NOT EXISTS machine_offline_alerts (
  last_attempt_at TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
  lease_until TEXT NOT NULL DEFAULT '', lease_token TEXT NOT NULL DEFAULT '', lifecycle_revision INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS observed_latest (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id) ON DELETE CASCADE,
+ kind TEXT NOT NULL, subject TEXT NOT NULL,
+ observation_id TEXT NOT NULL, measured_at TEXT NOT NULL, received_at TEXT NOT NULL,
+ payload TEXT NOT NULL, source TEXT NOT NULL, observation_sequence INTEGER NOT NULL,
+ PRIMARY KEY(machine_id,kind,subject)
+);
+CREATE INDEX IF NOT EXISTS ix_observed_latest_kind ON observed_latest(kind,machine_id,subject);
+CREATE TRIGGER IF NOT EXISTS observed_latest_insert AFTER INSERT ON observed_state
+BEGIN
+ INSERT INTO observed_latest
+ (machine_id,kind,subject,observation_id,measured_at,received_at,payload,source,observation_sequence)
+ VALUES(NEW.machine_id,NEW.kind,NEW.subject,NEW.observation_id,NEW.measured_at,NEW.received_at,NEW.payload,NEW.source,NEW.rowid)
+ ON CONFLICT(machine_id,kind,subject) DO UPDATE SET
+ observation_id=excluded.observation_id, measured_at=excluded.measured_at,
+ received_at=excluded.received_at,payload=excluded.payload,source=excluded.source,
+ observation_sequence=excluded.observation_sequence
+ WHERE (excluded.received_at,excluded.measured_at,excluded.observation_sequence) >
+ (observed_latest.received_at,observed_latest.measured_at,observed_latest.observation_sequence);
+END;

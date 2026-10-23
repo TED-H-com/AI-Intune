@@ -150,3 +150,86 @@ func TestIsBusyRecognizesWriterTimeoutAndIgnoresCancellation(t *testing.T) {
 		t.Fatal("IsBusy was true for an error that is not lock contention")
 	}
 }
+
+// Observe queue registration instead of sleeping to establish ordering.
+func waitWriterQueue(t *testing.T, s *Store, bulk, interactive int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.gate.mu.Lock()
+		ready := len(s.gate.bulk) == bulk && len(s.gate.interactive) == interactive
+		s.gate.mu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("writer waiter did not register")
+}
+
+func TestInteractiveWriterPrecedesQueuedBulk(t *testing.T) {
+	s := newTestStore(t)
+	s.SetInteractiveWriterWait(2 * time.Second)
+	held, err := s.beginWrite(context.Background(), "held")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback()
+	order := make(chan string, 2)
+	errs := make(chan error, 2)
+	start := func(interactive bool, name string) {
+		go func() {
+			var tx *writeTx
+			var err error
+			if interactive {
+				tx, err = s.beginWriteInteractive(context.Background(), name)
+			} else {
+				tx, err = s.beginWrite(context.Background(), name)
+			}
+			if err == nil {
+				order <- name
+				err = tx.Rollback()
+			}
+			errs <- err
+		}()
+	}
+	start(false, "bulk")
+	waitWriterQueue(t, s, 1, 0)
+	start(true, "interactive")
+	waitWriterQueue(t, s, 1, 1)
+	if err := held.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := <-order; got != "interactive" {
+		t.Fatalf("first writer = %s", got)
+	}
+}
+
+func TestInteractiveWriterTimeoutReleasesQueueSlot(t *testing.T) {
+	s := newTestStore(t)
+	s.SetInteractiveWriterWait(50 * time.Millisecond)
+	held, err := s.beginWrite(context.Background(), "held")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback()
+	start := time.Now()
+	if _, err := s.beginWriteInteractive(context.Background(), "interactive_timeout"); !errors.Is(err, ErrWriterBusy) || !IsBusy(err) {
+		t.Fatalf("timeout: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("interactive timeout took %s", elapsed)
+	}
+	waitWriterQueue(t, s, 0, 0)
+	held.Rollback()
+	tx, err := s.beginWrite(context.Background(), "after_timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Rollback()
+}
