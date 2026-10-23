@@ -23,7 +23,7 @@ func TestAttentionStatusTemplate(t *testing.T) {
 	if err := s.tmpl.ExecuteTemplate(&out, "machines-index.html", page{MachineList: view}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Needs attention", "grok login expired, OpenClaw advisory", `value="Degraded"`} {
+	for _, want := range []string{"Needs attention", "grok login expired, OpenClaw advisory", `href="/machines/test#attention-next-action"`, `value="Degraded"`} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -51,7 +51,7 @@ func TestDashboardAttentionStatusTemplate(t *testing.T) {
 	if err := s.tmpl.ExecuteTemplate(&out, "dashboard.html", page{Overview: ov, MachineTable: buildDashboardMachineTable(ov, ""), Dashboard: buildDashboardStats(ov, nil, true)}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Needs attention") || !strings.Contains(out.String(), "grok login expired, OpenClaw advisory") {
+	if !strings.Contains(out.String(), "Review findings and next steps") || !strings.Contains(out.String(), "Needs attention") || !strings.Contains(out.String(), "grok login expired, OpenClaw advisory") {
 		t.Fatal("missing inline attention status and reasons")
 	}
 }
@@ -64,5 +64,34 @@ func TestAttentionJudgeReasonsStayShortAndSafe(t *testing.T) {
 	e := &operator.MachineEvidenceResult{Credentials: operator.MachineCredentialPage{Items: []operator.MachineCredential{{Provider: operator.EvidenceText{Text: "grok"}, Status: "expired"}}}}
 	if got := detailAttentionReasons(j, e); got != "grok login expired, OpenClaw advisory" {
 		t.Fatalf("detail summary = %q", got)
+	}
+}
+
+func TestDegradedDetailHasNextActionGuidance(t *testing.T) {
+	s, _ := newServer(t)
+	source, err := templateFS.ReadFile("templates/machine.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Render the actual conditional fragment with both states, without unrelated detail DTOs.
+	start := strings.Index(string(source), `{{if eq $md.Judgement.State "Degraded"}}`)
+	end := strings.Index(string(source)[start:], "{{end}}") + start + len("{{end}}")
+	tmpl, err := s.tmpl.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tmpl.New("next-action-test").Parse(`{{$md := .}}` + string(source)[start:end])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []state.State{state.Degraded, state.Online} {
+		var out bytes.Buffer
+		err := tmpl.ExecuteTemplate(&out, "next-action-test", struct{ Judgement operator.MachineJudgement }{operator.MachineJudgement{State: status}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "wait for a fresh observation") != (status == state.Degraded) {
+			t.Fatalf("guidance visibility for %s", status)
+		}
 	}
 }

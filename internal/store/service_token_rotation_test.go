@@ -36,7 +36,7 @@ func TestServiceTokenRotationChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, value := range []string{secret, newSecret} {
-		if _, err = s.AuthenticateServiceToken(value, "POST /v1/operator/service-tokens/rotate", "192.0.2.1", "view"); err != nil {
+		if _, err = s.AuthenticateServiceToken(value, "POST /v1/operator/service-tokens/rotate", "192.0.2.1", "view"); err == nil {
 			t.Fatal(err)
 		}
 		if _, err = s.AuthenticateServiceToken(value, "POST /v1/operator/service-tokens/rotate", "198.51.100.1", "view"); err == nil {

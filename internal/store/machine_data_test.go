@@ -43,6 +43,11 @@ func TestEveryMachineScopedTableIsDisclosed(t *testing.T) {
 		t.Fatal("missing lifecycle table")
 	}
 	scoped["usage_recommendation_cycles"] = true
+	// The fleet singleton is shared desired data for each Linux machine.
+	if cols := tableColumns(t, s, "fleet_host_profile"); len(cols) == 0 {
+		t.Fatal("missing fleet profile table")
+	}
+	scoped["fleet_host_profile"] = true
 	declared := map[string]bool{}
 	for _, table := range MachineDataTables() {
 		if declared[table.Table] {

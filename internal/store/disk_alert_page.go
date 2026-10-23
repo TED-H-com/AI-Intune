@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const DiskAlertsPageSize = 100
@@ -92,5 +93,28 @@ func (s *Store) DiskAlertMountLabels(machines []string) (map[string][]DiskMountU
 			out[machine] = append(out[machine], DiskMountUsage{Mount: entry.Mount})
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	rows.Close()
+	growthRows, err := s.rdb.Query(`SELECT machine_id,mount,body FROM disk_growth_evidence WHERE machine_id IN (SELECT value FROM json_each(?))`, string(raw))
+	if err != nil {
+		return out, err
+	}
+	defer growthRows.Close()
+	for growthRows.Next() {
+		var id, mount, body string
+		if err = growthRows.Scan(&id, &mount, &body); err != nil {
+			return out, err
+		}
+		var g DiskGrowth
+		if err = json.Unmarshal([]byte(body), &g); err != nil {
+			return out, err
+		}
+		if s.now().Sub(g.MeasuredAt) > 15*time.Minute {
+			g.Known = false
+		}
+		out[id] = append([]DiskMountUsage{{Mount: mount, Growth: &g}}, out[id]...)
+	}
+	return out, growthRows.Err()
 }

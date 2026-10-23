@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/teddashh/AI-Intune/internal/artifact"
 	"github.com/teddashh/AI-Intune/internal/restoredrill"
@@ -24,6 +25,8 @@ type TailnetSource interface {
 }
 
 type Service struct {
+	joinOnce              sync.Once
+	join                  *joinState
 	store                 *store.Store
 	artifactsDir          string
 	artifactFetcher       artifactFetchBackend

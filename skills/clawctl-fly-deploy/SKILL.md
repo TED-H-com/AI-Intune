@@ -69,7 +69,7 @@ Type the exact app name at the prompt. Non-TTY stdin is supported, but must supp
 
 ## Troubleshooting
 
-- Depot handshake, `Waiting for depot builder...`, or `failed to list workers`: deploy.sh retries once with `--depot=false --yes` and tears down new classic builders. Other failures are not retried.
+- Depot handshake, `Waiting for depot builder...`, or `failed to list workers`: deploy.sh retries each builder up to three times on transient transport failures, then auto falls back Depot → remote → local and tears down new classic builders. Permanent failures stop immediately. The wrapper first verifies fresh volume snapshots; see docs/DEPLOY-FLY.md for timeout and explicit emergency bypass.
 - Builder left behind: teardown failure names the app and exits non-zero. Confirm that exact builder was created by the retry before removing it. Preserve pre-existing builders and all unrelated apps.
 - Setup already closed (`/setup` 404): use `/login`. Do not recover an old setup code from logs. setup-admin.sh exits without writing a file.
 - MFA `Pending login expired`: login is bound to the full client IP. New connections can rotate egress IP; use one keep-alive HTTPS connection. First-run setup uses `__Host-clawctl_session` directly, not `hub_pending_mfa`.

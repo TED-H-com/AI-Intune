@@ -34,7 +34,9 @@ type EnrollRequest struct {
 	OS            string `json:"os"`
 	Arch          string `json:"arch"`
 	TailscaleIP   string `json:"tailscale_ip,omitempty"`
-	AgentVersion  string `json:"agent_version"`
+	// LANIPv4 is optional for older agents; only bounded native interface IPv4 facts.
+	LANIPv4      []string `json:"lan_ipv4,omitempty"`
+	AgentVersion string   `json:"agent_version"`
 }
 
 type EnrollResponse struct {
@@ -52,13 +54,24 @@ type EnrollResponse struct {
 
 // ---------------------------------------------------------------- check-in
 
+// CallActivity is optional process-local cumulative evidence. Signatures must be
+// lowercase SHA-256 digests; never send raw tool arguments or credentials.
+// Progress increases only for a completed task/checkpoint, never for heartbeats.
+type CallActivity struct {
+	ProcessSignature string `json:"process_signature"`
+	CallSignature    string `json:"call_signature"`
+	TotalCalls       int64  `json:"total_calls"`
+	Progress         int64  `json:"progress"`
+}
+
 // Checkin 是每 2 分鐘一次的心跳。它必須很小、很快、而且跟 observation 分開 ——
 // observation 連續失敗時心跳仍要能送達，否則 Hub 分不出「機器死了」與
 // 「只是狀態檔過期」。
 type Checkin struct {
-	SchemaVersion int       `json:"schema_version"`
-	SentAt        time.Time `json:"sent_at"`
-	AgentVersion  string    `json:"agent_version"`
+	CallActivity  []CallActivity `json:"call_activity,omitempty"`
+	SchemaVersion int            `json:"schema_version"`
+	SentAt        time.Time      `json:"sent_at"`
+	AgentVersion  string         `json:"agent_version"`
 
 	// BootID 是**機器**的開機 ID（/proc/sys/kernel/random/boot_id），
 	// 只有機器重開機才會變。
@@ -118,6 +131,11 @@ type Checkin struct {
 }
 
 type CheckinResponse struct {
+	DiskJobs             []DiskJob                      `json:"disk_jobs,omitempty"`
+	HostProfile          *HostProfile                   `json:"host_profile,omitempty"`
+	HostProfileDigest    string                         `json:"host_profile_digest,omitempty"`
+	SigninCommands       []SigninCommand                `json:"signin_commands,omitempty"`
+	ReadinessConfig      ReadinessConfig                `json:"readiness_config"`
 	DiskTimerTransitions map[string]DiskTimerTransition `json:"disk_timer_transitions,omitempty"`
 	// ReceivedAt 回送給 Agent，讓它能自己發現時鐘漂移並記在 log 裡。
 	ReceivedAt                 time.Time `json:"received_at"`
@@ -456,8 +474,14 @@ type CapabilitiesResponse struct {
 // 因為「今天是綠的，星期三就死了」只有歷史答得出來，而上游的資料庫
 // 7 天 / 2000 筆就會把歷史吃掉。
 type ObservationBatch struct {
-	SchemaVersion int       `json:"schema_version"`
-	MeasuredAt    time.Time `json:"measured_at"`
+	AuthHealth       []AuthHealth     `json:"auth_health,omitempty"`
+	BlockDevices     []BlockDevice    `json:"block_devices"`
+	DiskJobResults   []DiskJobResult  `json:"disk_job_results,omitempty"`
+	HostProfileApply *HostApplyResult `json:"host_profile_apply,omitempty"`
+	Readiness        *ReadinessFacts  `json:"readiness,omitempty"`
+	OOMKills         []OOMKill        `json:"oom_kills,omitempty"`
+	SchemaVersion    int              `json:"schema_version"`
+	MeasuredAt       time.Time        `json:"measured_at"`
 
 	// WorkloadPolicyToken 是產生本批 Artifacts / Events 時實際使用的政策身分。
 	// 空值代表舊 Agent 或第一次 checkin 前的量測，Hub 必須視為 unknown，
@@ -532,6 +556,8 @@ type Identity struct {
 	MachineIDHint string `json:"machine_id_hint"`
 	BootID        string `json:"boot_id"`
 	TailscaleIP   string `json:"tailscale_ip,omitempty"`
+	// LANIPv4 is optional for older agents; only bounded native interface IPv4 facts.
+	LANIPv4 []string `json:"lan_ipv4,omitempty"`
 
 	// LingerEnabled: systemd --user unit 在使用者登出後會不會活著，只有在
 	// LingerMeasured 為 true 時才有意義。量不到的平台（macOS 沒有 systemd

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"strings"
 	"time"
 	"unicode"
@@ -102,6 +103,13 @@ func (s *Store) PreviewOperatorMachineRename(machineID, displayName string) (Ope
 }
 
 func (s *Store) ApplyOperatorMachineRename(req OperatorMachineRenameRequest) (OperatorMachineRenameResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorMachineRenameResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorMachineRenameResult{}, operatorError(OperatorCodeIdempotencyKeyRequired,
 			"Idempotency-Key 不可省略且最多 200 bytes")
@@ -165,7 +173,7 @@ func (s *Store) ApplyOperatorMachineRename(req OperatorMachineRenameRequest) (Op
 		return OperatorMachineRenameResult{}, s.rejectMachineRename(tx, req, &audit,
 			operation, rejection.Code, rejection.Detail)
 	}
-	if strings.TrimSpace(req.Reason) == "" || req.Reason != strings.TrimSpace(req.Reason) || len(req.Reason) > auditMaxReason {
+	if strings.TrimSpace(req.Reason) == "" || req.Reason != strings.TrimSpace(req.Reason) || len([]rune(req.Reason)) > boundedtext.MaxReasonRunes {
 		return OperatorMachineRenameResult{}, s.rejectMachineRename(tx, req, &audit,
 			operation, OperatorCodeReasonRequired, "reason 不可省略、前後不可有空白，且最多 500 bytes")
 	}

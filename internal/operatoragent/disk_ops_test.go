@@ -238,3 +238,14 @@ func TestDiskActionsMCPBindingsAndDefensiveProjection(t *testing.T) {
 		t.Fatal("unknown path field accepted")
 	}
 }
+
+func TestDiskGrowthProjectionHidesMount(t *testing.T) {
+	v := redactedDiskStatus(store.DiskOpsStatus{Growth: []store.DiskGrowth{{Mount: "/private-data", Known: true, GBPerHour: 12, WindowMinutes: 30, Samples: 4}}})
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "/private-data") || !strings.Contains(string(raw), `"gb_per_hour":12`) || !strings.Contains(string(raw), `"mount_digest"`) {
+		t.Fatal("invalid growth projection")
+	}
+}

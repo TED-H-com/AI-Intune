@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"reflect"
 	"sort"
 	"strings"
@@ -62,7 +63,7 @@ type DiskPolicyResult struct {
 }
 
 func humanDiskAdmin(a AuditEntry) error {
-	if a.AuthSubject == "" || a.AuthDecision != string(operatorauth.Authorized) || (a.AuthMethod != operatorauth.AuthMethodLocalAccountSession && a.AuthMethod != operatorauth.AuthMethodLocalAPI) || !(a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "/clawctl-admin") || strings.HasSuffix(a.AuthCapability, "-admin")) {
+	if a.AuthSubject == "" || a.AuthDecision != string(operatorauth.Authorized) || (a.AuthMethod != operatorauth.AuthMethodLocalAccountSession && a.AuthMethod != operatorauth.AuthMethodLocalAPI && a.AuthMethod != operatorauth.AuthMethodChatAllowlist) || !(a.AuthCapability == "admin" || strings.HasSuffix(a.AuthCapability, "/clawctl-admin") || strings.HasSuffix(a.AuthCapability, "-admin")) {
 		return operatorError("FORBIDDEN", "disk operations require a verified human admin session")
 	}
 	return nil
@@ -108,6 +109,14 @@ func (s *Store) DiskPolicy(id string) (OpsPolicy, error) {
 // pending approvals, stores a receipt and audits without persisting protect paths
 // in the audit log. Updating creates a new immutable body, never overwrites one.
 func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, audit AuditEntry) (out DiskPolicyResult, err error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return DiskPolicyResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	audit.Action = AuditDiskPolicyPreview
 	if apply {
 		audit.Action = AuditDiskPolicyApply
@@ -130,7 +139,7 @@ func (s *Store) DiskPolicyUpsert(req DiskPolicyRequest, apply bool, key string, 
 			return rejectEarly(err)
 		}
 	}
-	if !validJobReadStoredIdentifier(req.ID, 128) || req.ExpectedRevision == nil || *req.ExpectedRevision < 0 || strings.TrimSpace(req.Reason) == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
+	if !validJobReadStoredIdentifier(req.ID, 128) || req.ExpectedRevision == nil || *req.ExpectedRevision < 0 || strings.TrimSpace(req.Reason) == "" || len([]rune(req.Reason)) > boundedtext.MaxReasonRunes || !validAuditReason(req.Reason) {
 		return rejectEarly(operatorError("BAD_REQUEST", "id, expected_revision and safe reason required"))
 	}
 	policy, body, bodyDigest, err := CanonicalDiskPolicy(req.Body)

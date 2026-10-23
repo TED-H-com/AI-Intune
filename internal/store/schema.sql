@@ -232,6 +232,21 @@ CREATE INDEX IF NOT EXISTS ix_observed_recent
 CREATE INDEX IF NOT EXISTS ix_observed_time
   ON observed_state (measured_at DESC);
 
+-- Fleet Facts asks for MAX(received_at) without restricting kind/subject.
+-- The existing machine/kind indexes must visit every retained row for that
+-- machine. This range lets SQLite answer the maximum from one index entry,
+-- including historical evaluation instants.
+CREATE INDEX IF NOT EXISTS ix_observed_machine_received
+  ON observed_state (machine_id, received_at DESC);
+
+-- Refresh history must retain every credential mtime, not just the current
+-- projection. Cover only this sparse kind to avoid random payload-table reads
+-- across the full ledger. Keeping raw JSON preserves malformed-payload behavior
+-- and avoids an expression index that could reject otherwise valid ingestion.
+CREATE INDEX IF NOT EXISTS ix_observed_credential_history
+  ON observed_state (kind, received_at, machine_id, subject, measured_at, payload)
+  WHERE kind = 'credential';
+
 -- ⚠ 這個索引供 prune（retention.go）、change read（change_read.go）與 latest 讀徑使用，而它存在的理由是量出來的。
 --
 -- 「最新」由 MAX(received_at) 定義；prune 同時保護 measured_at 與 received_at
@@ -1520,6 +1535,7 @@ CREATE TABLE IF NOT EXISTS hub_accounts (
 );
 -- hub_accounts_email is created by Open after additive email/role migration.
 CREATE TABLE IF NOT EXISTS hub_sessions (
+ mfa_verified_at TEXT NOT NULL DEFAULT '',
  session_hash TEXT PRIMARY KEY,
  account_id TEXT NOT NULL REFERENCES hub_accounts(account_id),
  created_at TEXT NOT NULL,
@@ -1588,7 +1604,7 @@ CREATE TABLE IF NOT EXISTS schedule_jobs (
 );
 
 CREATE TABLE IF NOT EXISTS service_tokens (
- id TEXT PRIMARY KEY, name TEXT NOT NULL, scope TEXT NOT NULL CHECK(scope IN ('view','operate')),
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, scope TEXT NOT NULL CHECK(scope IN ('view','operate','operator-admin')),
  token_hash BLOB NOT NULL UNIQUE CHECK(length(token_hash)=32), allowlist TEXT NOT NULL, source_cidrs TEXT NOT NULL,
  created_by TEXT NOT NULL REFERENCES hub_accounts(account_id), created_at TEXT NOT NULL,
  expires_at TEXT NOT NULL CHECK(julianday(expires_at) IS NOT NULL AND julianday(expires_at)>julianday(created_at) AND julianday(expires_at)<=julianday(created_at)+90), last_used_at TEXT, revoked_at TEXT
@@ -1815,3 +1831,164 @@ CREATE TRIGGER IF NOT EXISTS usage_recommendation_reopen_cycle
  ON CONFLICT(recommendation_id) DO UPDATE SET
  generation=generation+1, approval_id=NEW.id || ':reopen:' || (generation+1);
  END;
+
+-- Outbound channel configuration contains credential references only.
+CREATE TABLE IF NOT EXISTS outbound_channels (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+ token_ref TEXT NOT NULL DEFAULT '', chat_ref TEXT NOT NULL DEFAULT '',
+ url_ref TEXT NOT NULL DEFAULT '', secret_ref TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS channel_bindings (
+ channel_id TEXT NOT NULL REFERENCES outbound_channels(id) ON DELETE CASCADE,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ PRIMARY KEY(channel_id, machine_id)
+);
+CREATE TABLE IF NOT EXISTS channel_initialization (
+ id INTEGER PRIMARY KEY CHECK(id = 1)
+);
+CREATE INDEX IF NOT EXISTS idx_channel_bindings_machine ON channel_bindings(machine_id);
+
+-- Bot inventory is independent of outbound destinations and routing.
+CREATE TABLE IF NOT EXISTS channel_bots (
+ name TEXT PRIMARY KEY,
+ kind TEXT NOT NULL CHECK(kind IN ('discord','telegram')),
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ agent_type TEXT NOT NULL CHECK(agent_type IN ('hermes','openclaw','other')),
+ token_ref TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('active','disabled','unknown')),
+ notes TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_channel_bots_machine ON channel_bots(machine_id);
+
+-- Inbound state is independent of outbound inventory. No resolved credentials.
+CREATE TABLE IF NOT EXISTS chat_allowlist (
+ channel_id TEXT NOT NULL, user_id TEXT NOT NULL, account_id TEXT NOT NULL REFERENCES hub_accounts(account_id),
+ PRIMARY KEY(channel_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS chat_events (
+ channel_id TEXT NOT NULL, event_id TEXT NOT NULL, expires INTEGER NOT NULL,
+ PRIMARY KEY(channel_id,event_id)
+);
+CREATE TABLE IF NOT EXISTS chat_approvals (
+ id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, destination TEXT NOT NULL,
+ requester TEXT NOT NULL, target TEXT NOT NULL, body TEXT NOT NULL, expires INTEGER NOT NULL,
+ consumed INTEGER NOT NULL DEFAULT 0
+);
+
+-- Loop evidence contains opaque hashes and numeric counters, never tool arguments.
+CREATE TABLE IF NOT EXISTS loop_policy(id INTEGER PRIMARY KEY CHECK(id=1),threshold INTEGER NOT NULL,window_seconds INTEGER NOT NULL);
+INSERT OR IGNORE INTO loop_policy VALUES(1,50,600);
+CREATE TABLE IF NOT EXISTS loop_streams(machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id) ON DELETE CASCADE,process TEXT NOT NULL,signature TEXT NOT NULL,total INTEGER NOT NULL,progress INTEGER NOT NULL,last_seen_at TEXT NOT NULL,last_progress TEXT,PRIMARY KEY(machine_id,process,signature));
+CREATE TABLE IF NOT EXISTS loop_samples(machine_id TEXT NOT NULL,process TEXT NOT NULL,signature TEXT NOT NULL,received_at TEXT NOT NULL,calls INTEGER NOT NULL,PRIMARY KEY(machine_id,process,signature,received_at));
+CREATE INDEX IF NOT EXISTS loop_samples_time ON loop_samples(received_at);
+CREATE TABLE IF NOT EXISTS loop_episodes(id INTEGER PRIMARY KEY AUTOINCREMENT,machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id) ON DELETE CASCADE,process TEXT NOT NULL,signature TEXT NOT NULL,started_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,last_progress TEXT,calls INTEGER NOT NULL,rate REAL NOT NULL,acknowledged_at TEXT,resolved_at TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS loop_episode_open ON loop_episodes(machine_id,process,signature) WHERE resolved_at IS NULL;
+
+-- TLS inventory is opt-in; configuration revisions fence in-flight probes.
+CREATE TABLE IF NOT EXISTS certificate_monitors (
+ id TEXT PRIMARY KEY,
+ revision INTEGER NOT NULL,
+ config TEXT NOT NULL,
+ result TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS host_readiness_config (
+ machine_id TEXT PRIMARY KEY REFERENCES machine_registry(machine_id),
+ config TEXT NOT NULL
+);
+
+-- Fleet-wide readiness defaults; retained until explicitly changed.
+CREATE TABLE IF NOT EXISTS fleet_readiness_profile (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  config TEXT NOT NULL
+);
+
+-- Fleet-wide, optional Linux host setup; no managed defaults.
+CREATE TABLE IF NOT EXISTS fleet_host_profile (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ profile TEXT NOT NULL
+);
+
+-- Join requests contain only public metadata and the SHA-256 of a device secret.
+CREATE TABLE IF NOT EXISTS join_requests (
+ code TEXT PRIMARY KEY, secret_hash BLOB NOT NULL UNIQUE,
+ hostname TEXT NOT NULL, os TEXT NOT NULL, arch TEXT NOT NULL, user TEXT NOT NULL,
+ client_ip TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','redeemed','approval_expired'))
+);
+CREATE INDEX IF NOT EXISTS join_requests_expiry ON join_requests(expires_at);
+
+-- One approved, immutable setup per active disk. Terminal rows retain evidence.
+CREATE TABLE IF NOT EXISTS disk_setup_jobs (
+ id TEXT PRIMARY KEY,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ device TEXT NOT NULL,
+ serial TEXT NOT NULL,
+ wwn TEXT NOT NULL,
+ job TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','delivered','done','refused','failed','expired')),
+ created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ result TEXT NOT NULL DEFAULT '{}'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active ON disk_setup_jobs(machine_id,device) WHERE state IN ('pending','delivered');
+
+CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active_serial ON disk_setup_jobs(machine_id,serial) WHERE serial<>'' AND state IN ('pending','delivered');
+CREATE UNIQUE INDEX IF NOT EXISTS disk_setup_active_wwn ON disk_setup_jobs(machine_id,wwn) WHERE wwn<>'' AND state IN ('pending','delivered');
+
+-- Only session metadata is durable. Login URLs, device codes and pasted codes
+-- live in memory and disappear on Hub restart.
+CREATE TABLE IF NOT EXISTS signin_sessions (
+ id TEXT PRIMARY KEY,
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id),
+ cli TEXT NOT NULL CHECK(cli IN ('codex','agy','claude','grok','gh')),
+ slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 8),
+ state TEXT NOT NULL CHECK(state IN ('pending','started','waiting_for_code','submitted','done','failed','expired','cancelled')),
+ created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ reason TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS signin_one_active ON signin_sessions(machine_id,cli,slot)
+ WHERE state IN ('pending','started','waiting_for_code','submitted');
+CREATE TABLE IF NOT EXISTS signin_notification_setting (
+ id INTEGER PRIMARY KEY CHECK(id=1), channel_id TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS signin_notification_state (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id), cli TEXT NOT NULL,
+ slot INTEGER NOT NULL, status TEXT NOT NULL, account TEXT NOT NULL DEFAULT '',
+ last_notified_at TEXT NOT NULL DEFAULT '', pending INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(machine_id,cli,slot)
+);
+
+-- One bounded durable latch per machine; delivery history uses notifications.
+CREATE TABLE IF NOT EXISTS offline_alert_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1), minutes INTEGER NOT NULL CHECK(minutes BETWEEN 1 AND 1440), revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS machine_offline_alerts (
+ machine_id TEXT PRIMARY KEY REFERENCES machine_registry(machine_id),
+ episode_id TEXT NOT NULL, unreachable_since TEXT NOT NULL, recovery_since TEXT NOT NULL DEFAULT '',
+ last_checkin_at TEXT NOT NULL, offline_sent INTEGER NOT NULL DEFAULT 0,
+ last_attempt_at TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
+ lease_until TEXT NOT NULL DEFAULT '', lease_token TEXT NOT NULL DEFAULT '', lifecycle_revision INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS observed_latest (
+ machine_id TEXT NOT NULL REFERENCES machine_registry(machine_id) ON DELETE CASCADE,
+ kind TEXT NOT NULL, subject TEXT NOT NULL,
+ observation_id TEXT NOT NULL, measured_at TEXT NOT NULL, received_at TEXT NOT NULL,
+ payload TEXT NOT NULL, source TEXT NOT NULL, observation_sequence INTEGER NOT NULL,
+ PRIMARY KEY(machine_id,kind,subject)
+);
+CREATE INDEX IF NOT EXISTS ix_observed_latest_kind ON observed_latest(kind,machine_id,subject);
+CREATE TRIGGER IF NOT EXISTS observed_latest_insert AFTER INSERT ON observed_state
+BEGIN
+ INSERT INTO observed_latest
+ (machine_id,kind,subject,observation_id,measured_at,received_at,payload,source,observation_sequence)
+ VALUES(NEW.machine_id,NEW.kind,NEW.subject,NEW.observation_id,NEW.measured_at,NEW.received_at,NEW.payload,NEW.source,NEW.rowid)
+ ON CONFLICT(machine_id,kind,subject) DO UPDATE SET
+ observation_id=excluded.observation_id, measured_at=excluded.measured_at,
+ received_at=excluded.received_at,payload=excluded.payload,source=excluded.source,
+ observation_sequence=excluded.observation_sequence
+ WHERE (excluded.received_at,excluded.measured_at,excluded.observation_sequence) >
+ (observed_latest.received_at,observed_latest.measured_at,observed_latest.observation_sequence);
+END;

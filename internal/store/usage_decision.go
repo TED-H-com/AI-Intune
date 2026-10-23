@@ -18,7 +18,7 @@ func (s *Store) decideUsageRecommendation(binding OpsApproval, decision, reason 
 	if binding.Operation != "usage-recommendation-v1" ||
 		!usageEnum(decision, "approved", "dismissed", "snoozed") ||
 		strings.TrimSpace(reason) == "" ||
-		len(reason) > 500 ||
+		len([]rune(reason)) > 500 ||
 		scriptcatalog.Redact(reason) != reason {
 		return out, ErrUsageInvalid
 	}

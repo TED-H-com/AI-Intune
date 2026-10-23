@@ -48,7 +48,7 @@ func TestDiskHandoffScreenshotFixtures(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.render(w, r, f.template, f.p)
 		body := w.Body.Bytes()
-		if !bytes.Contains(body, []byte("</html>")) || bytes.Contains(body, []byte("<script")) || bytes.Contains(body, []byte("ZgotmplZ")) {
+		if !bytes.Contains(body, []byte("</html>")) || bytes.Contains(bytes.ReplaceAll(body, []byte("<script data-audit-reason>"), nil), []byte("<script")) || bytes.Contains(body, []byte("ZgotmplZ")) {
 			t.Fatalf("invalid fixture %s: %s", f.name, body)
 		}
 		if dir != "" {

@@ -49,7 +49,7 @@ func TestTheTimelineTellsOneStoryOutOfEverySourceTheHubWroteDown(t *testing.T) {
 	}
 	startDiagnosticJob(t, service, machineID)
 
-	result := timelineOf(t, service, machineID, now, 0)
+	result := timelineOf(t, service, machineID, time.Now().UTC().Add(time.Second), 0) // jobs/actions are stamped after the fixture's truncated now
 	if result.SchemaVersion != MachineTimelineSchemaVersion || result.MachineID != machineID ||
 		result.DisplayName != "timeline-all" || result.Window.Days != DefaultMachineTimelineDays {
 		t.Fatalf("result=%+v", result)
@@ -221,9 +221,9 @@ func TestEveryEntryNamesItsSourceAndOnlyLinksWhereEvidenceExists(t *testing.T) {
 // 操作員動作那一列指向的是「這台機器的這個動作」，不是整本稽核。落在一頁要自己
 // 再篩一次的地方，等於沒有下鑽。
 func TestAnOperatorActionLinksToExactlyTheRowsBehindIt(t *testing.T) {
-	service, _, machineID, now := machineActionsFixture(t, "timeline-drill", enabledCheckin())
+	service, _, machineID, _ := machineActionsFixture(t, "timeline-drill", enabledCheckin())
 	startDiagnosticJob(t, service, machineID)
-	result := timelineOf(t, service, machineID, now, 0)
+	result := timelineOf(t, service, machineID, time.Now().UTC().Add(time.Second), 0)
 	actions := entriesOfKind(result, MachineTimelineOperatorAction)
 	if len(actions) == 0 {
 		t.Fatal("開了一張診斷工作單卻沒有留下操作員動作")

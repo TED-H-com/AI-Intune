@@ -118,3 +118,7 @@ func (s *Service) DiskAlertMountLabels(machines []string) (map[string][]store.Di
 func (s *Service) DiskAlertBannerCounts() (store.DiskAlertBannerCounts, error) {
 	return s.store.DiskAlertBannerCounts()
 }
+
+func (s *Service) DiskGrowthRead(id string) ([]store.DiskGrowth, error) {
+	return s.store.DiskGrowthRead(id)
+}

@@ -27,14 +27,26 @@ type MachineDataTable struct {
 
 // machineDataTables 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var machineDataTables = []MachineDataTable{
+	{Table: "machine_offline_alerts", TimeCol: "unreachable_since"},
+	{Table: "fleet_host_profile", TimeCol: ""},
+	{Table: "signin_sessions", TimeCol: "created_at"},
+	{Table: "signin_notification_state", TimeCol: ""},
+	{Table: "host_readiness_config", TimeCol: ""},
+	{Table: "disk_setup_jobs", TimeCol: "created_at"},
+	{Table: "channel_bots", TimeCol: ""},
+	{Table: "channel_bindings", TimeCol: ""},
 	{Table: "machine_registry", TimeCol: "created_at"},
 	{Table: "machine_registry_lifecycle_events", TimeCol: "occurred_at"},
 	{Table: "agent_sessions", TimeCol: "opened_at"},
 	{Table: "machine_identity_hints", TimeCol: "last_seen_at"},
 	{Table: "machine_checkins", TimeCol: "received_at"},
+	{Table: "loop_streams", TimeCol: "last_seen_at"},
+	{Table: "loop_samples", TimeCol: "received_at"},
+	{Table: "loop_episodes", TimeCol: "last_seen_at"},
 	// capability 沒有自己的 Hub 時刻；它跟 exact check-in 同生同滅，保留期由 FK cascade 繼承。
 	{Table: "machine_job_capabilities", TimeCol: ""},
 	{Table: "observed_state", TimeCol: "received_at"},
+	{Table: "observed_latest", TimeCol: "received_at"},
 	{Table: "ticket_occupancy_observation", TimeCol: "received_at"},
 	{Table: "credential_on_machine", TimeCol: "updated_at"},
 	{Table: "verification_results", TimeCol: "received_at"},
@@ -51,6 +63,8 @@ var machineDataTables = []MachineDataTable{
 	{Table: "disk_timer_ingestion", TimeCol: "received_at"},
 	{Table: "disk_alert_delivery_reservations", TimeCol: "reserved_at"},
 	{Table: "disk_alerts", TimeCol: "opened_at"},
+	{Table: "disk_growth_samples", TimeCol: "received_at"},
+	{Table: "disk_growth_evidence", TimeCol: "updated_at"},
 	{Table: "disk_canary_days", TimeCol: "day"},
 	{Table: "usage_accounts", TimeCol: ""},
 	{Table: "usage_files", TimeCol: ""},
@@ -129,6 +143,12 @@ func (s *Store) MachineDataHoldings(machineID string) ([]MachineDataHolding, err
 
 func (s *Store) machineDataHolding(table MachineDataTable, machineID string) (MachineDataHolding, error) {
 	holding := MachineDataHolding{Table: table.Table}
+	if table.Table == "fleet_host_profile" {
+		// Shared desired settings apply to every Linux machine, not a per-host copy.
+		err := s.rdb.QueryRow(`SELECT count(*) FROM fleet_host_profile WHERE singleton=1 AND EXISTS(SELECT 1 FROM machine_registry WHERE machine_id=? AND os='linux')`, machineID).Scan(&holding.Rows)
+		return holding, err
+	}
+
 	if table.Table == "usage_recommendation_cycles" {
 		err := s.rdb.QueryRow(`SELECT count(*) FROM usage_recommendation_cycles c JOIN usage_recommendations r ON r.id=c.recommendation_id WHERE r.machine_id=?`, machineID).Scan(&holding.Rows)
 		return holding, err

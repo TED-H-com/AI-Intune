@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"strings"
 	"time"
 )
@@ -249,6 +250,13 @@ func operatorVerifierRevocationSuccessDetail(receipt operatorVerifierRevocationR
 // ApplyOperatorVerifierRevocation commits the revocation, receipt, idempotency
 // decision and audit evidence together.
 func (s *Store) ApplyOperatorVerifierRevocation(req OperatorVerifierRevocationRequest) (OperatorVerifierRevocationResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorVerifierRevocationResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorVerifierRevocationResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -531,7 +539,7 @@ func validateOperatorVerifierRevocationRejectionEvidence(tx dbTx, cached operato
 	 WHERE action=? AND machine_id IS NULL AND COALESCE(reason,'')=?
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='failed'
 	   AND COALESCE(detail,'')=?`,
-		string(AuditVerifierRevoke), truncAudit(req.Reason, auditMaxReason),
+		string(AuditVerifierRevoke), truncReason(req.Reason),
 		req.IdempotencyKey, req.RequestDigest, cached.CreatedAt,
 		cached.ErrorDetail.String).Scan(&count)
 	if err != nil {
@@ -566,7 +574,7 @@ func validateOperatorVerifierRevocationSuccessEvidence(tx dbTx,
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='ok'
 	   AND COALESCE(detail,'')=?`,
 		string(AuditVerifierRevoke), truncAudit(receipt.DisplayName, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		fmtTime(receipt.RevokedAt), operatorVerifierRevocationSuccessDetail(receipt)).Scan(&count)
 	if err != nil {
 		return false, err

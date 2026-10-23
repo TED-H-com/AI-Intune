@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply fleet host setup profile
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/clawctl-fleet-apply
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+UMask=0022
+TimeoutStartSec=15min

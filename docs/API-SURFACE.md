@@ -3,13 +3,16 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 305 個 HTTP operations（28 non-operator＋277 operator；140 條 operator JSON）、
+> 逐一對照 359 個 HTTP operations（36 non-operator＋323 operator；159 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
+The additional provider-authenticated `POST /v1/channels/{id}/inbound` operation
+is off by default and uses its own signature/secret boundary. See [CHANNELS.md](CHANNELS.md).
+
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 305-operation tally above (28 non-operator + 277 operator). The inventory/contract excludes these six public account operations and totals 299. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 359-operation tally above (36 non-operator + 323 operator). The inventory/contract excludes these six public account operations and totals 353. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -20,7 +23,7 @@ These six operations are included in the 305-operation tally above (28 non-opera
 
 | Method | Operator download route | Authority / behavior |
 |---|---|---|
-| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 219 operator tally. |
+| `POST` | `/machines/{id}/keyed-installer` | Admin, locked browser security profile and CSRF checks; form `token` + Linux `arch` (`amd64` / `arm64`); returns no-store archive embedding Hub URL and pending one-time token without redeeming it. Already included in the 306 operator tally. |
 
 In local mode operator routes use a local admin session, including `/metrics`; in `both`, sessions precede eligible WhoIs fallback. Forwarded identity headers and machine/verifier bearers never authorize operators. The Tailscale-specific explanations below describe the advanced mode. See [Autopilot](AUTOPILOT.md) for setup, expiry, lockout and recovery.
 
@@ -83,6 +86,7 @@ verifier 不是第二個判斷，是一條用單一 bearer 控管的遠端執行
 | `GET` | `/v1/operator/machines` | All devices 與 Dashboard SSR 直接共用 in-process operator service | `machines` 預設由 explicit URL → env → `operator.json` discovery 走 HTTP；`--db` 僅 stopped-service break-glass，且 workload policy identity 必須與 Hub 最後發布值一致 | `schema_version=2`；exact machine/display、repeatable state、lifecycle/reporting/channel、1..100 limit 與 filter-bound cursor；registry creation ceiling + live health，不是 snapshot；safe presentation DTO；分母只看 active/retired，頂層 legacy `expected` 數必須等於 `active`，逐列 legacy `expected` 不參與重數；不接受沒有可管理 producer 的 `expected` filter |
 | `GET` | `/v1/operator/machines/{id}` | machine detail SSR 的 judgement、expectations/artifact/event evidence、monitor、identity、resources、check-in/state history 直接共用 in-process typed service；pending card 另讀 dedicated typed operator service，BAT connect 另讀 coordinate-bearing `MachineConnect` v1 BFF projection；不再有 raw Store bridge | `machines show <machine-id>` 預設走 discovery HTTP，human／JSON 都讀同一 DTO | `schema_version=6` explicit bounded allowlist（v6：resources 的記憶體與負載改成 typed absence —— `mem_measured` 由 Hub 從「總量為 0 不可能是量測結果」推導，`load_1m` 可為 null 因為 0.00 是合法的已量到值）：Hub judgement 含 4 KiB reason 與最多 100 筆 findings；expectations 分開保留 unconfigured／config read failure／configured-but-no-applicable-rules，最多 50 條 display definitions。Artifact observation 明列 observed/decoded/invalid/read_failed/exists/mtime 與 agent/Hub clocks；event evidence 最多各 20 個 operator-declared failure enums、declared／undeclared counts，另保留 partial coverage、malformed、unknown 與 truthful total/invalid/truncated。Artifact freshness probe 不讀內容且不等於 work outcome；event observer 只解析人宣告的結構化 enum 欄位，不掃 free text 關鍵字，raw content 不進 DTO。Config path 專用欄位與 parser 欄位結構性 excluded，但 artifact path 與 bounded why/error 是 display-only、可能含嵌入路徑，不做 path/secret 掃描／遮罩；known dedicated secret fields 仍由結構排除。Active judgement 須與 fleet state 相等；retired 保留 diagnosis 但 `affects_fleet_state=false`。心跳固定 24h／1000 筆、狀態歷史 20 段、identity hints 100 筆；producer 是 machine-bearer observer agent、非獨立 verifier，存活只採 Hub received_at。BAT URL/argv/listener 與 pending enrollment 仍 excluded；HTML 的 pending metadata 改由 `/enrollment-token` 同一 service contract 提供、不回 token/hash；BAT HTML 另用不設 HTTP route 的 `MachineConnect` v1，保留 observed/decoded/invalid、agent/Hub clocks、20 個 listener 上限、bounded argv/why、producer 與 coordinate source；URL 只從 explicit non-loopback listener 或最新 decoded identity Tailscale IP 形成，永不 fallback 到 enrollment-time registry IP |
 | `GET` | `/v1/operator/machines/{id}/evidence` | machine detail 的 OpenClaw、CLI tools、credentials、occupancy、systemd observations、run summaries／journals 由同一 in-process service 的 typed evidence 渲染，不再經 `Store.Detail` raw 欄位 | `machines evidence <machine-id>` 預設走 discovery HTTP；`--db` 僅 stopped-service break-glass | `schema_version=6` typed bounded disclosure；OpenClaw/CLI 分開保留 CLI/gateway/upstream/running/package sources 與 source conflict，不折成單一版本；unsupported raw version 只顯示、不解析。專用 host path、DB location 與 process ID 欄位結構性排除，只公開 observed/count/boolean 及由 agent 路徑座標推導的 `same|different` relationship；CLI tool 另帶 `process_scan`（`complete`／`restricted`／`unavailable`／空字串＝舊 agent）說出這一輪的 process 掃描本身有沒有跑完，掃描沒跑完時 `running_reason` 不得被讀成「沒有在跑」；bounded reason/raw text 不做 path/PID/secret 掃描或遮罩。Credentials 明列六態、驗證方法、續期史／bounded peers 與 agent/Hub clocks，但 status 不等於 session validity，active account ID／secret fields 結構性排除；occupancy 只由完成回合的 append-only Hub ledger 聚合，保留上游 provider/source、不用 process、不分類 error，profile/session/job/model/raw error 等 event details 結構性排除，另列 latest scan 的 rows_seen／rows_without_provider 與 clocks。Systemd unit/name/state/restart/two clocks 與 summary/journal 各段同樣有 1..100 筆、truthful total/truncated/invalid；volatile MainPID 排除且 `active/running` 不是 work outcome。所有文字逐欄 scrub/截斷並帶 bytes/truncated/issues；另分 observed/decoded/db_observed、read_failed/quiet/not-collected/undecodable，固定揭露 producer/relay、machine-bearer authority、非獨立驗證及各段 redaction 差異 |
+| `GET` | `/v1/operator/machines/{id}/safe` | machine detail 的 **Bot view** 直接渲染同一份 JSON projection，讓人先稽核 bot 將看到的內容 | MCP/operator-agent `machine_safe_detail` | `view`；`Cache-Control: no-store`；不接受 query。把上述 detail 與 evidence DTO 組成 detached JSON tree，再遞迴 scrub 每一個 string value；遮罩 credential assignment、Authorization/Bearer、常見 provider token prefix、PEM private key、userinfo URL、JWT 與長度至少 20、Shannon entropy 至少 4 bits/byte 的 token。回 `redactions` replacement count、`redacted`、sorted unique `redaction_flags` 與 `scrubber_version`。這是 heuristic defense-in-depth，不是無 secret 證明；長而多樣的 path component 可能 false positive，普通 path、UUID、hex SHA-256 fixture 保留。Route 在 service-token manifest 可明示 opt in，**不在 Hermes default preset**；原 human detail/evidence 不變。 |
 | `GET` | `/v1/operator/jobs` | `/jobs` SSR 直接共用 in-process operator service | `job list` 預設由 explicit URL → env → `operator.json` discovery 走 HTTP；`--db` 僅 stopped-service break-glass | machine/state/deployment/resource filters、1..100 limit、opaque cursor；safe DTO 與 creation-ceiling live keyset |
 | `GET` | `/v1/operator/jobs/{id}` | `/jobs/{id}` SSR 共用同一 in-process service 的 safe detail | `job show <job-id>` 預設走 discovery HTTP | safe detail 只回 desired/event/verification metadata，不回 raw evidence |
 | `GET` | `/v1/operator/jobs/{id}/evidence` | `/jobs/{id}` SSR 以同一 in-process service 的 typed evidence 渲染，不再有 raw Store-model bridge | `job evidence <job-id>` 預設走 discovery HTTP；`--db` 僅 stopped-service break-glass | `schema_version=6` typed、bounded disclosure：desired spec、event metadata＋payload byte 數、window 內最後一筆 rejected 的 code/detail、verification rule/command/stdout/stderr；每欄經 invalid UTF-8/control/Cf scrub，並以該欄自報的 `max_bytes` 截斷（spec/command/stdout/stderr 16 KiB、rule_id 256、reported_phase 與 rejection code 64），帶 bytes/truncated/issues；`disclosure.max_field_bytes` 是各欄上限的最大值，不是逐欄承諾；每段 1..100 筆並標 total/truncated。Event producer 可為 machine-bearer `executor_agent`，或依賴失敗時的 `hub_scheduler`／`dependency_graph`；rejection 連同同一 producer projection。新 event/verification row 保存 producer ID/kind、evidence role、authority 與 `provenance_recorded=true`，verification 另存 Hub `received_at`；legacy row 保留 `provenance_recorded=false`，legacy verification 的 `received_at=null`。Executor 段的 verification role 仍只有 executor。`independent` 是獨立的第二段：verdict 是 absent／producer_revoked／digest_mismatch／release_mismatch／stale／failed／release_unreported／passed 八選一，依此優先序取第一個成立者；每列帶 producer 的 kind／verifier ID／display name／failure domain／state、`verifier_bearer` authority 與 `independent_verifier` role，並同時保留 verifier 自報的 `reported_verified_at` 與 Hub 的 `received_at`。`observed_digest` 與工作單 digest 的比較只由 Hub 計算成 `digest_matches_job`；`observed_version` 只綁通過的 `openclaw.current_release`，並由 Hub 對 desired spec 的 exact OpenClaw 版號算出 `version_matches_job`，兩者都不採信 verifier 的結論，也不解析 stdout。`total` 是證據列數，`live_producers` 是仍有效的 distinct verifier 身分數；同一 verifier 的多條規則或多次派工不會膨脹 producer 數。`disclosure.independent_verifier` 由這張單的 live producer 數計算，不是常數；它為 true 也不改變工作單完成 gate——`Store.CompleteJob` 仍只採 executor 證據；stable promotion 另用 fleet-peer 完整 report 與 exact version 判斷。`independent.assignments` 每一列說明誰被指派、何時指派、以及四種互斥狀態之一（`reported`／`producer_revoked`／`waiting_for_job`／`awaiting_report`），讓 `absent` 這個 verdict 分得出「沒有人被指派」與「有人被指派但還沒回報」。Fleet peer 要該次派工後三個必要 rule ID 全到齊才是 reported；狀態由既有事實推導，沒有 state 欄位可以被宣告成完成。不回 raw payload、lease token 或 `created_by` |
@@ -306,6 +310,13 @@ Updates 不再由 HTML 自己拼 Store rows；`operator.Service.Updates` 與
 成員、最後觀測版本與 Hub 收件時間、latest safe deployment、rollout plan 和 stable promotion gate。這是 read/preview
 composition，不是第二個 deployment writer；artifact 在 overview 仍是 metadata-only，真正 create/
 promotion 繼續走 Deployments preview/apply，且會重新驗 material bytes。
+Updates 的空畫面依操作順序連到三個既有的人工作業入口：Fetch 取得支援的 artifact、Machines
+指派 channel、New Deployment 預覽 canary。New Deployment 沒有候選材料時也連回 Fetch 與
+Machines，而不是把唯讀 catalog 當成下一步。這些連結沒有新增 API contract。
+
+Apps 的 Profiles 與 Assignments 是變更入口；`/reports/profile` 是唯讀核對入口。三頁互相使用
+明確標籤連結，且 Store、Profiles、Assignments、Artifacts、Operations 的空畫面會指向各自缺少的
+前置作業。它們仍共用既有 operator projections 與 mutation routes。
 
 Deployments list/detail 同樣回 explicit safe DTO；Web template model 不接 raw desired spec、artifact
 URL/provenance 或 `created_by`。List cursor 綁 exact channel/state/stuck filters 與最後一筆 keyset
@@ -552,7 +563,7 @@ closed `args`, `targets` (1–50 explicit machine IDs), `reason`, and optional
 with no active job. All target validation, job creation, receipt and audit are atomic.
 Phase 1 uses explicit IDs; selectors can be resolved with the existing machine list.
 
-The sole entry is `fleet-probe-v1`: uptime, three load averages, root disk use percent,
+The baseline entry is `fleet-probe-v1`: uptime, three load averages, root disk use percent,
 and failed systemd unit count (`null` when unavailable). It exposes no host identity.
 The embedded catalog is shared at build time; agents independently verify exact bytes,
 validate arguments, refuse root execution, and use JSON stdin, a private working directory,
@@ -611,6 +622,101 @@ required connector tree digest, optional excerpts (default false), admin approva
 (write-equivalent catalog mode), fixed mapping file, agent user, Python 3, 600-second
 maximum/default timeout and 64 KiB output. Existing script/schedule preview and
 apply APIs are reused; see [BAT pilot](runbooks/BAT-SWEEP-PILOT.md).
+
+The human View page `GET /checks`, linked from Reports and machine detail,
+shows at most 25 machines per cursor page and the latest attempt for each of
+these three report scripts. Machine detail uses the same allowlisted projection.
+Badges distinguish no issues found, attention, urgent attention, failure, and no
+result. The report status is independent of the script process exit status.
+Only reviewed numeric/boolean metrics, validated BAT versions, fixed summaries
+and sentences mapped from typed reasons enter HTML; raw output, findings data,
+peer identities and account identifiers are excluded. Missing measurements stay
+unknown. Times are normalized UTC. Old network reports lack `online_peer_count`,
+`listen_baseline_available`, and `listen_ports_changed`; these remain unknown
+rather than being inferred. New report bytes and example hashes include these
+additive metrics.
+
+Human Operate `POST /checks/schedules/preview` accepts one `target` and previews
+all five embedded example bodies through the existing schedule upsert contract.
+It shares schedule admission, authorization and audit behavior. Each confirmation
+posts to the existing `/tenant/schedules/apply`, preserving revision, digest,
+idempotency, MFA and CSRF checks. Every helper body has `enabled:false`,
+`catch_up:false`, and UTC; no helper request enables a schedule. Confirmation is
+per schedule, so partial setup is possible and existing names are never overwritten.
+Example profiles and expected peers must be edited in Schedules before enabling.
+Both new HTML routes are service-token ineligible and responses are no-store.
+
+Three read-only entries support the OpenClaw retirement Phase 0 comparison.
+All run as a non-root agent user on Linux, use isolated system Python 3 with
+JSON stdin, have closed argument schemas and at most 64 KiB of redacted output.
+They emit one JSON line with `schema_version:1`, `status` (`ok`, `warn`, `urgent`,
+or `error`), `summary`, `metrics`, and typed `findings[].reason`. Missing CLIs,
+configuration, malformed responses, and CLI timeouts produce structured errors
+with process exit 0; consumers must inspect `status` rather than treating a
+successful script process as a healthy observation. No raw CLI diagnostics,
+tokens, OCIDs, account emails, remote writes, downloads, or installs appear in
+their evidence. The existing runner still enforces the overall timeout and
+hashes the original streams. Agents and Hub preserve the validated network
+`metrics.listen_digest` through redaction so it can be reused as a baseline.
+
+| Entry | Arguments and behavior | Timeout (default / maximum) |
+| --- | --- | --- |
+| `oci-cost-report-v1` | Required `profile` matching `^[a-z0-9-]{1,32}$`; optional numeric `warn_usd` (0) and `urgent_usd` (5), each 0–1,000,000 with urgent ≥ warn. MONTHLY COST query from the first of this month at 00:00 UTC through tomorrow at 00:00 UTC. Decimal USD amounts sum before strict `>` threshold comparisons. Metrics: `mtd_usd`, `currency`, `running_instances`, `period_start`, `period_end`. | 300 / 600 seconds |
+| `network-watch-v1` | Optional `expected_peers` (≤32 hostnames), `resolve` (≤8 names; defaults `github.com`, `cloudflare.com`), `baseline_listen_digest` (64 lowercase hex), `baseline_listen_ports` (≤256 decimal port strings, 1–65535), and `mode` (`watch`, default, or `daily`). Checks Tailscale state/health, peer count, offline/missing expected peers, active DERP-only peers, default routes, DNS, system `cloudflared.service` active state, and external TCP listening ports. | 180 / 300 seconds |
+| `bat-release-check-v1` | Empty args. Reads the updater's user systemd unit `BAT_INSTALL_DIR`, then its `VERSION` file or versioned symlink target, matching `bat-server-auto-update`. Uses anonymous HTTPS to the fixed public GitHub `tony1223/better-agent-terminal/releases/latest` endpoint. Numeric version comparison rejects drafts/prereleases. Metrics: `installed_version`, `latest_stable`, `newer_available`, `published_at`. HTTP 403/429 returns warn with `github_rate_limited_or_forbidden` and null release fields. | 60 / 120 seconds |
+
+OCI lookup first uses the runner's fixed `/usr/bin:/bin` PATH, then the reviewed
+`$HOME/.local/bin/oci` fallback (the observed pilot installation); jobs cannot
+supply executable paths. The script inspects only section headers in
+`~/.oci/config`. OCI CLI alone handles authentication and key access. A read-only
+IAM availability-domain query obtains the selected profile's root compartment
+internally, without exposing it. Instance count includes root and up to 32
+accessible active child compartments **in the profile's configured region**;
+it is not a cross-region inventory. Queries paginate, and limits or failures
+produce an error rather than silently reporting a partial count/cost. Reasons
+include `oci_cli_missing`, `profile_missing`, `oci_auth_failed`, and
+`oci_permission_denied`. Profile failures must be triaged from typed reasons;
+never paste OCI stderr or inspect key files. Successful empty OCI list responses
+can have no stdout; these mean zero child compartments or zero running instances.
+
+Network output contains counts and typed findings, never peer identities,
+addresses, DNS answers, systemd diagnostics, or listener process details.
+`listen_digest` is SHA-256 of numerically sorted unique external TCP ports,
+each followed by LF (empty set hashes empty bytes). IPv4/IPv6 duplicates collapse;
+loopback listeners are excluded. A changed digest raises `listen_ports_changed`.
+Optional `baseline_listen_ports` must hash to the supplied digest; then metrics
+include `added_ports` and `removed_ports` as integer arrays. A digest alone
+cannot reveal a diff: `listen_diff_unavailable` reports that limitation.
+No baseline state is written. Compare full Tailscale DNS names or hostnames via
+`expected_peers`; only online, active peers with a relay and no direct/peer-relay
+address count as DERP-only, avoiding false alarms for idle peers.
+
+The reviewed OpenClaw entrypoints `run_network_watch_cron.py` and
+`run_security_study_daily.py` also invoke credentialed router/Deco, WAN speed/event,
+Cloudflare analytics, and historical correlation collectors. Those broader
+checks need separately reviewed inputs before retirement; the new script
+never imports or executes workspace code or reads those secret files.
+`metrics.coverage_gaps` lists these four categories, and `mode:"daily"` always
+raises `security_coverage_incomplete`. This is an explicit comparison gate;
+these entries alone do not establish full OpenClaw anomaly parity.
+
+[Disabled schedule examples](runbooks/retirement-phase0-schedules.example.json)
+provide five independent upsert request bodies in one JSON array. Each ships
+with `enabled:false`, `catch_up:false`, and a placeholder pilot target.
+Replace the target, sample OCI profiles, and expected peer list before previewing;
+submit each body
+through the existing schedule upsert preview/apply contract. No live schedules
+are created by the examples or tests. UTC cron values are `15 9 * * *` and
+`20 9 * * *` for sample-oci-a/sample-oci-b, `17 */6 * * *` for network watch,
+`45 3 * * *` for the daily security variant, and `0 10 * * *` for BAT.
+UTC remains fixed across daylight-saving changes. BAT can later use up to
+50 explicit machine targets under the existing API limit.
+
+Before retiring any OpenClaw job, compare seven days of manually authorized
+parallel observations: each OCI amount must differ by less than $0.01, BAT
+stable/update decisions must agree, and every watcher anomaly must be covered.
+Resolve profile errors and the network coverage gaps first. Enabling schedules
+and performing this seven-day acceptance are separate operator actions.
 
 ## Read-only supervision
 
@@ -678,12 +784,23 @@ Read times describe evaluation, not a cross-table atomic snapshot.
 
 `GET /account/service-tokens` lists metadata; POST `/account/service-tokens/create` and `/revoke` require a human admin session, enrolled MFA, current password and authenticator code. Creation shows the plaintext once; listing never includes a secret or hash. Only SHA-256 is stored. Expiry is required and limited to 90 days.
 
-Bearer `cst_` tokens authorize only `/v1/operator/*` JSON routes using the route capability map, required nonempty exact method/route-pattern allowlist, and optional source CIDRs against the configured client-IP resolver. `view` and `operate` are the only scopes; explicitly eligible read-only view routes and the two read-script routes described below accept service tokens. Other preview/apply and admin routes deny. Revocation is checked on every request. Audit principal is `service:<name>`. Browser CSRF and human session paths retain their existing checks.
+Bearer `cst_` tokens authorize only `/v1/operator/*` JSON routes using the route capability map, required nonempty exact method/route-pattern allowlist, and optional source CIDRs against the configured client-IP resolver. Scopes are `view`, `operate`, and `operator-admin`. Explicitly eligible read-only view routes and the two read-script routes below accept service tokens. `operator-admin` additionally permits the routine administration routes below; other preview/apply and admin routes deny. Revocation is checked on every request. Audit principal is `service:<name>`. Browser CSRF and human session paths retain their existing checks.
+
+
+The `hermes-default` preset includes jobs, approvals and Hub status reads,
+read-only script runs, machine list, machine lifecycle, channel, assigned user,
+actions and data reads, enrollment report and limit, profile report, and schedule
+list and detail reads. Schedule changes still require `operator-admin`.
+On startup, non-revoked tokens with exactly the previous Hermes route set
+are upgraded once, regardless of route order, with an audit entry. Custom
+allowlists, secrets, scopes and expiry dates are preserved. Machine detail
+remains human-only because it includes evidence text that is not secret-redacted.
+Enrollment-token reveal, machine evidence and timeline routes remain human-only.
 
 
 ### Service tokens and ad hoc catalog scripts
 
-Hermes service tokens with `operate` scope may allowlist exactly
+Hermes service tokens with `operate` scope may allowlist the read-script routes
 `POST /v1/operator/script-runs/preview` (`script_run_preview`) and
 `POST /v1/operator/script-runs` (`script_run_apply`). The manifest uses
 `serviceEligibleReadScriptsOnly`; view-scope tokens cannot include these routes.
@@ -701,30 +818,41 @@ Script request rate limits still apply to service tokens, shared across preview
 and apply by stable `service:<name>` subject. Success and denial audits retain
 that service identity. Existing bounded rate-limit denial auditing still applies.
 
-Schedule configuration is human-only: upsert and set-enabled preview/apply
-(`POST /v1/operator/schedules/{operation}/{phase}`) and run-now
-(`POST /v1/operator/schedules/{id}/run-now`) remain service-token ineligible.
-Hermes runs read scripts ad hoc; humans configure schedules in the Hub.
-Schedule list/get eligibility remains unchanged (currently human-only).
-Rotation adds two service-token-only JSON routes; both use the view admission capability and a dedicated self-only eligibility class.
+Schedule list/get accepts explicitly allowlisted `view`, `operate`, and
+`operator-admin` tokens. Schedule upsert and set-enabled preview/apply
+(`POST /v1/operator/schedules/{operation}/{phase}`), and run-now
+(`POST /v1/operator/schedules/{id}/run-now`) accept explicitly allowlisted
+`operator-admin` tokens. `view` and `operate` tokens cannot manage schedules.
+Catalog approval, revision, preview digest, idempotency and rate-limit checks
+still apply to delegated actions.
+GET self remains service-token-only. POST rotate is retained as a compatibility route but all service-token scopes are forbidden from using it.
 
 ### Service token self and rotation
 
 | Method | Route | Authentication | Response |
 | --- | --- | --- | --- |
 | GET | `/v1/operator/service-tokens/self` | Current service token only, CIDRs enforced | `id/name/scope/expires_at/max_expiry` (null max means unlimited) |
-| POST | `/v1/operator/service-tokens/rotate` | Newest token or recovering predecessor, CIDRs enforced | `id/token/expires_at/max_expiry`; plaintext once |
+| POST | `/v1/operator/service-tokens/rotate` | Forbidden for all service scopes | 403 `SERVICE_TOKEN_ACTION_FORBIDDEN` |
 
-Neither self route needs an allowlist entry. No human session is accepted.
-During the original overlap, the predecessor may re-issue an unused successor;
-that successor is revoked and a fresh credential is returned, never replayed from
-stored plaintext. A used successor makes predecessor rotation return 409. The
-newest token also returns 409 until its predecessor's overlap ends. All older
-chain members except the immediate predecessor are revoked on rotation.
-Rotation and re-issue share a persisted three/hour chain or normalized-IP budget
-(IPv6 /64), returning 429 on exhaustion, 403 at the maximum chain
-deadline, and 401 for expired/revoked/invalid credentials. Old credentials stop
-authenticating after 10 minutes. Admin revoke applies to the whole chain.
+GET self needs no allowlist entry. POST rotate is a compatibility route and
+returns 403 `SERVICE_TOKEN_ACTION_FORBIDDEN` for every service-token scope.
+Humans create replacement credentials through the MFA-protected account page.
+
+`operator-admin` adds explicitly allowlisted enrollment-ticket create
+preview/apply, schedule list/get/upsert/set-enabled/run-now, profile assignment
+preview/apply, and deployment create/continue/retry preview/apply. It includes
+eligible view/read-script access. Lower scopes receive 403
+`SERVICE_TOKEN_SCOPE_REQUIRED` for these admin routes. All scopes are forbidden
+from deleting machines/tenants, changing MFA/authentication, managing users, and
+minting/rotating service tokens (`SERVICE_TOKEN_ACTION_FORBIDDEN`). Unclassified
+routes remain human-only. Preview, revision, approval and idempotency checks still apply.
+
+Local human admin sessions use the default 12-hour routine MFA window
+(`CLAWCTL_ADMIN_MFA_WINDOW`); dangerous actions use five minutes or the account
+handler's stronger per-action checks. JSON actions outside the window return
+403 `MFA_STEP_UP_REQUIRED`. See [Operator auth](OPERATOR-AUTH.md) for the dangerous
+action list and shared 500-character Unicode audit reason rules. Fleet-specific
+configuration belongs in the Private overlay.
 
 
 ## Phase 2 disk foundation (P2-01)
@@ -814,10 +942,10 @@ configuration. Fixture screenshots and HTML are generated with
 `ops/screenshots/phase2-disk.sh` into `docs/screenshots/phase2/p2-01/`.
 
 
-Disk JSON policy and approval-decision applies accept only freshly boundary-verified
-human Tailscale admins. Local-account sessions have no action-bound JSON reauthentication
-proof and are rejected before idempotency lookup, including retries; use the Hub UI
-password/TOTP apply flow. Previews remain available to authorized human admins.
+Disk JSON policy and approval-decision applies accept boundary-verified human
+Tailscale admins or local admins with a current session MFA proof. Authorization
+precedes idempotency lookup, including retries. Expired sessions use the Hub UI
+step-up flow. Previews remain available to authorized human admins.
 
 A policy preview explicitly lists `removed_protect_paths`. Removing configured
 protections requires the exact `acknowledge_removed_paths` array on apply, included
@@ -884,8 +1012,8 @@ bounded mount usage, current policy thresholds, last safe-tier evidence, observa
 preview, skips and ownership. Additional mounts come from adapter observations;
 per-mount measurement times distinguish their age from the latest root check-in.
 The read is human-view and service-token ineligible because mount paths are included.
-MCP status uses mount/protection digests, fixed categories and note digests; private paths remain on the human API/UI. JSON script and schedule applies by admins require fresh LocalAPI authorization before decoding or replay; local sessions use reauthenticated UI applies.
-No new token-eligible writes or delegated cleanup approvals are implemented.
+MCP status uses mount/protection digests, fixed categories and note digests; private paths remain on the human API/UI. JSON script and schedule applies require boundary authorization before replay; local admins use the session MFA window and step up through the UI when it expires. Explicitly allowlisted operator-admin tokens may manage schedules.
+Delegated cleanup approvals remain forbidden; operator-admin eligibility is limited to the routine routes listed above.
 
 Daily templates use UTC, `catch_up=false`, one machine per schedule and explicit
 operator hour/minute offsets; public defaults contain no fleet names or dates.
@@ -937,7 +1065,7 @@ shared bounded-text scrubber; raw private paths remain identity bindings.
 ### P2-04 human quarantine contract
 
 Exact manifests and consumed human approvals bind pinned quarantine/delete/restore
-jobs. Human mutations require admin and fresh reauth; they are not token eligible.
+jobs. Human mutations require admin and current session MFA or LocalAPI authorization; they are not token eligible.
 MCP uses redacted projections; delegation remains deferred. Daily expiry
 (`10 6 * * *` UTC) selects only due items from consumed original quarantine approvals
 under the current policy. The assigned machine alone uploads private action receipts
@@ -945,24 +1073,392 @@ and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-0
 for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
-Adds ten operator operations (six JSON, four HTML): totals 287 including public
-accounts, 281 excluding them; 261 operator (135 JSON, 130 HTML/plain), exact grants
-view=103 / operate=28 / admin=137.
+Adds ten operator operations (six JSON, four HTML). The combined manifest totals
+352 including public accounts, 346 excluding them; 317 operator (156 JSON,
+161 HTML/plain), exact grants view=126 / operate=34 / admin=157.
 
 | Method | Route | Admission |
 | --- | --- | --- |
 | GET | `/v1/operator/disk-ops/alerts` | View, exact-allowlisted view token eligible; redacted episodes |
 | GET | `/v1/operator/disk-ops/ownership/{machine_id}/{scope}` | Human view; typed timer facts and fixed commands |
 | POST | `/v1/operator/disk-ops/ownership/preview` | Human admin; handoff or rollback preconditions |
-| POST | `/v1/operator/disk-ops/ownership` | Human admin, fresh JSON reauthorization, digest, expiry, revision, idempotency |
+| POST | `/v1/operator/disk-ops/ownership` | Human admin, current session MFA or LocalAPI authorization, digest, expiry, revision, idempotency |
 | POST | `/v1/operator/disk-ops/alerts/ack/preview` | Human admin; reason-bound review |
-| POST | `/v1/operator/disk-ops/alerts/ack` | Human admin, fresh JSON reauthorization, digest, expiry, idempotency |
+| POST | `/v1/operator/disk-ops/alerts/ack` | Human admin, current session MFA or LocalAPI authorization, digest, expiry, idempotency |
 | GET | `/tenant/disk-alerts` | Human view; open/cleared history |
 | POST | `/tenant/disk-alerts/ack/preview` | Human admin review |
-| POST | `/tenant/disk-alerts/ack` | Human admin, password/TOTP or fresh LocalAPI authorization |
-| POST | `/machines/{id}/disk/ownership` | Human admin review/apply, fresh apply reauthentication |
+| POST | `/tenant/disk-alerts/ack` | Human admin, session MFA or LocalAPI authorization |
+| POST | `/machines/{id}/disk/ownership` | Human admin review/apply, session MFA or LocalAPI authorization |
 
 MCP reads `disk_alerts_list` and `disk_ownership_get` use the same operator reads.
-Mutations are token-ineligible. Local-account JSON applies are refused; use the UI.
+Mutations are token-ineligible. Local-account JSON applies require current session MFA; use the UI to step up when it expires.
 Acknowledgement records a reason and never clears an alert. All browser mutations
 retain the shared Host/CrossOriginProtection/locked CSP boundary.
+
+## Secret reference status (Phase 1)
+
+`GET /secrets` (HTML) and `GET /v1/operator/secrets` (JSON) require human
+operator `admin`. Both are read-only, disable caching, and return only configured
+name/reference/status metadata. See [SECRETS.md](SECRETS.md).
+
+## Public build information
+
+`GET /version` requires no authentication and returns only JSON build provenance:
+`{"version":"dev","commit":"unknown","build_time":"unknown"}`.
+No configuration or secrets are included. Unstamped local builds use these defaults.
+Make builds stamp the Git commit and UTC build time. Docker builds accept
+`CLAWCTL_VERSION`, `CLAWCTL_COMMIT`, and `CLAWCTL_BUILD_TIME`; the Fly wrapper
+passes all three. The web footer also shows version and commit.
+
+### Human service-token route editing
+
+`POST /account/service-tokens/routes` is an admin-only web form action, not a
+bearer API. Fields: token `id`, repeated manifest `routes`, current `password`,
+and fresh TOTP `code`. It uses the same CSRF/origin protection as other sensitive
+account actions. See [Operator authentication](OPERATOR-AUTH.md#editing-service-token-routes)
+for immediate grant semantics, rotation boundaries and audit diffs.
+
+## Fly self-deployment safety (ops only)
+
+`ops/fly/deploy.sh` verifies fresh snapshots of all `clawctl_data` volumes before deployment and retries transient builder failures before fallback. This host operation adds no Hub web, API, MCP, or store contract. Human operators use the script; see [Fly deployment](DEPLOY-FLY.md) for the explicit snapshot bypass and recovery limits.
+
+Fly post-deploy verification retries `/healthz`, `/version` (exact built commit), and `/setup` with configurable attempts/timeouts and capped backoff. Exit 2 distinguishes a completed deployment with failed verification. This changes only the existing ops workflow; no Hub UI/API/store contract changes. See [verification retries](DEPLOY-FLY.md#post-deploy-verification-retries).
+
+## Disk growth evidence
+
+`GET /v1/operator/disk-ops/status/{machine_id}` includes a `growth` array,
+ordered by descending GB/hour (first entry is the top growing mount). Each entry
+contains `mount`, `gb_per_hour`, `window_minutes`, `coverage_minutes`, `samples`,
+`known`, `sustained`, `measured_at`, and optional `time_to_full_hours`.
+Unknown or stale evidence must not be interpreted as healthy. GB is decimal
+(1,000,000,000 bytes); time-to-full assumes the measured positive rate continues.
+The existing `disk_ops_status` MCP tool exposes the same numeric evidence with
+`mount_digest` replacing mount paths, preserving its human-view authorization.
+
+Human UI: `/tenant/disk-policies` configures optional `growth` policy fields
+`gb_per_hour` (1–1,000,000) and `window_minutes` (10–1440), using existing
+preview/apply and reauthentication. `/tenant/disk-alerts`, machine detail, and
+`/machines/{id}/disk` display growth evidence and existing acknowledgement links.
+The existing policy APIs accept the same optional object. Omission preserves old
+canonical policy digests and inherits Hub defaults.
+
+## Loop episodes (UI first)
+
+Human entry: **Attention / Loops** (`GET /attention/loops`), also linked from
+machine detail with an inline episode panel. Human administrators can save a
+threshold/window and acknowledge or resolve an episode with `POST /attention/loops`.
+The operator boundary enforces admin scope and same-origin protection for writes;
+service tokens cannot use these human actions.
+
+`GET /v1/operator/loops?machine_id=<optional-id>` requires `view` and supports
+explicit service-token route grants. MCP tool: `loops_list` with optional
+`machine_id`; official client: `Client.Loops`. Returns `schema_version: 1`,
+`policy` (`threshold`, `window_seconds`), `items`, `limit: 200`, and
+`coverage: "agent_reported_call_activity_only"`. Episodes are sorted open first,
+then newest first, with opaque process/call signatures, machine ID, start/last
+report/last progress timestamps, window call count, calls/minute, acknowledgement
+and resolution timestamps. Unknown progress is null. This is bounded evidence,
+not an all-clear or a task-success assertion. Responses are `Cache-Control: no-store`.
+Unknown/duplicate query parameters are rejected. No raw tool names or arguments
+are stored or returned by this feature.
+
+Optional agent check-in extension (old agents may omit it): `call_activity`, up
+to 64 unique process/call pairs. Each entry has `process_signature` and
+`call_signature` (64 lowercase hex characters), `total_calls` (cumulative integer,
+0–1,000,000,000,000), and `progress` (nonnegative monotonic checkpoint counter).
+Use a fresh process signature after counter reset or process restart. Hash a
+process-instance identifier and hash a canonical operation plus identical
+arguments locally; use a keyed digest for sensitive/guessable inputs. Never send
+raw arguments or secrets. Progress must represent an actual checkpoint/completion,
+not a successful retry or heartbeat. The bundled agent reports its heartbeat
+call counter and increments progress only after an observation upload succeeds.
+Other tool integrations must populate this optional field; usage aggregate tool
+names/counts and generic job event text cannot establish identical-call progress.
+
+The first report establishes a baseline. Subsequent counter increases are
+attributed to Hub receive time; retransmitted/regressed counters add nothing.
+The detector sums deltas in `(now-window, now]` per machine/process/call pair.
+Default: **more than 50 calls in 600 seconds**, configurable to 2–100,000 calls
+and 60–3,600 seconds. A gap at least as long as the window establishes a fresh
+baseline, avoiding historical offline bursts. Reports with progress discard that
+pair's window and resolve its open episode. Rate is window calls × 60/window
+seconds. Start time is the oldest counted report at episode creation; it remains
+stable while counts/rate track subsequent reports. Actual call timestamps within
+a batch are unknown. Silence or falling below threshold does not resolve an
+incident; acknowledgement does not reset it. Manual resolution resets its window,
+and continued calls can open a new episode. Policy edits apply on the next report.
+
+Evidence is transactionally recorded with the check-in. Samples coalesce per
+second and expire outside the active window on activity ingestion. Baselines
+expire after 24 hours of inactivity; at most 64 tracked pairs per machine are
+accepted until old baselines expire. Additional pairs are ignored. These bounds
+and opt-in tool coverage mean missing episodes are never proof of health.
+
+## TLS certificate monitors
+
+Human workflow: **Tenant → Certificates** (`/tenant/certificates`). Viewers can
+inspect all evidence; human administrators can add, edit, remove, and request a
+probe using the server-rendered forms. Empty inventory links to the add form.
+The HTML and JSON adapters share the operator service; configuration mutations
+and their actor-attributed audit records commit atomically. Stale revisions are
+rejected. The existing operator boundary enforces authorization, same-origin
+writes, and locked response headers. No deployment or renewal is performed.
+
+| Method | Operator route | Permission / behavior |
+| --- | --- | --- |
+| GET | `/v1/operator/certificates` | View; `{items:[...]}`, unknown expiry first, then ascending whole days left |
+| GET | `/v1/operator/certificates/{id}` | View; monitor configuration, revision, latest evidence, flags and next action |
+| POST | `/v1/operator/certificates` | Human Admin; create a monitor |
+| PUT | `/v1/operator/certificates/{id}` | Human Admin; replace configuration with current `revision` |
+| DELETE | `/v1/operator/certificates/{id}` | Human Admin; JSON body `{ "revision": 1 }` |
+| POST | `/v1/operator/certificates/{id}/probe` | Human Admin; same revision body, queues a probe within a minute |
+
+Create/replace body (replace also requires `revision`):
+
+```json
+{
+  "endpoint": "example.test:443",
+  "expected": ["example.test", "www.example.test"],
+  "owner": "Example service team",
+  "notes": "Renew through the service certificate issuer; do not put secrets here.",
+  "days": [30, 14, 7]
+}
+```
+
+`endpoint` is `host:port` or `[IP]:port`, without a scheme, path, userinfo or
+credentials. Expected names are concrete DNS names/IPs, not wildcard patterns.
+`days` defaults to 30/14/7, accepts 1–10 thresholds between 1 and 3650, and reports
+the smallest applicable threshold. Limits: 200 monitors, 64 expected names,
+200 owner bytes, 2000 notes bytes. Mutations return `{id: "…"}`;
+invalid fields, missing/stale revisions or exhausted inventory return 400;
+missing single reads return 404. Unsupported queries/unknown JSON fields are
+rejected. These writes are human-only; service tokens can receive explicitly
+granted read routes. MCP tools `certificate_list` and `certificate_get` use those
+reads. Notes, issuer and certificate names are free text, **not secret-scanned**;
+only grant reads to trusted principals. Do not enter credentials or secrets.
+
+Hub sends TLS handshakes only, no HTTP payload or redirects. A dedicated loop
+checks due monitors every minute, probes hourly, allows four concurrent probes,
+and bounds each connection/handshake to five seconds. It collects the leaf's
+not-after, issuer, DNS/IP SANs and explicit chain verification error using system
+roots, intermediates, endpoint identity and current time. Expected hostnames are
+checked with Go `x509.VerifyHostname`, including single-label wildcard semantics
+and IP SAN matching. A private CA requires installation into Hub's system trust
+store; verification cannot be disabled by monitor configuration.
+
+Flags are independent: expired, expiring within the configured threshold, chain
+invalid, SAN gap, probe failed, and stale probe. No observed certificate or an
+observation older than three hours is stale. Failed connections retain the last
+certificate evidence, update the attempt/error, and never make it fresh. Editing
+configuration clears old evidence; revision fencing discards in-flight results
+from older configurations. A manual probe retains evidence and queues an attempt.
+The configured notifier and notification ledger receive condition-specific alerts
+with daily successful-delivery deduplication and existing failure backoff. New
+thresholds/conditions notify independently. Notification bodies contain generic
+flags and a link to `/tenant/certificates`, excluding owner/notes/endpoint text.
+
+## OOM kill attribution
+
+UI: Machines → machine detail → **Recent OOM kills**, linked from the page heading
+and attention next steps. Recent evidence also produces a memory fleet finding.
+
+`GET /v1/operator/machines/{id}/oom-kills` (View capability; exact service-token
+route grant required) returns `{schema_version: 1, evaluated_at, items: []}` with at most 64 events
+from the last hour, newest first. No query parameters; missing machines return
+404. Responses are no-store. Each item contains UTC time, source
+(oomd, kernel, memcg), optional unit (systemd unit/container scope basename),
+process, pressure_avg10 (percentage), and count (memcg delta).
+Absent attribution is unknown. Counter times are observation times, not kill
+times. Kernel and counter evidence may overlap and must not be summed.
+
+Agent observation schema 1 adds optional oom_kills (maximum 64), retaining
+compatibility with agents that omit it. Hub retains these in append-only
+observed_state under kind/subject oom, governed by existing observation
+retention. Reads inspect at most 128 batches received in the last two hours,
+deduplicate overlapping identical events, and expire attention after one hour.
+Agent times outside the last day or more than five minutes ahead are rejected;
+the ordinary clock-skew signal still applies.
+
+Kernel journal evidence falls back to a bounded ISO-timestamped dmesg read when
+the journal supplies no kernel victim. Only extracted identity basenames
+(128-character restricted alphabet), typed
+timestamps/counters and numeric pressure are uploaded. No raw OOM log, command
+line, environment, full cgroup path, host address or arbitrary error is uploaded
+by this collector. Unit/process identities are operator-controlled metadata:
+do not put credentials in names. This is not general secret redaction for
+other observation fields.
+
+MCP/operator-agent tool: `machine_oom_kills` with required `machine_id` and no
+other arguments; read-only, forwarding to the same HTTP endpoint. The operator
+client validates the bounded typed response before returning it to the tool.
+
+### Host readiness
+
+`GET /v1/operator/machines/{id}/readiness` (View, authenticated human operator;
+no service-token grants) returns `machine_id`, `config`, Hub `received_at`, typed
+`facts`, and `items` with `name`, `status` (`pass`, `fail`, `unknown`), `next_action`,
+and `doc`. Unknown machine returns 404. It uses the same projection as `/readiness`
+and the machine detail panel. Admin-only `POST /readiness` configures measurement
+targets from the UI. Optional `readiness_config` in check-in responses and
+`readiness` in schema-v1 observations are backward compatible. Readiness is evidence,
+not authorization to perform privileged operations; see operator-playbook's Host
+readiness checklist for freshness and measurement limits.
+The operator client and MCP `machine_readiness` tool expose the same read (human
+network identity; no configuration writes). Unknown/missing CLI evidence is null.
+
+Readiness adds `display_name`, `effective_config`, counts `needs_you`, `auto`,
+`done`, and item `key`, `owner` (hub/you), `bucket` (done/auto/needs_you).
+Existing status and host-only `config` semantics remain unchanged. Effective
+targets inherit empty host fields from the single-row `fleet_readiness_profile`.
+Admin `POST /readiness` with `scope=fleet` saves validated defaults and an atomic
+`fleet_readiness_profile` audit entry; route policy is unchanged.
+The profile selects expected CLIs (empty retains all four), up to 16 user units,
+and automatic remediation (on when no fleet profile row exists; saved
+`auto_remediate_user_units: false` remains off). Only listed expected user units
+can be acted on; an empty list does nothing. Agent config adds comparable
+`expected_user_units`
+(sorted comma-separated names) and `auto_remediate`. Facts add `units`, keyed by
+unit name, with nullable `loaded`, `enabled`, `active`, and optional
+`remediation` (`at`, `action`, `ok`, bounded sanitized `reason`). Additive boolean
+facts `oneshot`, `failed`, `masked`, and `disabled` preserve unit semantics without
+raw systemd classes. `enabled` accepts enabled, enabled-runtime, static, indirect,
+generated, and alias. Idle oneshot or static/indirect services pass unless their
+last run failed, and are never repaired. Loaded, unmasked timers and long-running
+services may be repaired when automatic remediation is on: disabled uses
+`enable --now`, enabled but inactive/failed uses `start` (also the remediation
+action). Never restart or use sudo;
+at most one attempt per unit per hour per agent process.
+Linux repair only enables/starts already-installed, unmasked expected user units,
+at most once per unit per hour per agent process. No system-scope or unit-file
+editing is performed. The profile change, rather than each local attempt, is audited.
+
+### Host setup profile
+
+Human UI: `GET /machines/host-profile` (View), linked from Configuration;
+`POST /machines/host-profile` (human Admin, existing MFA/CSRF form boundary).
+`GET /v1/operator/host-profile` (View, human operator, service-token ineligible)
+returns `{profile,digest,hosts}`: the optional typed fleet settings and Linux
+host reports with display names, receipt times, item status and restart flag.
+The strictly decoded operator client and read-only MCP `host_profile_get` expose
+the same read. Linux check-in responses add `host_profile` and
+`host_profile_digest`; observations add `host_profile_apply`. No operator write
+API or write MCP is introduced. See [HOST-PROFILE](HOST-PROFILE.md).
+
+## One-command Linux and Windows join
+
+Windows `amd64` and `arm64` endpoints can run `irm https://hub.example.com/join.ps1 | iex`
+in an elevated PowerShell session under the intended agent account. The public
+`GET /join.ps1` script templates the same HTTPS Hub URL and prints the join code,
+approval page and expiry. Download it first to pass `-Hub`, `-LogFile` (default
+`%ProgramData%\clawctl\join.log`) or `-JobsEnabled`. Windows defaults to
+monitor-only (`jobs_enabled=false`) and installs a user logon scheduled task.
+It uses the approval's one-time enrollment token, verifies the approved SHA-256,
+rejects archive traversal/links, and deletes temporary secrets. Windows joins
+use public HTTPS without configuring Tailscale; Linux-only jobs remain blocked
+at server dispatch and claim even when jobs are enabled. See the Windows
+commands in [README](../README.md#4-enroll-an-endpoint).
+
+
+Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
+non-root agent account, then match its code at `/machines/join`. The public
+`GET /join.sh` script uses the validated HTTPS `CLAWCTL_PUBLIC_URL`; `--hub`
+and `--user` are explicit alternatives. Viewers can read waiting requests;
+`POST /machines/join/decide` requires a human Admin and the enrollment MFA
+window. Approve all uses the displayed suggested names. Names capitalise the
+first letter of each dash-separated word, preserving the rest (`host-b` → `Host-B`).
+`GET /v1/operator/joins` and read-only MCP `join_requests_list` return metadata,
+never credentials. There is no MCP join write tool.
+
+Machine routes are `POST /v1/join/start`, `POST /v1/join/poll`, and
+`GET /v1/join/bundle/{arch}`. Start accepts bounded strict JSON, permits five
+requests per client IP per minute, and fails closed at 20 waiting/approved
+requests globally. IPs use the existing trusted-proxy resolver. Join codes and
+256-bit device secrets expire after 15 minutes; poll delivers approval once,
+atomically marking the request redeemed. All join responses use no-store.
+The script downloads the bundle while pending, then checks its SHA-256 from
+the approved payload before extraction. Bundle access requires the matching
+pending/approved, unexpired device secret, OS and architecture; redemption ends
+that authority. Secrets stay out of URLs, argv, logs and operator reads.
+Windows bundle keys are `windows-amd64` and `windows-arm64`; `linux-amd64`
+and `linux-arm64` select Linux, as do the legacy `amd64` and `arm64` keys.
+Approval selects the digest by OS and architecture; cross-OS downloads fail.
+
+Enrollment tickets use the canonical operator service, are single-use and
+last 600 seconds. Optional Hub-issued Tailscale keys for Linux joins are single-use,
+non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
+OAuth client configuration is optional; without it the machine joins without
+Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,
+`CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`, and `CLAWCTL_TAILSCALE_JOIN_TAG`.
+`CLAWCTL_TAILSCALE_API_BASE` is accepted only in test binaries; production
+always uses the official API. The CLI reads its key using `--auth-key=file:...`.
+
+SQLite stores only device-secret hashes and request metadata. Minted credentials
+are held in process memory for at most ten minutes and deleted on redemption.
+Restart or delivery expiry shows “Approval expired”; a human can approve again
+while the request is still valid. An already minted enrollment ticket expires
+naturally and cannot be reconstructed. Join decisions and their secret-free
+`join_approve` / `join_reject` audit rows commit together. Rows older than seven
+days past expiry are pruned lazily on start/list, without changing ledger retention.
+
+## New disk provisioning
+
+`POST /machines/{id}/disks/approve` and `POST /machines/{id}/disks/cancel`
+are human Admin browser forms with fresh MFA, CSRF checks and atomic audit rows.
+The machine Disks panel is the write surface; there is no operator JSON write
+or MCP write. `GET /v1/operator/machines/{id}/disks` requires human View and
+returns `{devices: [...], jobs: [{job, state, created_at, result}]}`; read-only
+MCP `machine_disks` requires `machine_id` and exposes the same read through the
+strict operator client. These three routes are service-token ineligible.
+
+Linux observations add `block_devices` and `disk_job_results`; check-in responses
+add `disk_jobs` with immutable identity and approved setup values. The lifecycle
+is pending → delivered → done/refused/failed; uncollected jobs expire at 24 hours
+and pending cancellation becomes expired. Delivery is retried until a terminal
+receipt. No wipe, force, overwrite or reuse fields are accepted. See
+[New disk setup](HOST-PROFILE.md#new-disk-setup).
+
+## Fleet Sign-ins
+
+`GET /signins` provides the View page; `GET /v1/operator/signins` provides the
+metadata-only JSON summary. Read-only MCP tool: `signins_list`. Neither JSON nor
+MCP exposes login URLs, device codes, pasted codes, or credentials.
+Admin HTML forms `POST /signins/start`, `POST /signins/{session}/code`,
+`POST /signins/{session}/cancel`, and `POST /signins/notifications` require
+fresh local MFA and same-origin form checks. `POST /v1/agent/signins` accepts
+machine-bearer sanitized results bound to that machine. All Sign-ins responses
+are no-store. Start, code submission, cancel, result, and preference changes
+are audited atomically with their durable state.
+
+### LAN IPv4 identity evidence
+
+Machine detail schema v7 adds `identity.value.lan_ipv4` with `items`, `total`,
+`invalid` (including duplicates), and `truncated`. At most 16 canonical unicast
+IPv4 addresses are disclosed; loopback, link-local, multicast and Tailscale
+100.64.0.0/10 are excluded. Invalid strings never leave the projection. Interface
+names are excluded. The observer selects up interfaces excluding Tailscale,
+Docker, virbr, bridge and container/tunnel interfaces. This is agent-measured
+identity evidence with the existing agent/Hub clocks, not a connectivity test.
+Older agents omit `lan_ipv4` and the Hub projects an empty list (UI: 未回報).
+The list, changes, service-token eligibility and BAT coordinate rules are unchanged.
+
+## Immediate offline alert settings
+
+Six operator operations add three JSON and three HTML routes. These routes
+remain human-only and use the shared Host/CrossOriginProtection/locked-CSP
+boundary. Read requires view; all writes, including previews, require admin.
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/v1/operator/offline-alert-settings` | No-store `{minutes,revision}`, default 10 minutes, no query parameters |
+| POST | `/v1/operator/offline-alert-settings/preview` | Closed `{minutes}` (1..1440); read-only current/next threshold and digest |
+| POST | `/v1/operator/offline-alert-settings` | Closed `{minutes,expected_revision,preview_digest,reason,confirm}`; exact `OFFLINE ALERTS` confirmation and `Idempotency-Key`; settings, receipt and audit commit atomically; revision conflict 409, stale preview 412; replay 200 with replay header |
+| GET | `/tenant/offline-alerts` | Discoverable tenant settings page with current threshold and delivery semantics |
+| POST | `/tenant/offline-alerts/preview` | Shared canonical preview |
+| POST | `/tenant/offline-alerts/apply` | Shared canonical apply and typed confirmation; redirects to current settings |
+
+`clawctl-hub offline-alerts` read/preview/apply uses the same HTTP DTOs and strict
+client. No new service-token eligibility or notification-channel configuration.
+The per-machine durable latch `machine_offline_alerts` retains only episode and
+Hub-clock delivery/dedupe metadata, is disclosed with state records, and
+has no agent-controlled text or secret fields. See [Hub reliability](HUB-RELIABILITY.md#immediate-machine-offline-notifications)
+for recovery hold, backoff, lifecycle handling and ambiguous-delivery limits.

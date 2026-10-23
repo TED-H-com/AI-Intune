@@ -179,3 +179,12 @@ at most ten receipts per scope and at most fourteen days of history; the latest
 receipt remains available as stale/unknown evidence. Retention uses indexed Hub
 receipt time. Legacy observations migrate as stale and pending handoffs receive a
 new challenge. Handoff, rollback and acknowledgement idempotent replays are audited.
+
+## Host setup profile
+
+The Linux [Host setup profile](HOST-PROFILE.md) can install and repair the root
+disk-clean timer through this same installer. It preserves DRY_RUN and local
+approval. The root applier is separate from the unprivileged observer; it does
+not enable Hub root cleanup jobs or change timer ownership handoff. Do not enable
+this profile item during Hub ownership handoff. An explicit profile journal cap
+uses a later drop-in than the installer's 500 MB default.

@@ -1,11 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +14,9 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/teddashh/AI-Intune/internal/channels"
+	"github.com/teddashh/AI-Intune/internal/secrets"
 )
 
 const (
@@ -33,6 +32,7 @@ var webhookHTTPAllowedNet = netip.MustParsePrefix("100.64.0.0/10")
 // notifyFile is a parsed CLAWCTL_NOTIFY_ENV file. Secrets stay in this
 // value and are never copied onto hub or into logs.
 type notifyFile struct {
+	resolver      secrets.SecretProvider
 	path          string
 	perm          os.FileMode
 	token         string
@@ -152,23 +152,22 @@ func loadNotifyEnvFile(path string) (notifyFile, error) {
 	if strings.TrimSpace(path) == "" {
 		return notifyFile{}, errors.New("notify env file path is empty")
 	}
-	f, err := os.Open(path)
+	provider, perm, err := secrets.NewFileSnapshot(path)
 	if err != nil {
 		return notifyFile{}, fmt.Errorf("notify env file %s: cannot read", path)
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return notifyFile{}, fmt.Errorf("notify env file %s: cannot read", path)
+	kv := make(map[string]string)
+	for _, key := range secrets.NotifyKeys {
+		value, err := provider.Get(context.Background(), secrets.FileReference(path, key))
+		if err != nil && !errors.Is(err, secrets.ErrMissing) {
+			return notifyFile{}, fmt.Errorf("notify env file %s: cannot read", path)
+		}
+		kv[key] = value.Reveal()
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, 1<<20))
-	if err != nil {
-		return notifyFile{}, fmt.Errorf("notify env file %s: cannot read", path)
-	}
-	kv := parseNotifyEnv(raw)
 	out := notifyFile{
+		resolver:      provider,
 		path:          path,
-		perm:          info.Mode().Perm(),
+		perm:          perm,
 		token:         strings.TrimSpace(kv["TELEGRAM_BOT_TOKEN"]),
 		chatID:        strings.TrimSpace(kv["TELEGRAM_CHAT_ID"]),
 		webhookURL:    strings.TrimSpace(kv["CLAWCTL_NOTIFY_WEBHOOK_URL"]),
@@ -193,39 +192,7 @@ func loadNotifyEnvFile(path string) (notifyFile, error) {
 // # comments are ignored, a leading "export " is stripped, matching quotes
 // around the value are stripped, and there is no variable expansion.
 func parseNotifyEnv(raw []byte) map[string]string {
-	text := string(raw)
-	text = strings.TrimPrefix(text, "\ufeff")
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	out := make(map[string]string)
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, "export ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		val = strings.TrimSpace(val)
-		if len(val) >= 2 {
-			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
-				val = val[1 : len(val)-1]
-			}
-		}
-		out[key] = val
-	}
-	return out
+	return secrets.ParseEnv(raw)
 }
 
 func validateWebhookURL(raw string) error {
@@ -289,20 +256,22 @@ func (n builtinNotifier) Notify(ctx context.Context, kind, body string) (string,
 	return channel, nil
 }
 
+func (n builtinNotifier) channelProvider(cfg notifyFile, kind string) channels.Provider {
+	r := cfg.resolver
+	c := channels.Config{ID: kind, Kind: kind, TokenRef: secrets.FileReference(n.path, "TELEGRAM_BOT_TOKEN"), ChatRef: secrets.FileReference(n.path, "TELEGRAM_CHAT_ID"), URLRef: secrets.FileReference(n.path, "CLAWCTL_NOTIFY_WEBHOOK_URL")}
+	if kind == "webhook" && cfg.webhookSecret != "" {
+		c.SecretRef = secrets.FileReference(n.path, "CLAWCTL_NOTIFY_WEBHOOK_SECRET")
+	}
+	if kind == "telegram" {
+		c.URLRef = ""
+		return channels.NewTelegramForAPI(c, r, n.telegramAPI())
+	}
+	c.TokenRef = ""
+	c.ChatRef = ""
+	return channels.New(c, r)
+}
 func (n builtinNotifier) sendTelegram(ctx context.Context, cfg notifyFile, body string) error {
-	text := truncateTelegram(body)
-	form := url.Values{}
-	form.Set("chat_id", cfg.chatID)
-	form.Set("text", text)
-	form.Set("disable_web_page_preview", "true")
-	_, desc, err := telegramAPI(ctx, n.telegramAPI(), cfg.token, "sendMessage", form, cfg.secrets())
-	if err != nil {
-		return err
-	}
-	if desc != "" {
-		return errors.New(desc)
-	}
-	return nil
+	return n.channelProvider(cfg, "telegram").Send(ctx, channels.Message{Text: body})
 }
 
 func truncateTelegram(body string) string {
@@ -347,7 +316,7 @@ func telegramAPI(ctx context.Context, apiBase, token, method string, form url.Va
 		return parsed, "", nil
 	}
 	if parsed.Description != "" {
-		return parsed, parsed.Description, nil
+		return parsed, sanitizeNotifyError(errors.New(parsed.Description), secrets).Error(), nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		return parsed, "", fmt.Errorf("Telegram HTTP %d", resp.StatusCode)
@@ -362,37 +331,7 @@ type webhookPayload struct {
 }
 
 func (n builtinNotifier) sendWebhook(ctx context.Context, cfg notifyFile, kind, body string) error {
-	payload, err := json.Marshal(webhookPayload{
-		Kind:   kind,
-		Text:   body,
-		SentAt: time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		return err
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, notifyRequestTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, cfg.webhookURL, bytes.NewReader(payload))
-	if err != nil {
-		return sanitizeNotifyError(err, cfg.secrets())
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "clawctl-hub")
-	if cfg.webhookSecret != "" {
-		mac := hmac.New(sha256.New, []byte(cfg.webhookSecret))
-		_, _ = mac.Write(payload)
-		req.Header.Set("X-Clawctl-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-	}
-	resp, err := newNotifyHTTPClient().Do(req)
-	if err != nil {
-		return sanitizeNotifyError(err, cfg.secrets())
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, notifyResponseLimit))
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return nil
+	return n.channelProvider(cfg, "webhook").Send(ctx, channels.Message{Kind: kind, Text: body})
 }
 
 // sanitizeNotifyError unwraps *url.Error (which embeds the full URL, often
@@ -510,3 +449,8 @@ func telegramChatName(result json.RawMessage) string {
 	}
 	return chat.FirstName
 }
+
+func (notifyFile) String() string                { return "[REDACTED]" }
+func (notifyFile) GoString() string              { return "[REDACTED]" }
+func (notifyFile) Format(f fmt.State, verb rune) { _, _ = io.WriteString(f, "[REDACTED]") }
+func (notifyFile) MarshalJSON() ([]byte, error)  { return []byte(`"[REDACTED]"`), nil }

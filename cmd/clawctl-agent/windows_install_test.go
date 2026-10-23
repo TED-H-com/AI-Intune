@@ -74,6 +74,26 @@ func TestWindowsScheduledTaskIsWellFormedXML(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallerNormalizesTaskStringEncodingBeforeRegistration(t *testing.T) {
+	script := readOpsFile(t, "install-agent-windows.ps1")
+	read := strings.Index(script, "$TaskXml = [IO.File]::ReadAllText($TaskTemplate)")
+	normalize := strings.Index(script, `$TaskXml = $TaskXml -replace '^<\?xml[^?]*\?>', '<?xml version="1.0" encoding="UTF-16"?>'`)
+	register := strings.Index(script, "\n  Register-ScheduledTask ")
+	if read < 0 || normalize <= read || register <= normalize {
+		t.Fatal("installer must normalize the in-memory XML declaration to UTF-16 before registration")
+	}
+	if !strings.HasPrefix(readOpsFile(t, "clawctl-agent.task.xml"), `<?xml version="1.0" encoding="UTF-8"?>`) {
+		t.Fatal("checked-in task template must retain its UTF-8 declaration")
+	}
+	if !strings.Contains(script, "Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false -ErrorAction SilentlyContinue") {
+		t.Fatal("unregistration must remain best-effort")
+	}
+	if !strings.Contains(script, "-Xml $TaskXml -Force -ErrorAction Stop") ||
+		!strings.Contains(script, "} catch {\n  Fail \"Scheduled task registration failed: $($_.Exception.Message)\"") {
+		t.Fatal("registration failures must report the exception message")
+	}
+}
+
 func TestWindowsScheduledTaskStartsDaemonAndInstallerRequiresStoredPlatformEvidence(t *testing.T) {
 	task := readOpsFile(t, "clawctl-agent.task.xml")
 	if !strings.Contains(task, "<LogonTrigger>") || !strings.Contains(task, "InteractiveToken") ||
@@ -104,5 +124,27 @@ func TestLinuxInstallerNamesAWindowsInstallerThatExists(t *testing.T) {
 	info, err := os.Stat(filepath.Join("..", "..", windowsPath))
 	if err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("Linux 安裝腳本指出的 %s 不是存在的一般檔", windowsPath)
+	}
+}
+
+func TestWindowsScheduledTaskHiddenDirectExec(t *testing.T) {
+	task := readOpsFile(t, "clawctl-agent.task.xml")
+	var parsed struct {
+		Settings struct{ Hidden bool }
+		Actions  struct {
+			Exec struct {
+				Command   string
+				Arguments string
+			}
+		}
+	}
+	if err := xml.Unmarshal([]byte(task), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.Settings.Hidden {
+		t.Fatal("scheduled task must be hidden")
+	}
+	if parsed.Actions.Exec.Command != "@@CLAWCTL_AGENT_BIN@@" || parsed.Actions.Exec.Arguments != "" || strings.Contains(strings.ToLower(task), "cmd.exe") {
+		t.Fatal("scheduled task must launch agent directly without a wrapper")
 	}
 }
