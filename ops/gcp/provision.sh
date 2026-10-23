@@ -19,8 +19,8 @@ firewall=${GCP_FIREWALL_NAME:-clawctl-iap-ssh}
 tag=${GCP_NETWORK_TAG:-clawctl-hub}
 print() { printf '%q ' "$@"; printf '\n'; }
 ensure() {
-  # Describe failure is followed by create; permission/API failures fail closed
-  # at create, without changing or deleting existing resources.
+  # Describe failure is followed by create; permission/API failures stop creation
+  # without changing or deleting existing resources.
   local split=0
   local -a probe=() create=()
   for arg in "$@"; do
