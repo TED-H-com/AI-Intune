@@ -551,6 +551,12 @@ func TestMFAAccountLockAcrossClientKeys(t *testing.T) {
 	}
 	// Submissions refused by the lock neither extend nor reset it.
 	fail(25, freshKey)
+	lockedKey := freshKey()
+	fail(5, func() string { return lockedKey })
+	var keyFailures int
+	if err = s.rdb.QueryRow(`SELECT count(*) FROM hub_login_failures WHERE account_id=? AND client_ip=?`, a.AccountID, lockedKey).Scan(&keyFailures); err != nil || keyFailures != 0 {
+		t.Fatal("account-lock refusals consumed the per-key budget", keyFailures, err)
+	}
 	if failed, until, _ := accountRow(); failed != 10 || until.String != fmtTime(lockedAt.Add(time.Hour)) {
 		t.Fatal("refused submissions changed the account lock", failed, until)
 	}
