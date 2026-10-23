@@ -174,15 +174,40 @@ func (s *Store) DeliverDiskJobs(machine string) ([]model.DiskJob, error) {
 
 // Results are bound to both the authenticated machine and delivered job. The
 // terminal transition and its audit row share the observation transaction.
-func (s *Store) recordDiskSetupResults(tx dbTx, machine string, results []model.DiskJobResult, now time.Time) error {
+type preparedDiskSetupResult struct {
+	result model.DiskJobResult
+	body   string
+}
+
+func prepareDiskSetupResults(results []model.DiskJobResult) ([]preparedDiskSetupResult, error) {
 	if len(results) > 128 {
-		return fmt.Errorf("Too many disk setup results")
+		return nil, fmt.Errorf("Too many disk setup results")
 	}
+	prepared := make([]preparedDiskSetupResult, 0, len(results))
 	for _, r := range results {
 		if !r.Valid() {
-			return fmt.Errorf("Invalid disk setup result")
+			return nil, fmt.Errorf("Invalid disk setup result")
 		}
-		body, _ := json.Marshal(r)
+		body, err := json.Marshal(r)
+		if err != nil {
+			return nil, err
+		}
+		prepared = append(prepared, preparedDiskSetupResult{r, string(body)})
+	}
+	return prepared, nil
+}
+
+func (s *Store) recordDiskSetupResults(tx dbTx, machine string, results []model.DiskJobResult, now time.Time) error {
+	prepared, err := prepareDiskSetupResults(results)
+	if err != nil {
+		return err
+	}
+	return s.recordPreparedDiskSetupResults(tx, machine, prepared, now)
+}
+
+func (s *Store) recordPreparedDiskSetupResults(tx dbTx, machine string, results []preparedDiskSetupResult, now time.Time) error {
+	for _, prepared := range results {
+		r, body := prepared.result, prepared.body
 		changed, e := tx.Exec(`UPDATE disk_setup_jobs SET state=?,result=? WHERE id=? AND machine_id=? AND state='delivered'`, r.State, string(body), r.ID, machine)
 		if e != nil {
 			return e

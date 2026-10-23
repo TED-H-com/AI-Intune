@@ -37,6 +37,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1836,33 +1837,38 @@ func isForeignKeyErr(err error) bool {
 //     「當時用的是哪張票」的那些。缺口要留著，不要用猜的補平。
 //  3. **process_alive 永遠寫 0。** 「有個 process 活著」不是占用的證據。
 //     用它假裝占用，帳本會在每一台開著 OpenClaw 的機器上都顯示滿載。
+func prepareOccupancy(machineID string, d *model.OpenClawDB, receivedAt string) [][]any {
+	var rows [][]any
+	if d == nil {
+		return rows
+	}
+	for _, e := range d.Occupancy {
+		if e.Provider == "" {
+			continue
+		}
+		rows = append(rows, []any{occupancyID(machineID, e.Source, e.JobID, e.At), machineID, e.Provider, nullStr(e.Model),
+			fmtTime(e.At), receivedAt, e.SessionKey, nullStr(e.JobID), nullStr(e.AgentID), nullStr(e.Status), nullInt(e.TotalTokens), nullStr(e.ErrorText), e.Source})
+	}
+	return rows
+}
+
 func recordOccupancy(tx dbTx, machineID string, d *model.OpenClawDB, receivedAt string) error {
-	if d == nil || len(d.Occupancy) == 0 {
+	return recordPreparedOccupancy(tx, machineID, prepareOccupancy(machineID, d, receivedAt))
+}
+
+func recordPreparedOccupancy(tx dbTx, machineID string, rows [][]any) error {
+	if len(rows) == 0 {
 		return nil
 	}
-	ins, err := tx.Prepare(`
-INSERT OR IGNORE INTO ticket_occupancy_observation
-  (observation_id, machine_id, profile_id, provider, model,
-   measured_at, received_at, occupant_evidence, job_id, agent_id,
-   process_alive, run_status, total_tokens, last_error_text, source)
-VALUES (?,?,NULL,?,?,?,?,?,?,?,0,?,?,?,?)`)
+	ins, err := tx.Prepare(`INSERT OR IGNORE INTO ticket_occupancy_observation
+ (observation_id,machine_id,profile_id,provider,model,measured_at,received_at,occupant_evidence,job_id,agent_id,process_alive,run_status,total_tokens,last_error_text,source)
+ VALUES (?,?,NULL,?,?,?,?,?,?,?,0,?,?,?,?)`)
 	if err != nil {
 		return fmt.Errorf("store: prepare occupancy: %w", err)
 	}
 	defer ins.Close()
-
-	for _, e := range d.Occupancy {
-		if e.Provider == "" {
-			continue // 規則 2。probe 已經濾過一次，這裡是第二道。
-		}
-		// ⚠ id 由內容決定，不是隨機的。agent 每 10 分鐘重送最近 200 筆，
-		// 用隨機 id 會讓同一個 cron 回合在帳本上出現幾十次，
-		// 而一本會自我複製的帳，比沒有帳更難查。
-		id := occupancyID(machineID, e.Source, e.JobID, e.At)
-		if _, err := ins.Exec(id, machineID, e.Provider, nullStr(e.Model),
-			fmtTime(e.At), receivedAt, e.SessionKey, nullStr(e.JobID), nullStr(e.AgentID),
-			nullStr(e.Status), nullInt(e.TotalTokens), nullStr(e.ErrorText),
-			e.Source); err != nil {
+	for _, row := range rows {
+		if _, err := ins.Exec(row...); err != nil {
 			if isForeignKeyErr(err) {
 				return fmt.Errorf("store: occupancy from %q: %w", machineID, ErrNotFound)
 			}
@@ -1893,42 +1899,22 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 			return model.ErrInvalidOOM
 		}
 	}
-	tx, err := s.beginWrite(context.Background(), "record_observation")
-	if err != nil {
-		return fmt.Errorf("store: begin: %w", err)
-	}
-	defer tx.Rollback()
 	var displayName string
-	if err := tx.QueryRow(`SELECT display_name FROM machine_registry WHERE machine_id=?`, machineID).Scan(&displayName); err != nil {
+	if err := s.rdb.QueryRow(`SELECT display_name FROM machine_registry WHERE machine_id=?`, machineID).Scan(&displayName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
 		}
 		return fmt.Errorf("store: observation machine: %w", err)
 	}
 
-	ins, err := tx.Prepare(`
-INSERT INTO observed_state
-  (observation_id, machine_id, measured_at, received_at, kind, subject, payload, source)
-VALUES (?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return fmt.Errorf("store: prepare observation: %w", err)
-	}
-	defer ins.Close()
-
+	var prepared [][]any
 	measured, recv := fmtTime(b.MeasuredAt), fmtTime(receivedAt)
 	put := func(kind, subject string, v any) error {
 		payload, err := json.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("store: marshal %s/%s: %w", kind, subject, err)
 		}
-		_, err = ins.Exec(newID(), machineID, measured, recv, kind, subject,
-			string(payload), SourceAgentMeasurement)
-		if err != nil {
-			if isForeignKeyErr(err) {
-				return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
-			}
-			return fmt.Errorf("store: insert %s/%s: %w", kind, subject, err)
-		}
+		prepared = append(prepared, []any{newID(), machineID, measured, recv, kind, subject, string(payload), SourceAgentMeasurement})
 		return nil
 	}
 
@@ -1936,9 +1922,6 @@ VALUES (?,?,?,?,?,?,?,?)`)
 		if err := put("block_devices", "block_devices", b.BlockDevices); err != nil {
 			return err
 		}
-	}
-	if err := s.recordDiskSetupResults(tx, machineID, b.DiskJobResults, receivedAt); err != nil {
-		return err
 	}
 	if err := put("host_profile_apply", "host_profile_apply", b.HostProfileApply); err != nil {
 		return err
@@ -1991,8 +1974,10 @@ VALUES (?,?,?,?,?,?,?,?)`)
 			return err
 		}
 	}
-	if err := s.putSigninHealth(tx, machineID, b.AuthHealth, receivedAt, put); err != nil {
-		return err
+	for _, h := range b.AuthHealth {
+		if err := put("auth_health", h.CLI+"/"+strconv.Itoa(h.Slot), h); err != nil {
+			return err
+		}
 	}
 	for _, c := range b.Credentials {
 		if err := put(KindCredential, c.Provider, c); err != nil {
@@ -2003,6 +1988,59 @@ VALUES (?,?,?,?,?,?,?,?)`)
 		if err := put(KindCLITool, t.Name, t); err != nil {
 			return err
 		}
+	}
+
+	// Build SQL and bind arguments before reserving the writer.
+	type insertChunk struct {
+		query string
+		args  []any
+	}
+	var chunks []insertChunk
+	for offset := 0; offset < len(prepared); offset += 100 {
+		end := offset + 100
+		if end > len(prepared) {
+			end = len(prepared)
+		}
+		values := make([]string, 0, end-offset)
+		args := make([]any, 0, (end-offset)*8)
+		for _, row := range prepared[offset:end] {
+			values = append(values, "(?,?,?,?,?,?,?,?)")
+			args = append(args, row...)
+		}
+		chunks = append(chunks, insertChunk{"INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES " + strings.Join(values, ","), args})
+	}
+	diskResults, err := prepareDiskSetupResults(b.DiskJobResults)
+	if err != nil {
+		return err
+	}
+	occupancy := prepareOccupancy(machineID, b.OpenClaw.DB, recv)
+	tx, err := s.beginWrite(context.Background(), "record_observation")
+	if err != nil {
+		return fmt.Errorf("store: begin: %w", err)
+	}
+	defer tx.Rollback()
+	// The display name participates in policy-token validation. Recheck it under
+	// the writer so a concurrent rename cannot validate evidence for an old name.
+	if err := tx.QueryRow("SELECT display_name FROM machine_registry WHERE machine_id=?", machineID).Scan(&displayName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
+		}
+		return fmt.Errorf("store: observation machine: %w", err)
+	}
+	for _, chunk := range chunks {
+		if _, err := tx.Exec(chunk.query, chunk.args...); err != nil {
+			if isForeignKeyErr(err) {
+				return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
+			}
+			return fmt.Errorf("store: insert observations: %w", err)
+		}
+	}
+
+	if err := s.recordPreparedDiskSetupResults(tx, machineID, diskResults, receivedAt); err != nil {
+		return err
+	}
+	if err := s.signinNotificationFacts(tx, machineID, b.AuthHealth, receivedAt); err != nil {
+		return err
 	}
 
 	// credential_on_machine 是「目前狀態」的投影，可以覆蓋 —— 因為歷史在
@@ -2042,7 +2080,7 @@ ON CONFLICT(machine_id, provider) DO UPDATE SET
 	}
 
 	// 占用帳本。⚠ append-only，而且**只寫有 provider 的那些**。
-	if err := recordOccupancy(tx, machineID, b.OpenClaw.DB, recv); err != nil {
+	if err := recordPreparedOccupancy(tx, machineID, occupancy); err != nil {
 		return err
 	}
 
