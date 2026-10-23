@@ -1,14 +1,70 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+type loggingHijackRecorder struct {
+	*httptest.ResponseRecorder
+	conn net.Conn
+}
+
+func (w *loggingHijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.conn, bufio.NewReadWriter(bufio.NewReader(w.conn), bufio.NewWriter(w.conn)), nil
+}
+
+func TestLoggingResponseSemantics(t *testing.T) {
+	oldLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+	for _, tc := range []struct {
+		name   string
+		status string
+		serve  func(http.ResponseWriter)
+	}{
+		{"implicit body", `"status":200`, func(w http.ResponseWriter) {
+			_, _ = w.Write([]byte("body"))
+			w.WriteHeader(http.StatusInternalServerError)
+		}},
+		{"first final status", `"status":201`, func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusEarlyHints)
+			w.WriteHeader(http.StatusCreated)
+			w.WriteHeader(http.StatusInternalServerError)
+		}},
+		{"stream flush", `"status":200`, func(w http.ResponseWriter) {
+			w.(http.Flusher).Flush()
+			w.WriteHeader(http.StatusInternalServerError)
+		}},
+		{"terminal upgrade", `"status":101`, func(w http.ResponseWriter) {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.Close()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			conn, peer := net.Pipe()
+			defer conn.Close()
+			defer peer.Close()
+			recorder := &loggingHijackRecorder{httptest.NewRecorder(), conn}
+			handler := newLoggingMiddleware(1000, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { tc.serve(w) }))
+			handler.ServeHTTP(recorder, httptest.NewRequest("GET", "/", nil))
+			if !strings.Contains(buf.String(), tc.status) {
+				t.Fatalf("expected %s in %s", tc.status, buf.String())
+			}
+		})
+	}
+}
 
 func TestLoggingMiddleware(t *testing.T) {
 	oldLogger := slog.Default()
@@ -51,8 +107,8 @@ func TestLoggingMiddleware(t *testing.T) {
 		if !strings.Contains(logOutput, `"msg":"request"`) {
 			t.Errorf("Expected info log message, got: %s", logOutput)
 		}
-		if !strings.Contains(logOutput, `"level":"DEBUG"`) {
-			t.Errorf("Expected level DEBUG in log, got: %s", logOutput)
+		if !strings.Contains(logOutput, `"level":"INFO"`) {
+			t.Errorf("Expected level INFO in log, got: %s", logOutput)
 		}
 		if !strings.Contains(logOutput, `"route":"GET /machines/{id}"`) {
 			t.Errorf("Expected route GET /machines/{id} in log, got: %s", logOutput)

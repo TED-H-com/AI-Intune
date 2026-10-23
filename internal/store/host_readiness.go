@@ -111,7 +111,7 @@ func (s *Store) HostChecklist(id string, now time.Time) (HostChecklist, error) {
 	}
 	v.EffectiveConfig = profile.Effective(v.Config)
 	var raw, received, measured string
-	err = s.rdb.QueryRow(`SELECT payload,received_at,measured_at FROM observed_state WHERE machine_id=? AND kind='host_readiness' ORDER BY received_at DESC,rowid DESC LIMIT 1`, id).Scan(&raw, &received, &measured)
+	err = s.rdb.QueryRow(`SELECT payload,received_at,measured_at FROM observed_latest WHERE machine_id=? AND kind='host_readiness' ORDER BY received_at DESC,measured_at DESC,observation_sequence DESC LIMIT 1`, id).Scan(&raw, &received, &measured)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return v, err
 	}

@@ -590,7 +590,14 @@ func newHubHTTPHandler(h *hub, ui *web.Server, authorizer operatorRequestAuthori
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		return nil, err
 	}
-	boundary := newOperatorBoundary(operatorMux, authorizer, h.store, operatorRoutePolicies, authority, cloud...)
+	policies := make(map[string]operatorRoutePolicy, len(operatorRoutePolicies)+1)
+	for pattern, policy := range operatorRoutePolicies {
+		policies[pattern] = policy
+	}
+	if h.pprofEnabled {
+		registerPprof(operatorMux, policies)
+	}
+	boundary := newOperatorBoundary(operatorMux, authorizer, h.store, policies, authority, cloud...)
 	boundary.clientIP = h.clientIP
 	root.Handle("/", boundary)
 	return root, nil
@@ -738,6 +745,7 @@ func validateOperatorRoutePolicies(registered []string, policies map[string]oper
 
 func (b *operatorBoundary) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, pattern := b.next.Handler(r)
+	r.Pattern = pattern
 	if pattern == "" {
 		// No registered control route matched. Preserve ServeMux's canonical
 		// 404/405 response; there is no handler here that could mutate state.

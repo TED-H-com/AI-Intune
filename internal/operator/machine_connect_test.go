@@ -123,7 +123,7 @@ func TestMachineConnectKeepsUndecodableAndMalformedEvidenceUnavailable(t *testin
 		recordMachineConnectObservation(t, st, machineID, model.Identity{TailscaleIP: "100.64.0.10"},
 			model.BAT{Running: true, Port: 9876, ListenAddrs: []string{"100.64.0.10"}},
 			now.Add(-time.Minute), now.Add(-time.Minute))
-		if _, err := st.DB().Exec(`UPDATE observed_state SET payload='{' WHERE machine_id=? AND kind=?`,
+		if _, err := st.DB().Exec(`UPDATE observed_latest SET payload='{' WHERE machine_id=? AND kind=?`,
 			machineID, store.KindBAT); err != nil {
 			t.Fatal(err)
 		}

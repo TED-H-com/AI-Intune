@@ -8,24 +8,6 @@ import (
 	"time"
 )
 
-type loggingResponseWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *loggingResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-func (w *loggingResponseWriter) WriteHeader(status int) {
-	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
-		w.ResponseWriter.WriteHeader(status)
-		return
-	}
-	if w.status != 0 {
-		return
-	}
-	w.status = status
-	w.ResponseWriter.WriteHeader(status)
-}
-
 func parseThreshold(envValue string) int {
 	threshold := 1000
 	if envValue != "" {
@@ -48,7 +30,7 @@ func newLoggingMiddleware(threshold int, nowFunc func() time.Time) func(http.Han
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := nowFunc()
-			lw := &loggingResponseWriter{ResponseWriter: w, status: 0}
+			lw := &durationResponseWriter{serviceResponseWriter: serviceResponseWriter{ResponseWriter: w}}
 
 			defer func() {
 				duration := nowFunc().Sub(start)
@@ -74,7 +56,7 @@ func newLoggingMiddleware(threshold int, nowFunc func() time.Time) func(http.Han
 						slog.Int64("duration_ms", durationMs),
 					)
 				} else {
-					slog.Debug("request",
+					slog.Info("request",
 						slog.String("method", r.Method),
 						slog.String("route", route),
 						slog.Int("status", lw.status),
