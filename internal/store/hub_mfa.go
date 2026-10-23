@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base32"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -136,6 +137,16 @@ func (s *Store) verifyLoginSecondFactor(id string, generation *int64, clientIP, 
 	return err
 }
 
+// Per-key locks alone let a password holder multiply the second-factor budget by
+// rotating addresses (an IPv6 /48 holds 65,536 /64 keys). Consecutive failures
+// therefore also count per account; reaching the limit refuses authenticator
+// codes from every key until the lock expires. Recovery codes still complete
+// login and clear it. Submissions refused by a lock count toward neither budget.
+const (
+	mfaAccountFailureLimit = 10
+	mfaAccountLockDuration = time.Hour
+)
+
 // Both factor operations share replay protection, failure counters, and audit handling.
 func (s *Store) verifySecondFactorTx(tx *writeTx, id, clientIP, code string, allowRecovery bool, metadata ...AuditEntry) error {
 	var err error
@@ -150,12 +161,22 @@ func (s *Store) verifySecondFactorTx(tx *writeTx, id, clientIP, code string, all
 	if _, err = tx.Exec(`DELETE FROM hub_login_failures WHERE last_failed_at<?`, fmtTime(now.Add(-24*time.Hour))); err != nil {
 		return err
 	}
+	if _, err = tx.Exec(`DELETE FROM hub_mfa_failures WHERE last_failed_at<?`, fmtTime(now.Add(-24*time.Hour))); err != nil {
+		return err
+	}
 	err = tx.QueryRow(`SELECT failed_attempts,locked_until FROM hub_login_failures WHERE account_id=? AND client_ip=?`, id, clientIP).Scan(&failed, &locked)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	until, _ := time.Parse(time.RFC3339, locked.String)
 	blocked := disabled.Valid || now.Before(until)
+	var accountFailed int
+	var accountLocked sql.NullString
+	if e := tx.QueryRow(`SELECT failed_attempts,locked_until FROM hub_mfa_failures WHERE account_id=?`, id).Scan(&accountFailed, &accountLocked); e != nil && !errors.Is(e, sql.ErrNoRows) {
+		return e
+	}
+	accountUntil, _ := time.Parse(time.RFC3339, accountLocked.String)
+	codesLocked := now.Before(accountUntil)
 	var secret string
 	var last int64
 	err = tx.QueryRow(`SELECT totp_secret,last_used_step FROM hub_account_mfa WHERE account_id=? AND enabled_at IS NOT NULL`, id).Scan(&secret, &last)
@@ -163,7 +184,7 @@ func (s *Store) verifySecondFactorTx(tx *writeTx, id, clientIP, code string, all
 		return err
 	}
 	step, valid := totp.Verify(secret, code, now)
-	valid = valid && step > last && err == nil && !blocked
+	valid = valid && step > last && err == nil && !blocked && !codesLocked
 	action := AuditMFAFailed
 	if valid {
 		var res sql.Result
@@ -189,6 +210,9 @@ func (s *Store) verifySecondFactorTx(tx *writeTx, id, clientIP, code string, all
 	}
 	if valid {
 		_, err = tx.Exec(`DELETE FROM hub_login_failures WHERE account_id=? AND client_ip=?`, id, clientIP)
+		if err == nil {
+			_, err = tx.Exec(`DELETE FROM hub_mfa_failures WHERE account_id=?`, id)
+		}
 	} else if !blocked {
 		if locked.Valid {
 			failed = 0
@@ -202,6 +226,23 @@ func (s *Store) verifySecondFactorTx(tx *writeTx, id, clientIP, code string, all
 			}
 		}
 		_, err = tx.Exec(`INSERT INTO hub_login_failures(account_id,client_ip,failed_attempts,locked_until,last_failed_at) VALUES(?,?,?,?,?) ON CONFLICT(account_id,client_ip) DO UPDATE SET failed_attempts=excluded.failed_attempts,locked_until=excluded.locked_until,last_failed_at=excluded.last_failed_at`, id, clientIP, failed, lock, fmtTime(now))
+		if err == nil && !codesLocked {
+			if accountLocked.Valid {
+				accountFailed = 0
+			}
+			accountFailed++
+			var accountLock any
+			if accountFailed >= mfaAccountFailureLimit {
+				lockUntil := fmtTime(now.Add(mfaAccountLockDuration))
+				accountLock = lockUntil
+				entry := accountAudit(AuditHubLockout, a, false, metadata...)
+				entry.Detail = fmt.Sprintf("second factor: %d consecutive failures across client keys; authenticator codes locked until %s", mfaAccountFailureLimit, lockUntil)
+				if err = s.recordAuditTx(tx, entry); err != nil {
+					return err
+				}
+			}
+			_, err = tx.Exec(`INSERT INTO hub_mfa_failures(account_id,failed_attempts,locked_until,last_failed_at) VALUES(?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET failed_attempts=excluded.failed_attempts,locked_until=excluded.locked_until,last_failed_at=excluded.last_failed_at`, id, accountFailed, accountLock, fmtTime(now))
+		}
 	}
 	if err != nil {
 		return err
@@ -237,6 +278,9 @@ func (s *Store) DisableMFA(id string, metadata ...AuditEntry) error {
 		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM hub_account_mfa WHERE account_id=?`, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM hub_mfa_failures WHERE account_id=?`, id); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`UPDATE hub_accounts SET auth_generation=auth_generation+1 WHERE account_id=?`, id); err != nil {

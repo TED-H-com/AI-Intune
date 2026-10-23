@@ -18,7 +18,7 @@ These six operations are included in the 359-operation tally above (36 non-opera
 |---|---|---|
 | `GET`, `POST` | `/setup` | First account only; POST requires setup code, username and password, creates a session, and redirects to automatic TOTP enrollment. Returns 404 after an admin exists. |
 | `GET`, `POST` | `/login` | Form and password authentication; creates a local session, or a five-minute source-bound pending login when MFA is enabled. Login/setup POSTs share resolved client-key limit 10/minute, burst 5. |
-| `POST` | `/login/mfa` | Requires pending login cookie plus authenticator or unused recovery code; same resolved client-key limiter and per-(account, client key) lockout as password login. |
+| `POST` | `/login/mfa` | Requires pending login cookie plus authenticator or unused recovery code; same resolved client-key limiter and per-(account, client key) lockout as password login. 10 consecutive second-factor failures across all client keys lock authenticator codes for the account for one hour; recovery codes still complete login. |
 | `POST` | `/logout` | Revokes the presented session, clears cookie, redirects to login. |
 
 | Method | Operator download route | Authority / behavior |
