@@ -48,6 +48,11 @@ jobs:
       - name: go test
         run: go test -count=1 ./...
 
+      - name: macOS installer shellcheck and tests
+        run: |
+          shellcheck ops/install-agent-macos.sh ops/test-install-agent-macos.sh
+          bash ops/test-install-agent-macos.sh
+
       - name: ops tests
         run: bash ops/test-ops.sh
 
@@ -60,6 +65,15 @@ jobs:
             case "$target" in windows/*) flags=(-ldflags=-H=windowsgui) ;; esac
             GOOS="${target%/*}" GOARCH="${target#*/}" go build "${flags[@]}" -o /dev/null ./cmd/clawctl-agent
           done
+
+  macos-installer:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: macOS installer tests
+        run: |
+          /bin/bash ops/test-install-agent-macos.sh
+          /bin/bash -n ops/install-agent-macos.sh
 
   race:
     name: race (${{ matrix.name }})
