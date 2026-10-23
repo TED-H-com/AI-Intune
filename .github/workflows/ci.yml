@@ -66,6 +66,30 @@ jobs:
             GOOS="${target%/*}" GOARCH="${target#*/}" go build "${flags[@]}" -o /dev/null ./cmd/clawctl-agent
           done
 
+  agent-bootstrap-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and check Hub Fly bootstrap archives
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version="ci-${COMMIT_SHA:0:12}"
+          [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$ ]]
+          docker buildx build -f ops/docker/Dockerfile --target hub-fly \
+            --build-arg "CLAWCTL_VERSION=$version" --load -t clawctl-hub:ci .
+          container=$(docker create clawctl-hub:ci)
+          trap 'docker rm -v "$container"' EXIT
+          mkdir -p "$RUNNER_TEMP/bootstrap-share" "$RUNNER_TEMP/bootstrap-seed"
+          docker cp "$container:/usr/local/share/clawctl/agent-bootstrap/." "$RUNNER_TEMP/bootstrap-share/"
+          docker cp "$container:/opt/clawctl-seed/agent-bootstrap/." "$RUNNER_TEMP/bootstrap-seed/"
+          bash ops/docker/test-agent-bootstrap-image.sh "$RUNNER_TEMP/bootstrap-share/$version"
+          bash ops/docker/test-agent-bootstrap-image.sh "$RUNNER_TEMP/bootstrap-seed/$version"
+          docker image inspect -f '{{.Size}}' clawctl-hub:ci
+
   macos-installer:
     runs-on: macos-latest
     steps:
