@@ -17,6 +17,10 @@ import (
 func TestMaintenanceExecutorDryRunDigestAndRootRefusal(t *testing.T) {
 	spec, raw := mustMaintenanceSpec(t, false)
 	dir := t.TempDir()
+	// t.TempDir follows the process umask; the executor only accepts a private directory.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	var argv []string
 	exec := maintenanceExecutor{
 		now:  func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) },
