@@ -148,7 +148,7 @@ Use the account's existing username when resetting. Headless bootstrap needs no 
 | `CLAWCTL_REQUIRE_MFA` | Defaults **on** when unset in `local` / `both`; irrelevant in `tailscale`. Accepts `1` / `true` / `on` and `0` / `false` / `off`; other values (including empty) refuse startup. Opting out logs a WARNING and shows a persistent warning for local sessions on the dashboard and Account security. |
 | `CLAWCTL_SETUP_CODE` | Optional first-run code in `local` / `both`; omit to generate and log it. If supplied, requires at least 16 characters after removing whitespace/hyphens; comparisons are case-insensitive. Empty is invalid before the first admin exists. |
 | `CLAWCTL_TRUSTED_PROXIES` | Comma/space separated proxy CIDRs or bare IPv4/IPv6 addresses (/32 or /128). Default empty ignores forwarded headers. Invalid entries and prefixes broader than IPv4 /8 or IPv6 /16 refuse startup. |
-| `CLAWCTL_CLIENT_IP_HEADER` | `X-Forwarded-For` (default) or `Fly-Client-IP`; other values refuse startup. |
+| `CLAWCTL_CLIENT_IP_HEADER` | `X-Forwarded-For` (default), `Fly-Client-IP`, or `CF-Connecting-IP` (case-insensitive); other values refuse startup. |
 | `CLAWCTL_DOCKER_SUBNET` | Compose bridge subnet and Hub trusted proxies; default `172.31.87.0/24`. Override if it collides. |
 | `CLAWCTL_DB` / `--db` | SQLite path; its parent must be private and owned by the service user. The Docker image's explicit `--db` pins `/var/lib/clawctl/clawctl.sqlite`. |
 | `CLAWCTL_PUBLIC_HOST` | Compose/Caddy input only: public DNS hostname used to construct `CLAWCTL_PUBLIC_URL`. |
@@ -165,7 +165,7 @@ CLAWCTL_TRUSTED_PROXIES=127.0.0.1,::1
 CLAWCTL_CLIENT_IP_HEADER=X-Forwarded-For
 ```
 
-Trust only your proxy's actual source addresses and ensure it sanitizes forwarded headers. Empty trust uses the TCP peer; without configuration every proxied client shares one IP. Trusted XFF chains are walked right-to-left (at most 32 entries), skipping trusted hops. The first untrusted IP wins; malformed entries fall back to the last trusted hop, and all-trusted chains fall back to the peer. `Fly-Client-IP` must contain exactly one header value and one IP without a port. XFF entries with ports or empty entries are malformed; surrounding spaces are accepted. `Forwarded` and `X-Real-IP` are never used. This affects account limiter, lockout, audit/session source addresses and enrollment limits; operator identity, Host checks and WhoIs continue to use their existing boundary.
+Trust only your proxy's actual source addresses and ensure it sanitizes forwarded headers. Empty trust uses the TCP peer; without configuration every proxied client shares one IP. Trusted XFF chains are walked right-to-left (at most 32 entries), skipping trusted hops. The first untrusted IP wins; malformed entries fall back to the last trusted hop, and all-trusted chains fall back to the peer. `Fly-Client-IP` and `CF-Connecting-IP` must contain exactly one header value and one IP without a port. XFF entries with ports or empty entries are malformed; surrounding spaces are accepted. `Forwarded` and `X-Real-IP` are never used. This affects account limiter, lockout, audit/session source addresses and enrollment limits; operator identity, Host checks and WhoIs continue to use their existing boundary.
 
 For Fly public HTTP mode use:
 
@@ -175,6 +175,17 @@ CLAWCTL_CLIENT_IP_HEADER=Fly-Client-IP
 ```
 
 On Fly the rightmost `X-Forwarded-For` entry is the app's own edge address. Fly staff describe fly-proxy egress as `172.16.0.0/16`, but `172.19.x` has been observed, hence `/12`. Fly 6PN private networking is IPv6 `fdaa::/16` and is not trusted by this setting. The Fly entrypoint supplies these defaults in local mode; see [the Fly deployment guide](DEPLOY-FLY.md).
+
+### Cloudflare Tunnel
+
+With `cloudflared` on the host and Hub in Docker bridge networking, the direct peer is the Docker bridge gateway (for example, `172.17.0.1`). Use the actual gateway address:
+
+```env
+CLAWCTL_CLIENT_IP_HEADER=CF-Connecting-IP
+CLAWCTL_TRUSTED_PROXIES=172.17.0.1/32
+```
+
+Trust only that gateway `/32`, never broad ranges. The header must contain exactly one valid, unscoped IP; invalid or multiple values fall back to the peer address. Untrusted peers cannot override the client IP.
 
 ## Security model and current limits
 

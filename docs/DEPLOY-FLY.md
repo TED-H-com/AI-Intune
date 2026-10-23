@@ -183,6 +183,10 @@ Check `https://<your-app-name>.fly.dev/healthz` (or your custom domain), then fo
 
 Public mode defaults to `CLAWCTL_TRUSTED_PROXIES=172.16.0.0/12` (fly-proxy egress) and `CLAWCTL_CLIENT_IP_HEADER=Fly-Client-IP`. On Fly the rightmost X-Forwarded-For entry is the app's edge IP. 6PN uses IPv6 `fdaa::/16` and is not trusted. Explicit proxy/header settings, including empty trust, are respected; see [client IP configuration](AUTOPILOT.md#client-ip-and-reverse-proxies).
 
+### Cloudflare Tunnel alternative
+
+The allowed `CLAWCTL_CLIENT_IP_HEADER` values are `X-Forwarded-For` (default), `Fly-Client-IP`, and `CF-Connecting-IP`, case-insensitively. For `cloudflared` on the host with Hub in Docker bridge networking, the peer is the bridge gateway (for example, `172.17.0.1`). Set `CLAWCTL_CLIENT_IP_HEADER=CF-Connecting-IP` and `CLAWCTL_TRUSTED_PROXIES=<gateway>/32` using the actual gateway. Never trust broad ranges; see [Cloudflare Tunnel configuration](AUTOPILOT.md#cloudflare-tunnel).
+
 ## Advanced: Tailscale-only Hub on Fly
 
 This private pack preserves the existing Tailscale behavior: no public HTTP service; operators and agents reach the literal Tailscale IPv4. Use `ops/fly/fly.tailscale.toml`. Its `[env]` explicitly sets `CLAWCTL_AUTH_MODE = "tailscale"`. Do not add a public service to its config.
