@@ -23,7 +23,7 @@
 <div class="panel" id="attention-next-action"><h2>Next steps</h2>
 <p>Review the findings below and their observation times before acting. Check the affected service logs for agent or workload findings; use Disk usage and safe cleanup for disk findings. For login findings, ask the assigned service user to sign in through the provider's normal flow. After repair, wait for a fresh observation and confirm the reason clears.</p>
 <p><a href="#oom-kills">Review recent OOM kills and memory pressure</a>.</p>
-<p>State is based on the evidence currently available; a heartbeat alone does not prove workload recovery. Avoid restarting services or deleting files without reviewing impact and approval requirements.</p></div>
+<p>State reflects the latest workload reports. Review the affected workload and the impact of each action before approving changes.</p></div>
 {{end}}
 
 {{template "loop_episodes" .}}
@@ -200,7 +200,7 @@
   </table>
   <p class="small dim">memcg rows show counter deltas at observation time, not exact kill times. They can overlap kernel evidence; do not sum rows. oomd kills a cgroup and does not establish an individual process.</p>
   {{else}}
-  <p>No recent OOM kills reported. <a href="/updates">Review agent version</a> and ensure the agent can read the system journal and cgroup counters. Missing evidence does not prove no kills occurred.</p>
+  <p>No recent OOM kills reported. <a href="/updates">Review agent version</a> and check access to the system journal and cgroup counters.</p>
   {{end}}
 </div>
 

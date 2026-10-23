@@ -1,6 +1,6 @@
 {{define "loops.html"}}{{template "head" .}}
 <h1>Attention / Loops</h1>
-<p>Repeated identical calls without reported progress. Heartbeats alone do not trigger detection. Only agents reporting call activity are covered; an empty list does not prove that workloads are healthy.</p>
+<p>Repeated identical calls without reported progress, detected from agent call activity. Review affected workloads below.</p>
 <div class="panel"><h2>Detection policy</h2><p>Open an episode when calls exceed the threshold within the sliding window. Policy changes apply on the next activity report. Rates are calls per minute averaged over the configured window.</p>
 {{if .Access.CanAdmin}}<form method="post" action="/attention/loops"><input type="hidden" name="action" value="policy"><label>Call threshold <input type="number" name="threshold" min="2" max="100000" value="{{.Loops.Policy.Threshold}}" required></label><label>Window (seconds) <input type="number" name="window_seconds" min="60" max="3600" value="{{.Loops.Policy.WindowSeconds}}" required></label><button>Save detection policy</button></form>{{else}}<p>Threshold: {{.Loops.Policy.Threshold}} calls; window: {{.Loops.Policy.WindowSeconds}} seconds. Ask an administrator to change this policy.</p>{{end}}</div>
 {{template "loop_episodes" .}}
