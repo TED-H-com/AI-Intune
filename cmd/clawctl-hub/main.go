@@ -49,6 +49,7 @@ var commit = "unknown"
 var buildTime = "unknown"
 
 type hub struct {
+	pprofEnabled        bool
 	diskUploadLimiter   diskReportUploadLimiter
 	diskManifestLimiter diskManifestGrantLimiter
 	scriptRunLimiter    scriptRunRateLimiter
@@ -464,6 +465,8 @@ func runRollbackCompatibility(argv []string, out io.Writer) error {
 
 func serve(argv []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	pprofEnabled := fs.Bool("pprof", os.Getenv("CLAWCTL_HUB_PPROF") == "1", "enable admin-only /debug/pprof/")
+	unchangedRaw := fs.String("obs-unchanged-interval", os.Getenv("CLAWCTL_OBS_UNCHANGED_INTERVAL"), "identical cli_tool/systemd storage interval (default 30m; 0 disables)")
 	diskManifestSigningKey := fs.String("disk-manifest-signing-key", "", "private RSA PEM key for exact disk action grants; local helper public key must be independently pinned")
 	usageToolCallLimitStr := fs.String("usage-tool-call-limit", os.Getenv("CLAWCTL_USAGE_TOOL_CALL_LIMIT"), "maximum tool-call map entries per usage upload (default 1000)")
 	growthRate := fs.String("disk-growth-gb-per-hour", os.Getenv("CLAWCTL_DISK_GROWTH_GB_PER_HOUR"), "disk growth threshold in GB/hour (default 10)")
@@ -662,6 +665,15 @@ func serve(argv []string) {
 	if err := st.ConfigureDiskGrowth(growthDefaults); err != nil {
 		log.Fatal(err)
 	}
+	unchangedInterval := 30 * time.Minute
+	if *unchangedRaw != "" {
+		var err error
+		unchangedInterval, err = time.ParseDuration(*unchangedRaw)
+		if err != nil || unchangedInterval < 0 {
+			log.Fatal("CLAWCTL_OBS_UNCHANGED_INTERVAL must be a nonnegative duration")
+		}
+	}
+	st.SetObservationUnchangedInterval(unchangedInterval)
 	st.ConfigureDiskOpsV2Writes(*diskOpsV2Writes)
 	if *diskManifestSigningKey != "" {
 		if err := configureDiskManifestSigningKey(st, *diskManifestSigningKey); err != nil {
@@ -669,7 +681,8 @@ func serve(argv []string) {
 		}
 	}
 	h := &hub{
-		store: st, tailnet: tailnetCache, agentLinks: agentlink.New(), artifactsDir: artifactsDir, blobs: objectBlobs, operatorService: operatorService, publicURL: operatorBase,
+		pprofEnabled: *pprofEnabled,
+		store:        st, tailnet: tailnetCache, agentLinks: agentlink.New(), artifactsDir: artifactsDir, blobs: objectBlobs, operatorService: operatorService, publicURL: operatorBase,
 		hubHost:   *hubHost,
 		startedAt: time.Now(), drillStamp: drillStampPath(*dbPath),
 		notifyCmd: notifySetup.cmd, notifyEnv: notifySetup.envPath,
@@ -764,7 +777,7 @@ func serve(argv []string) {
 
 	srv := &http.Server{
 		Addr:    *addr,
-		Handler: maintenanceMiddleware(upgradeMaintenanceMarker(*dbPath), handler),
+		Handler: requestDurationLogging(maintenanceMiddleware(upgradeMaintenanceMarker(*dbPath), handler), log.Printf),
 		// ⚠ 這幾個 timeout 不是裝飾。一個卡住的連線會佔著 goroutine，
 		// 而 Hub 是單點 —— 它不能因為一台機器的網路很爛就變慢。
 		ReadHeaderTimeout: 10 * time.Second,

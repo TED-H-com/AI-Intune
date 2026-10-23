@@ -27,7 +27,7 @@ func (s *Store) MachineDisks(machine string) (MachineDisks, error) {
 		return out, e
 	}
 	var raw string
-	e := s.rdb.QueryRow(`SELECT payload FROM observed_state WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,rowid DESC LIMIT 1`, machine).Scan(&raw)
+	e := s.rdb.QueryRow(`SELECT payload FROM observed_latest WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,measured_at DESC,observation_sequence DESC LIMIT 1`, machine).Scan(&raw)
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return out, e
 	}
@@ -76,7 +76,7 @@ func (s *Store) ApproveDiskSetup(machine string, j model.DiskJob, a AuditEntry) 
 		return "", fmt.Errorf("Disk setup requires a Linux machine")
 	}
 	var raw string
-	if e = tx.QueryRow(`SELECT payload FROM observed_state WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,rowid DESC LIMIT 1`, machine).Scan(&raw); e != nil {
+	if e = tx.QueryRow(`SELECT payload FROM observed_latest WHERE machine_id=? AND kind='block_devices' ORDER BY received_at DESC,measured_at DESC,observation_sequence DESC LIMIT 1`, machine).Scan(&raw); e != nil {
 		return "", fmt.Errorf("Disk inventory is unavailable")
 	}
 	var disks []model.BlockDevice

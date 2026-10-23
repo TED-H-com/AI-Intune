@@ -190,3 +190,73 @@ func TestHubPerfCompare(t *testing.T) {
 		return fi.Size()
 	}())/1e6)
 }
+
+// Connection-cold means a fresh SQLite reader/page cache, not an OS cache flush.
+func TestHubPerfCompareDashboard(t *testing.T) {
+	if os.Getenv("CLAWCTL_PERF") == "" {
+		t.Skip("set CLAWCTL_PERF=1")
+	}
+	path := filepath.Join(t.TempDir(), "dashboard.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	var machines []string
+	for i := 0; i < 50; i++ {
+		machines = append(machines, mustEnroll(t, s, fmt.Sprintf("dashboard-%d", i), now))
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range machines {
+		_, err = tx.Exec(`WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<7999)
+   INSERT INTO observed_state SELECT ?||'-'||i,?,printf('2026-01-01T%02d:%02d:%02dZ',i/3600,(i/60)%60,i%60),printf('2026-01-01T%02d:%02d:%02dZ',i/3600,(i/60)%60,i%60),'cli_tool','tool-'||(i%8),'{"name":"tool","version":"1.0"}',? FROM n`, id, id, SourceAgentMeasurement)
+		if err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		t.Fatal(err)
+	}
+	const old = `SELECT o.machine_id,o.subject,o.payload,o.measured_at,o.received_at FROM observed_state o
+ WHERE o.kind='cli_tool' AND o.received_at=(SELECT MAX(h.received_at) FROM observed_state h WHERE h.machine_id=o.machine_id AND h.kind=o.kind AND h.subject=o.subject)
+ ORDER BY o.machine_id,o.subject,o.measured_at DESC,o.rowid DESC`
+	const current = `SELECT machine_id,subject,payload,measured_at,received_at FROM observed_latest WHERE kind='cli_tool' ORDER BY machine_id,subject`
+	for _, variant := range []struct{ name, query string }{{"old", old}, {"new", current}} {
+		// A fresh query-only connection provides a cold SQLite cache per variant.
+		reader, err := openReader(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader.SetMaxOpenConns(1)
+		for _, temperature := range []string{"cold", "warm"} {
+			start := time.Now()
+			rows, err := reader.Query(variant.query)
+			if err != nil {
+				reader.Close()
+				t.Fatal(err)
+			}
+			count := 0
+			for rows.Next() {
+				var a, b, c, d, e string
+				if err = rows.Scan(&a, &b, &c, &d, &e); err != nil {
+					t.Fatal(err)
+				}
+				count++
+			}
+			if err = rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			rows.Close()
+			t.Logf("PERF dashboard variant=%s cache=%s rows=%d seeded=400000 machines=50 duration=%s", variant.name, temperature, count, time.Since(start))
+		}
+		reader.Close()
+	}
+}

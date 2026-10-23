@@ -46,6 +46,7 @@ var machineDataTables = []MachineDataTable{
 	// capability 沒有自己的 Hub 時刻；它跟 exact check-in 同生同滅，保留期由 FK cascade 繼承。
 	{Table: "machine_job_capabilities", TimeCol: ""},
 	{Table: "observed_state", TimeCol: "received_at"},
+	{Table: "observed_latest", TimeCol: "received_at"},
 	{Table: "ticket_occupancy_observation", TimeCol: "received_at"},
 	{Table: "credential_on_machine", TimeCol: "updated_at"},
 	{Table: "verification_results", TimeCol: "received_at"},

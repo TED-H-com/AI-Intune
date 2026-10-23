@@ -371,6 +371,7 @@ type Change struct {
 // ---------------------------------------------------------------- Store
 
 type Store struct {
+	unchangedInterval  atomic.Int64
 	signins            signinMemory
 	usageToolCallLimit atomic.Int64
 	diskGrowthDefaults atomic.Pointer[DiskGrowthPolicy]
@@ -689,6 +690,11 @@ func Open(path string) (*Store, error) {
 		changeReadSlots: make(chan struct{}, maxConcurrentChangeReads),
 	}
 	st.gate.stats.init()
+	st.SetObservationUnchangedInterval(30 * time.Minute)
+	if err := st.backfillObservedLatest(); err != nil {
+		st.Close()
+		return nil, err
+	}
 	return st, nil
 }
 
@@ -1820,7 +1826,9 @@ func isForeignKeyErr(err error) bool {
 
 // ---------------------------------------------------------------- 完整觀測
 
-// RecordObservation 記一批完整觀測。⚠ append-only：每個 (kind, subject) 插一列新的，
+// RecordObservation 記一批完整觀測。Identical cli_tool/systemd payloads may be
+// suppressed for the configured interval; changed snapshots remain append-only.
+// 每個 (kind, subject) 插一列新的，
 // 永遠不 UPDATE、不 DELETE、不「只留最新一筆」。
 //
 // 如果你正打算把這裡改成一台一列的快照 —— 請先讀 docs/SPEC.md §4.2。
@@ -1990,25 +1998,6 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 		}
 	}
 
-	// Build SQL and bind arguments before reserving the writer.
-	type insertChunk struct {
-		query string
-		args  []any
-	}
-	var chunks []insertChunk
-	for offset := 0; offset < len(prepared); offset += 100 {
-		end := offset + 100
-		if end > len(prepared) {
-			end = len(prepared)
-		}
-		values := make([]string, 0, end-offset)
-		args := make([]any, 0, (end-offset)*8)
-		for _, row := range prepared[offset:end] {
-			values = append(values, "(?,?,?,?,?,?,?,?)")
-			args = append(args, row...)
-		}
-		chunks = append(chunks, insertChunk{"INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES " + strings.Join(values, ","), args})
-	}
 	diskResults, err := prepareDiskSetupResults(b.DiskJobResults)
 	if err != nil {
 		return err
@@ -2027,13 +2016,66 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 		}
 		return fmt.Errorf("store: observation machine: %w", err)
 	}
-	for _, chunk := range chunks {
-		if _, err := tx.Exec(chunk.query, chunk.args...); err != nil {
-			if isForeignKeyErr(err) {
-				return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
-			}
-			return fmt.Errorf("store: insert observations: %w", err)
+
+	// Read the bounded projection once instead of one query per tool/unit.
+	interval := time.Duration(s.unchangedInterval.Load())
+	type snapshotKey struct{ kind, subject string }
+	type snapshot struct {
+		payload  string
+		received time.Time
+	}
+	previous := map[snapshotKey]snapshot{}
+	if interval > 0 && (len(b.CLITools) > 0 || len(b.Systemd) > 0) {
+		rows, err := tx.Query("SELECT kind,subject,payload,received_at FROM observed_latest WHERE machine_id=? AND kind IN ('cli_tool','systemd')", machineID)
+		if err != nil {
+			return err
 		}
+		for rows.Next() {
+			var kind, subject, payload, received string
+			if err = rows.Scan(&kind, &subject, &payload, &received); err != nil {
+				rows.Close()
+				return err
+			}
+			previous[snapshotKey{kind, subject}] = snapshot{payload, parseTime(received)}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	var values []string
+	var args []any
+	flush := func() error {
+		if len(values) == 0 {
+			return nil
+		}
+		_, err := tx.Exec("INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES "+strings.Join(values, ","), args...)
+		values = nil
+		args = nil
+		if isForeignKeyErr(err) {
+			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
+		}
+		return err
+	}
+	for _, row := range prepared {
+		if interval > 0 && (row[4] == KindCLITool || row[4] == KindSystemd) {
+			old, ok := previous[snapshotKey{row[4].(string), row[5].(string)}]
+			age := receivedAt.Sub(old.received)
+			if ok && old.payload == row[6] && age >= 0 && age < interval {
+				continue
+			}
+		}
+		values = append(values, "(?,?,?,?,?,?,?,?)")
+		args = append(args, row...)
+		if len(values) == 100 {
+			if err := flush(); err != nil {
+				return fmt.Errorf("store: insert observations: %w", err)
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return fmt.Errorf("store: insert observations: %w", err)
 	}
 
 	if err := s.recordPreparedDiskSetupResults(tx, machineID, diskResults, receivedAt); err != nil {
@@ -2600,9 +2642,8 @@ func (s *Store) latestObservation(machineID, kind, subject string) (observation,
 	var o observation
 	var measured, recv string
 	err := s.rdb.QueryRow(`
-SELECT subject, payload, measured_at, received_at FROM observed_state
- WHERE machine_id = ? AND kind = ? AND subject = ?
- ORDER BY received_at DESC, measured_at DESC, rowid DESC LIMIT 1`,
+SELECT subject, payload, measured_at, received_at FROM observed_latest
+ WHERE machine_id = ? AND kind = ? AND subject = ?`,
 		machineID, kind, subject).Scan(&o.Subject, &o.Payload, &measured, &recv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return observation{}, false, nil
@@ -2619,6 +2660,10 @@ SELECT subject, payload, measured_at, received_at FROM observed_state
 // cutoff belongs in SQL: filtering a newer row after LIMIT 1 would hide an
 // older row that was valid at that instant.
 func (s *Store) latestObservationReceivedBy(machineID, kind, subject string, evaluatedAt time.Time) (observation, bool, error) {
+	if o, ok, err := s.latestObservation(machineID, kind, subject); err != nil || !ok || !o.ReceivedAt.After(evaluatedAt) {
+		return o, ok, err
+	}
+
 	var o observation
 	var measured, recv string
 	err := s.rdb.QueryRow(`
@@ -2880,7 +2925,7 @@ func (s *Store) latestBySubject(machineID, kind string, evaluatedAt time.Time) (
 	// the production-sized ledger that made one credential read take ~2.8s and
 	// one Overview ~11s. This window shape visits the machine/kind history once
 	// while preserving the received_at -> measured_at -> rowid tie-break.
-	rows, err := s.rdb.Query(latestBySubjectAtSQL, machineID, kind, fmtTime(evaluatedAt))
+	rows, err := s.rdb.Query(latestBySubjectCurrentSQL, machineID, kind, fmtTime(evaluatedAt), fmtTime(evaluatedAt), machineID, kind, fmtTime(evaluatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("store: latest by subject %s: %w", kind, err)
 	}

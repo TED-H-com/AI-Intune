@@ -91,7 +91,7 @@ func (s *Store) FleetHostProfile(now time.Time) (FleetHostProfile, error) {
 		h := &v.Hosts[i]
 		h.Status = "Waiting"
 		var raw, recv string
-		err = s.rdb.QueryRow(`SELECT payload,received_at FROM observed_state WHERE machine_id=? AND kind='host_profile_apply' ORDER BY received_at DESC,rowid DESC LIMIT 1`, h.MachineID).Scan(&raw, &recv)
+		err = s.rdb.QueryRow(`SELECT payload,received_at FROM observed_latest WHERE machine_id=? AND kind='host_profile_apply' ORDER BY received_at DESC,measured_at DESC,observation_sequence DESC LIMIT 1`, h.MachineID).Scan(&raw, &recv)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
