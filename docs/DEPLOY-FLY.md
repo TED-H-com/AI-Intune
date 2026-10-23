@@ -12,7 +12,7 @@ ops/fly/deploy.sh --org <your-org> --app <your-app-name> --region iad
 # Optional: add --secrets-file ~/clawctl-fly/secrets.env (regular file, mode 0600).
 ```
 
-The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one 1024mb Machine, and verifies HTTPS `/healthz`, `/version`, and `/setup` with bounded retries. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
+The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one Machine, and verifies HTTPS `/healthz`, `/version`, and `/setup` with bounded retries. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
 
 Before every deploy, the wrapper creates a Fly snapshot for **each `clawctl_data` volume**, including newly provisioned volumes. It polls `flyctl volumes snapshots list --json` until a new ID (absent from the pre-request inventory) has status `created`, a creation time after the request, and age at most 300 seconds. It prints the verified ID and volume. Creation, inventory, or verification failure blocks deployment. Polling defaults to 180 seconds per volume (`FLY_SNAPSHOT_TIMEOUT=1..9999`); each snapshot CLI call also has a 15-second timeout. GNU coreutils `timeout` is required. Dry-run prints the gate without calling Fly.
 
@@ -451,6 +451,15 @@ Exit 2 means **deploy succeeded, verification failed**; exit 1 covers earlier
 configuration/provision/build failures. Inspect the deployed app and public
 origin, and recheck health and commit before deciding whether another deploy is
 needed. Setup logs are read only after all endpoint checks pass.
+
+`deploy.sh` preserves existing machine CPU and memory sizing in its temporary config.
+The checked-in `[[vm]]` is a first-deploy default only. Override CPU with
+`--vm-size shared-cpu-Nx|performance-Nx` (1..64 CPUs) and memory with
+`--vm-memory MEM` (integer `mb` or `gb`, 256..131072mb). Environment alternatives
+are `FLY_VM_SIZE` and `FLY_VM_MEMORY`; flags win, and each override replaces only
+its corresponding field. Machines that disagree require overrides for the differing
+fields. Invalid guest inventory blocks deployment. Dry-run reports the sizing
+policy without contacting Fly; existing sizing is resolved on the real run.
 
 ## GCP alternative
 

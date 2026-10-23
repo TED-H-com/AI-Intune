@@ -446,7 +446,7 @@ test_autopilot() (
   trap 'rm -rf "$tmpdir"' EXIT
   mkdir "$tmpdir/bin"
   export PATH="$tmpdir/bin:$PATH" STUB_DIR="$tmpdir" FLY_API_TOKEN=stub-auth
-  unset FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL FLY_BUILDER FLY_SKIP_SNAPSHOT FLY_SNAPSHOT_TIMEOUT FLY_VERIFY_ATTEMPTS FLY_VERIFY_TIMEOUT
+  unset FLY_VM_SIZE FLY_VM_MEMORY FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL FLY_BUILDER FLY_SKIP_SNAPSHOT FLY_SNAPSHOT_TIMEOUT FLY_VERIFY_ATTEMPTS FLY_VERIFY_TIMEOUT
   cat > "$tmpdir/bin/fly" <<'STUB'
 #!/bin/bash
 set -euo pipefail
@@ -469,11 +469,21 @@ case "$1 $2" in
     if [[ "${STUB_MISSING:-0}" == 1 && ! -e "$STUB_DIR/volume" ]]; then echo '[]'
     elif [[ "${STUB_MULTI:-0}" == 1 ]]; then echo '[{"id":"vol_test","name":"clawctl_data"},{"id":"vol_second","name":"clawctl_data"},{"id":"vol_other","name":"other"}]'
     else echo '[{"id":"vol_test","name":"clawctl_data"},{"id":"vol_other","name":"other"}]'; fi ;;
-  'machines list') echo '[{"id":"machine_test"}]' ;;
+  'machines list')
+    if [[ -n "${STUB_MACHINES:-}" ]]; then printf '%s\n' "$STUB_MACHINES"
+    elif [[ "${STUB_MISSING:-0}" == 1 ]]; then echo '[]'
+    else echo '[{"id":"machine_test","config":{"guest":{"cpu_kind":"performance","cpus":1,"memory_mb":2048}}}]'; fi ;;
   'logs -a')
     echo 'unrelated log content that must stay private'
     echo "first-run setup: open ${STUB_LOG_URL:-https://test-hub.fly.dev}/setup and enter setup code stub-first-run-code" ;;
   'deploy .')
+    for ((i=1; i<=$#; i++)); do
+      if [[ "${!i}" == --config ]]; then
+        i=$((i + 1))
+        cp "${!i}" "$STUB_DIR/deployed.toml"
+        break
+      fi
+    done
     if [[ -n "${STUB_TRANSIENT:-}" && ! -e "$STUB_DIR/once" ]]; then
       touch "$STUB_DIR/once"
       echo "$STUB_TRANSIENT"
@@ -549,6 +559,57 @@ STUB
   ! grep -q '^logs ' "$tmpdir/calls"
   ! grep -q 'stub-first-run-code' "$tmpdir/output"
   grep -q 'already closed' "$tmpdir/output"
+
+  assert_vm() {
+    python3 - "$tmpdir/deployed.toml" "$1" <<'PY_VM_TEST'
+import json, sys, tomllib
+with open(sys.argv[1], 'rb') as config:
+    assert tomllib.load(config)['vm'] == [json.loads(sys.argv[2])]
+PY_VM_TEST
+  }
+  assert_vm '{"cpu_kind":"performance","cpus":1,"memory":"2048mb"}'
+  grep -q 'VM sizing source: preserved' "$tmpdir/output"
+  reset_stub
+  FLY_VM_SIZE=shared-cpu-2x FLY_VM_MEMORY=1gb deploy
+  assert_vm '{"cpu_kind":"shared","cpus":2,"memory":"1024mb"}'
+  reset_stub
+  FLY_VM_SIZE=shared-cpu-2x FLY_VM_MEMORY=1gb deploy --vm-size performance-2x --vm-memory 4096mb
+  assert_vm '{"cpu_kind":"performance","cpus":2,"memory":"4096mb"}'
+  reset_stub
+  deploy --vm-memory 3gb
+  assert_vm '{"cpu_kind":"performance","cpus":1,"memory":"3072mb"}'
+  reset_stub
+  STUB_MACHINES='[]' deploy
+  assert_vm '{"size":"shared-cpu-2x","memory":"1024mb"}'
+  grep -q 'VM sizing source: fly.toml default' "$tmpdir/output"
+  for invalid in shared-cpu-0x shared-cpu-65x performance-cpu-1x bad; do
+    reset_stub
+    if deploy --vm-size "$invalid"; then exit 1; fi
+    [[ ! -s "$tmpdir/calls" ]]
+  done
+  for invalid in 255mb 129gb 2048 bad 1.5gb; do
+    reset_stub
+    if deploy --vm-memory "$invalid"; then exit 1; fi
+    [[ ! -s "$tmpdir/calls" ]]
+  done
+  export STUB_MACHINES='[{"config":{"guest":{"cpu_kind":"shared","cpus":2,"memory_mb":1024}}},{"config":{"guest":{"cpu_kind":"performance","cpus":1,"memory_mb":2048}}}]'
+  reset_stub
+  if deploy; then exit 1; fi
+  grep -q 'machines disagree' "$tmpdir/output"
+  if grep -q '^deploy ' "$tmpdir/calls"; then exit 1; fi
+  reset_stub
+  deploy --vm-size performance-1x --vm-memory 2048mb
+  assert_vm '{"cpu_kind":"performance","cpus":1,"memory":"2048mb"}'
+  for guest in '{"cpu_kind":"bad","cpus":1,"memory_mb":2048}' '{"cpu_kind":"shared","cpus":true,"memory_mb":2048}' '{"cpu_kind":"shared","cpus":1,"memory_mb":255}'; do
+    reset_stub
+    if STUB_MACHINES="[{\"config\":{\"guest\":$guest}}]" deploy; then exit 1; fi
+    grep -q 'invalid machine guest' "$tmpdir/output"
+  done
+  unset STUB_MACHINES
+  reset_stub
+  deploy --dry-run --vm-size performance-1x
+  grep -q 'VM sizing source: override' "$tmpdir/output"
+  [[ ! -s "$tmpdir/calls" ]]
 
   # Every endpoint survives a dropped connection; all requested curl failures retry.
   for endpoint in /healthz /version /setup; do
