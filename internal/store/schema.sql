@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS machine_registry (
   machine_id      TEXT PRIMARY KEY,
   display_name    TEXT NOT NULL,          -- 人講的名字：samplehub1 / sampleagent1
   channel         TEXT,                   -- NULL＝未指派；只准 canary | stable
+  execution_policy TEXT NOT NULL DEFAULT 'managed' CHECK(execution_policy IN ('managed','monitor_only')),
+  execution_policy_revision INTEGER NOT NULL DEFAULT 1,
+  execution_policy_supported INTEGER NOT NULL DEFAULT 0,
+  execution_policy_observed_revision INTEGER NOT NULL DEFAULT 0,
   channel_revision INTEGER NOT NULL DEFAULT 0, -- operator optimistic concurrency token
   lifecycle_revision INTEGER NOT NULL DEFAULT 0, -- active/retired optimistic concurrency token
   assigned_user_id TEXT,                  -- tailnet 使用者的穩定 ID；NULL＝未指派。login 可以改成跟別人一樣，配對只認這個 ID
@@ -1573,6 +1577,15 @@ CREATE TABLE IF NOT EXISTS hub_login_failures (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hub_login_failures_age ON hub_login_failures(last_failed_at);
+
+-- Second-factor failures per account across every client key. Only password
+-- holders reach the second factor, so this lock is not an anonymous lockout.
+CREATE TABLE IF NOT EXISTS hub_mfa_failures (
+ account_id TEXT PRIMARY KEY REFERENCES hub_accounts(account_id),
+ failed_attempts INTEGER NOT NULL,
+ locked_until TEXT,
+ last_failed_at TEXT NOT NULL
+);
 
 -- Durable scheduler configuration, slot receipts, and job attribution.
 CREATE TABLE IF NOT EXISTS schedules (

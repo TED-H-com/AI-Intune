@@ -11,6 +11,7 @@ import (
 )
 
 type diskMachinePage struct {
+	MonitorOnly     bool
 	OwnershipReview *store.DiskOwnershipResult
 	Canary          map[string]store.DiskCanary
 	Status          store.DiskOpsStatus
@@ -73,10 +74,14 @@ func (s *Server) diskMachine(w http.ResponseWriter, r *http.Request) {
 		}
 		canary[scope] = v
 	}
-	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{Status: status, Canary: canary, Policies: policies, Schedules: schedules, History: history.Items, Reports: reports}})
+	s.render(w, r, "disk_machine.html", page{Title: "Disk", DiskMachine: &diskMachinePage{MonitorOnly: s.store.MachineExecutionAllowed(status.MachineID) != nil, Status: status, Canary: canary, Policies: policies, Schedules: schedules, History: history.Items, Reports: reports}})
 }
 func (s *Server) diskMachineAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if err := s.store.MachineExecutionAllowed(id); err != nil {
+		s.diskOpsError(w, r, err, "/machines/"+id)
+		return
+	}
 	back := "/machines/" + id + "/disk"
 	if !diskOpsForm(w, r, "action", "policy_id", "scope", "reason", "minute", "hour", "schedule_id", "revision", "enabled", "request", "digest", "key", "operation", "password", "code") {
 		s.diskFormError(w, r, back)

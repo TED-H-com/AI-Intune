@@ -105,6 +105,9 @@ func runTerminalLink(ctx context.Context, cfg config) {
 }
 
 func runTerminalLinkWithDeps(ctx context.Context, cfg config, deps terminalLinkDeps) {
+	if !cfg.executionAllowed() {
+		return
+	}
 	// The catalog has no bat-server build for other operating systems. This
 	// check must precede even path discovery so unsupported agents do no I/O.
 	if deps.goos != agentrelay.TerminalOS {
@@ -205,6 +208,9 @@ func reapTerminalRecord(ctx context.Context, invoker agentpty.Invoker, record *t
 }
 
 func runTerminalLinkAttempt(ctx context.Context, cfg config, deps terminalLinkDeps) terminalAttemptResult {
+	if !cfg.executionAllowed() {
+		return terminalAttemptResult{}
+	}
 	home, err := deps.userHomeDir()
 	if err != nil {
 		return terminalAttemptResult{}

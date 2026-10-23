@@ -223,7 +223,7 @@ func (s *Server) joinDecide(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Admin access required", 403)
 		return
 	}
-	if !operatorWebForm(w, r, map[string]bool{"join_id": true, "display_name": true}, "join_id", "display_name", "decision") {
+	if !operatorWebForm(w, r, map[string]bool{"join_id": true, "display_name": true}, "join_id", "display_name", "decision", "monitor_only") {
 		http.Error(w, "Invalid form", 400)
 		return
 	}
@@ -246,7 +246,7 @@ func (s *Server) joinDecide(w http.ResponseWriter, r *http.Request) {
 				bundle = operator.JoinBundle{URL: s.hubBase + "/v1/join/bundle/" + key, SHA256: b.SHA256}
 			}
 		}
-		if err := s.operator.DecideJoin(r.Context(), id, names[i], r.PostForm.Get("decision") == "approve", s.hubBase, bundle, operator.ActorFromRequest(r, operator.SourceKindWeb)); err != nil {
+		if err := s.operator.DecideJoin(r.Context(), id, names[i], r.PostForm.Get("decision") == "approve", s.hubBase, bundle, operator.ActorFromRequest(r, operator.SourceKindWeb), r.PostForm.Get("monitor_only") == "true"); err != nil {
 			s.renderActionStatus(w, r, 409, "Waiting to join", "Could not approve this machine", "The request changed, its name is invalid, or enrollment is unavailable. Refresh and try again.", "/machines/join")
 			return
 		}

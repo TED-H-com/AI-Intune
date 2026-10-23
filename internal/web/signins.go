@@ -19,6 +19,7 @@ type signinSessionView struct {
 	DisplayName string
 	Update      model.SigninUpdate
 	Active      bool
+	MonitorOnly bool
 }
 type signinsPage struct {
 	Channels            []string
@@ -26,6 +27,7 @@ type signinsPage struct {
 	Groups, Healthy     []store.SigninGroup
 	Sessions            []signinSessionView
 	Manage, Active      bool
+	MonitorOnly         bool
 	Needs               int
 }
 
@@ -88,14 +90,15 @@ func (s *Server) signinsPage(w http.ResponseWriter, r *http.Request) {
 		if v.CreatedAt.Before(time.Now().Add(-15 * time.Minute)) {
 			continue
 		}
-		active := v.State == "pending" || v.State == "started" || v.State == "waiting_for_code" || v.State == "submitted"
+		monitorOnly := s.store.MachineExecutionAllowed(v.MachineID) != nil
+		active := !monitorOnly && (v.State == "pending" || v.State == "started" || v.State == "waiting_for_code" || v.State == "submitted")
 		view.Active = view.Active || active
 		// Login URLs and device codes are only shown to a human administrator.
 		u := model.SigninUpdate{}
-		if view.Manage {
+		if view.Manage && !monitorOnly {
 			u = s.store.SigninDisplay(v.ID)
 		}
-		view.Sessions = append(view.Sessions, signinSessionView{v, s.store.DisplayName(v.MachineID), u, active})
+		view.Sessions = append(view.Sessions, signinSessionView{v, s.store.DisplayName(v.MachineID), u, active, monitorOnly})
 	}
 	s.render(w, r, "signins.html", page{Title: "Sign-ins", Nav: "signins", Signins: view})
 }

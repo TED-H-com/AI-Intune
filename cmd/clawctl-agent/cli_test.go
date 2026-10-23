@@ -473,3 +473,24 @@ func TestReadinessMonitorOnlyRequiresDisabledJobsAndFreshEvidence(t *testing.T) 
 		t.Fatal("monitor-only verify omitted platform evidence")
 	}
 }
+
+func TestReadinessHonorsHubExecutionPolicy(t *testing.T) {
+	now := time.Now().UTC()
+	enabled, disabled := true, false
+	receipt := model.AgentReadinessResponse{
+		MachineID: "machine-1", LastCheckinReceivedAt: &now, AgentStartedAt: &now,
+		AgentVersion: "v1", JobsEnabled: &disabled, DeviceSyncV1: &enabled,
+		ExecutionPolicy: &model.ExecutionPolicy{Mode: model.ExecutionMonitorOnly, Revision: 1},
+	}
+	if got := readinessPending(receipt, "machine-1", "v1", now, false); got != "" {
+		t.Fatalf("Hub monitor-only policy pending: %s", got)
+	}
+	receipt.JobsEnabled = &enabled
+	if got := readinessPending(receipt, "machine-1", "v1", now, false); got == "" {
+		t.Fatal("accepted enabled jobs under monitor-only policy")
+	}
+	receipt.ExecutionPolicy.Mode = model.ExecutionManaged
+	if got := readinessPending(receipt, "machine-1", "v1", now, false); got != "" {
+		t.Fatalf("managed policy pending: %s", got)
+	}
+}

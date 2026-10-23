@@ -25,9 +25,12 @@ observation timestamps therefore mean last stored evidence, not last report.
 Change comparisons retain changed snapshots; repeated identical reports are not
 evidence of additional changes.
 
-HTTP request duration logs contain method, registered route pattern, status and
-milliseconds. Unmatched requests log an empty pattern. IDs and query strings are
-not included in these duration logs. Streaming and websocket upgrades are retained.
+HTTP request duration logs use structured fields `method`, `route`, `status`, and
+`duration_ms`. Unmatched requests log `unmatched`. IDs and query strings are not
+included. Requests over `CLAWCTL_SLOW_REQUEST_MS` (a positive integer in
+milliseconds, default `1000`) log at WARN; other requests log at INFO. Invalid
+thresholds emit a warning and use the default. Streaming and websocket upgrades
+are retained.
 
 `-pprof` or `CLAWCTL_HUB_PPROF=1` enables `/debug/pprof/`. It defaults off and
 uses the existing operator boundary with human admin permission, pinned authority

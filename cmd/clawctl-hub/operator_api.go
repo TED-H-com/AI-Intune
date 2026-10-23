@@ -32,11 +32,13 @@ type machineChannelOperatorRequest struct {
 }
 
 type enrollTokenPreviewOperatorRequest struct {
+	MonitorOnly bool   `json:"monitor_only,omitempty"`
 	DisplayName string `json:"display_name"`
 	TTLSeconds  int64  `json:"ttl_seconds"`
 }
 
 type enrollTokenCreateOperatorRequest struct {
+	MonitorOnly   bool   `json:"monitor_only,omitempty"`
 	DisplayName   string `json:"display_name"`
 	TTLSeconds    int64  `json:"ttl_seconds"`
 	PreviewDigest string `json:"preview_digest"`
@@ -55,6 +57,7 @@ type enrollTokenRevocationOperatorRequest struct {
 // intentionally empty fresh value from a response produced by older code.
 // EnrollmentToken is the only optional field and must be absent on replay.
 type enrollTokenOperatorResponse struct {
+	MonitorOnly      bool      `json:"monitor_only,omitempty"`
 	MachineID        string    `json:"machine_id"`
 	DisplayName      string    `json:"display_name"`
 	CreatedAt        time.Time `json:"created_at"`
@@ -872,8 +875,8 @@ func (h *hub) handlePreviewOperatorEnrollToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 	result, err := operator.New(h.store).PreviewEnrollToken(operator.EnrollTokenPreviewRequest{
-		DisplayName: body.DisplayName,
-		TTLSeconds:  body.TTLSeconds,
+		MonitorOnly: body.MonitorOnly, DisplayName: body.DisplayName,
+		TTLSeconds: body.TTLSeconds,
 	})
 	if err != nil {
 		status, code, detail := operator.HTTPError(err)
@@ -904,7 +907,7 @@ func (h *hub) handleCreateOperatorEnrollToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 	result, err := operator.New(h.store).CreateEnrollToken(operator.EnrollTokenCreateRequest{
-		DisplayName: body.DisplayName, TTLSeconds: body.TTLSeconds,
+		MonitorOnly: body.MonitorOnly, DisplayName: body.DisplayName, TTLSeconds: body.TTLSeconds,
 		PreviewDigest: body.PreviewDigest, Reason: body.Reason,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"), Actor: actor,
 	})
@@ -925,7 +928,7 @@ func (h *hub) handleCreateOperatorEnrollToken(w http.ResponseWriter, r *http.Req
 		MachineID: result.MachineID, DisplayName: result.DisplayName,
 		CreatedAt: result.CreatedAt, ExpiresAt: result.ExpiresAt,
 		TTLSeconds: result.TTLSeconds, PreviewDigest: result.PreviewDigest,
-		EnrollmentToken: result.EnrollmentToken, SecretAvailable: result.SecretAvailable,
+		MonitorOnly: result.MonitorOnly, EnrollmentToken: result.EnrollmentToken, SecretAvailable: result.SecretAvailable,
 		Replayed: result.Replayed, RecoveryRequired: result.RecoveryRequired,
 		RecoveryAction: result.RecoveryAction,
 	}

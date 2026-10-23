@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 359 個 HTTP operations（36 non-operator＋323 operator；159 條 operator JSON）、
+> 逐一對照 361 個 HTTP operations（36 non-operator＋325 operator；159 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,13 +12,13 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 359-operation tally above (36 non-operator + 323 operator). The inventory/contract excludes these six public account operations and totals 353. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 361-operation tally above (36 non-operator + 325 operator). The inventory/contract excludes these six public account operations and totals 355. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
 | `GET`, `POST` | `/setup` | First account only; POST requires setup code, username and password, creates a session, and redirects to automatic TOTP enrollment. Returns 404 after an admin exists. |
 | `GET`, `POST` | `/login` | Form and password authentication; creates a local session, or a five-minute source-bound pending login when MFA is enabled. Login/setup POSTs share resolved client-key limit 10/minute, burst 5. |
-| `POST` | `/login/mfa` | Requires pending login cookie plus authenticator or unused recovery code; same resolved client-key limiter and per-(account, client key) lockout as password login. |
+| `POST` | `/login/mfa` | Requires pending login cookie plus authenticator or unused recovery code; same resolved client-key limiter and per-(account, client key) lockout as password login. 10 consecutive second-factor failures across all client keys lock authenticator codes for the account for one hour; recovery codes still complete login. |
 | `POST` | `/logout` | Revokes the presented session, clears cookie, redirects to login. |
 
 | Method | Operator download route | Authority / behavior |
@@ -1074,8 +1074,8 @@ for routes, human UI, recovery, readiness and metrics.
 ## Timer handoff and disk alerts (P2-05)
 
 Adds ten operator operations (six JSON, four HTML). The combined manifest totals
-352 including public accounts, 346 excluding them; 317 operator (156 JSON,
-161 HTML/plain), exact grants view=126 / operate=34 / admin=157.
+354 including public accounts, 348 excluding them; 319 operator (156 JSON,
+163 HTML/plain), exact grants view=126 / operate=34 / admin=159.
 
 | Method | Route | Admission |
 | --- | --- | --- |
@@ -1440,6 +1440,56 @@ Docker, virbr, bridge and container/tunnel interfaces. This is agent-measured
 identity evidence with the existing agent/Hub clocks, not a connectivity test.
 Older agents omit `lan_ipv4` and the Hub projects an empty list (UI: 未回報).
 The list, changes, service-token eligibility and BAT coordinate rules are unchanged.
+
+## Monitoring-only enrollment profile
+
+Enrollment-token preview/create accept optional `monitor_only: true`. The value
+is included in the preview digest, semantic request identity, audit and replay
+receipt. Omission retains managed enrollment and existing receipt identities.
+The enrollment page, waiting-machine approval and `enroll-token --monitor-only`
+select **只監控 / Monitor only**. Enrollment rejects an older agent or an unsafe
+root applier without consuming the token. The join installer skips applier
+installation for this profile. Installing the agent and its reporting service
+is the initial enrollment step; this profile does not provision managed workloads.
+
+The machine page shows the profile and acknowledgment state. Human administrators
+use `POST /machines/{id}/execution-policy/preview` followed by
+`POST /machines/{id}/execution-policy/apply`. Both are Admin HTML forms under the
+existing origin, session and MFA boundary; service tokens cannot use them. Forms
+accept `mode` (`managed` or `monitor_only`), `reason` and `revision`. Apply also
+requires the preview's `preview_digest`, `idempotency_key` and `confirm=yes`.
+The digest binds machine, old mode/revision, new mode and reason. Apply checks the
+revision again and commits policy, idempotency receipt and audit together.
+Every accepted change and replay is audited. Current work must finish or be
+cancelled first. Existing enrolled machines must advertise current profile and
+root-applier support. Switching pauses matching schedules and closes terminal
+sessions; switching back never enables those schedules automatically.
+
+Hub job creation, claiming, dispatch, script targeting (including read-only
+reports), schedule targeting, terminal links/sessions, CLI sign-in starts/codes/
+relays and root disk approvals/grants all refuse monitor-only machines. Machine
+and sign-in pages hide their execution controls and explain the profile.
+Heartbeats, observations, readiness and identity continue. Readiness remediation,
+host profiles, disk jobs and sign-in commands are suppressed in check-in replies.
+
+Protocol additions are optional and keep schema version 1: enroll/check-in
+requests advertise `execution_policy_v1` and `monitor_only_supported`; upgraded
+agents receive `execution_policy: {mode, revision}` and echo the accepted policy
+on heartbeats. New agent execution starts blocked until a valid, non-regressing
+policy is persisted. Missing, invalid, regressing or unpersistable policy refuses
+execution; monitor-only cancels execution contexts and avoids job/sign-in/
+terminal startup and root handoffs. Readiness remains observational. The local
+root applier independently checks the fixed agent configuration before every
+host/disk apply and before installation; unknown/malformed policy or unavailable
+configuration refuses changes. An older applier must be updated or removed
+before monitor-only enrollment or conversion; custom agent config paths with an
+installed applier are ineligible because the root policy file is fixed.
+
+Migration adds managed mode, revision 1 and no acknowledged support to existing
+machines, preserving their current Hub behavior. Older agents receive no new
+check-in policy field unless they opt in. Profile data contains only the two
+allowlisted modes, revision, support and acknowledgment state; raw configuration,
+credentials and host command output are never projected into profile HTML.
 
 ## Immediate offline alert settings
 

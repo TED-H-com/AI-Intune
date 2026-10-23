@@ -63,8 +63,18 @@ en" TELEGRAM_CHAT_ID="chat" /bin/sh ops/fly/notify-env.sh 2>/dev/null; then
 
 test_r2_env() {
   # 1. defaults
-  out=$(env -i /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION"')
-  if [[ "$out" != "60s 24h 168h" ]]; then echo "fail: bad defaults: $out"; return 1; fi
+  out=$(env -i /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION $LITESTREAM_L0_RETENTION_CHECK_INTERVAL"')
+  if [[ "$out" != "60s 24h 168h 5m" ]]; then echo "fail: bad defaults: $out"; return 1; fi
+
+  # Cleanup cadence is independent of upload cadence and snapshot retention.
+  out=$(env -i LITESTREAM_L0_RETENTION_CHECK_INTERVAL=15s /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION $LITESTREAM_L0_RETENTION_CHECK_INTERVAL"')
+  if [[ "$out" != "60s 24h 168h 15s" ]]; then echo "fail: bad cleanup override: $out"; return 1; fi
+  for invalid in 0s 5d 1.5h -1m '5 m'; do
+    if env -i LITESTREAM_L0_RETENTION_CHECK_INTERVAL="$invalid" /bin/sh -c '. ops/fly/r2-env.sh' 2>/dev/null; then
+      echo "fail: accepted cleanup interval $invalid"
+      return 1
+    fi
+  done
 
   # 2. rejects bad durations
   if env -i LITESTREAM_SYNC_INTERVAL="5d" /bin/sh -c '. ops/fly/r2-env.sh' 2>/dev/null; then echo "fail: accepted 5d"; return 1; fi
@@ -389,6 +399,7 @@ SH
   fail_boot 'replication is incomplete' R2_SECRET_ACCESS_KEY=stub-private-secret
   fail_boot 'replication is incomplete' LITESTREAM_REQUIRED=1
   fail_boot 'must be a duration' LITESTREAM_SYNC_INTERVAL=5d
+  fail_boot 'must be a duration' LITESTREAM_L0_RETENTION_CHECK_INTERVAL=5d
   boot R2_ACCOUNT_ID=12345678901234567890123456789012 R2_ACCESS_KEY_ID=stub-key R2_SECRET_ACCESS_KEY=stub-private-secret R2_BUCKET=stub-bucket TELEGRAM_BOT_TOKEN=stub-private-secret TELEGRAM_CHAT_ID=stub-chat
   grep -q '^litestream:restore$' "$tmpdir/calls"
   grep -q '^litestream:replicate$' "$tmpdir/calls"

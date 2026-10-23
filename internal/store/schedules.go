@@ -231,6 +231,11 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 		v.ScriptSHA256 = req.ScriptSHA256
 		v.ExecutionMode = entry.Mode
 		v.Args = normalized.Args
+		for _, target := range normalized.Targets {
+			if e := executionAllowedTx(tx, target); e != nil && !errors.Is(e, sql.ErrNoRows) {
+				return out, e
+			}
+		}
 		v.Targets = normalized.Targets
 		v.TZ = req.TZ
 		if v.TZ == "" {

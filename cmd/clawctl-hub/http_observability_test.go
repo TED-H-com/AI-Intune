@@ -1,7 +1,8 @@
 package main
 
 import (
-	"fmt"
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,10 +15,14 @@ import (
 func TestRequestDurationLoggingPattern(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /machines/{id}", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(201) })
-	var output string
-	handler := requestDurationLogging(mux, func(format string, args ...any) { output = fmt.Sprintf(format, args...) })
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	handler := newLoggingMiddleware(1000, nil)(mux)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/machines/private-machine-id?token=private-query", nil))
-	for _, want := range []string{"method=GET", `pattern="GET /machines/{id}"`, "status=201", "duration_ms="} {
+	output := buf.String()
+	for _, want := range []string{`"method":"GET"`, `"route":"GET /machines/{id}"`, `"status":201`, `"duration_ms":`} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q: %s", want, output)
 		}

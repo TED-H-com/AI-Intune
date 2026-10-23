@@ -653,7 +653,7 @@ verify_upgrade_protocol() {
     rc=$?
   fi
   [[ $rc -ne 0 ]] || rc=1
-  echo "✗ Binary does not support the complete fail-closed upgrade protocol of this script; Hub not stopped and DB untouched" >&2
+  echo "✗ Binary does not support the upgrade protocol required by this script; Hub not stopped and DB untouched. Use an upgrade script and binary from the same release." >&2
   return "$rc"
 }
 
@@ -689,7 +689,7 @@ remove_upgrade_maintenance_marker() {
 # depend on a legacy process honoring it.
 fail_closed_started_recovery() {
   local label="$1" marker_helper="${2:-}" marker_probe='' marker_ready=0
-  echo "✗ $label failed verification after startup; immediately transitioning to stopped and non-executable fail-closed state" >&2
+  echo "✗ $label failed verification after startup; immediately transitioning to stopped and non-executable state" >&2
 
   if [[ -e "$MAINTENANCE_MARKER" || -L "$MAINTENANCE_MARKER" ]]; then
     marker_ready=1
@@ -846,7 +846,7 @@ restore_binary_after_snapshot_failure() {
   make_dormant_binary_non_executable "$saved_binary" "original Hub binary after snapshot failure" || true
 
   # Snapshot failure can mean an orphan WAL/SHM/journal, corrupt source, I/O error or
-  # a killed backup process. The script cannot prove which one occurred, so it
+  # a killed backup process. Because the script does not know which one occurred, it
   # must not turn a correctly retained marker into permission to write.
   echo "✗ Rollback snapshot did not complete; maintenance marker retained, Hub will not restart automatically" >&2
   echo "  Next step: inspect DB/WAL/SHM/journal, partial snapshot, and binary, then choose recovery coordinate:" >&2

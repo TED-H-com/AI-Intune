@@ -43,5 +43,5 @@ func (s *Server) diskReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decisions, _ := s.operator.DiskReportDecisions(out.ID)
-	s.render(w, r, "disk_report.html", page{Title: "Deep disk analysis", DiskReport: &diskReportView{Admin: humanWebAdmin(r), Decisions: decisions, Report: out, Category: q.Get("category"), Confidence: q.Get("confidence")}})
+	s.render(w, r, "disk_report.html", page{Title: "Deep disk analysis", DiskReport: &diskReportView{Admin: humanWebAdmin(r) && s.store.MachineExecutionAllowed(out.MachineID) == nil, Decisions: decisions, Report: out, Category: q.Get("category"), Confidence: q.Get("confidence")}})
 }

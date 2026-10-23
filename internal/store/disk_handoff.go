@@ -166,6 +166,9 @@ func (s *Store) DiskOwnershipManage(req DiskOwnershipRequest, apply bool, key st
 		return out, err
 	}
 	defer tx.Rollback()
+	if err = executionAllowedTx(tx, req.MachineID); err != nil {
+		return out, err
+	}
 	if apply {
 		var digest, body string
 		err = tx.QueryRow(`SELECT digest,body FROM disk_handoff_receipts WHERE actor=? AND idempotency_key=?`, a.AuthSubject, key).Scan(&digest, &body)

@@ -157,7 +157,7 @@ func (s *Store) HostChecklist(id string, now time.Time) (HostChecklist, error) {
 		clis = []string{"claude", "codex", "grok", "agy"}
 	}
 	for _, name := range clis {
-		add("signin:"+name, name+" signed in", check(f.SignedIn[name]), "Sign in interactively as the agent service user, then wait for a first report. Local configuration does not prove provider acceptance.", "FLEET-AI-CLIS.md")
+		add("signin:"+name, name+" signed in", check(f.SignedIn[name]), "Sign in interactively as the agent service user, then wait for the agent to report the sign-in status.", "FLEET-AI-CLIS.md")
 	}
 	var n int
 	if err = s.rdb.QueryRow(`SELECT COUNT(*) FROM channel_bindings WHERE machine_id=?`, id).Scan(&n); err != nil {

@@ -628,6 +628,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if err := installExecutionPolicyGuards(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: execution guards: %w", err)
+	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS disk_mount_missing_expiry ON disk_alerts(COALESCE(NULLIF(last_seen_at,''),opened_at),id) WHERE cleared_at IS NULL AND condition_key LIKE 'mount:%'`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: mount expiry index: %w", err)
@@ -898,12 +902,16 @@ func addMissingColumns(db *sql.DB) error {
 			"last_error_text": "TEXT",
 		},
 		"machine_registry": {
-			"channel":                "TEXT",
-			"channel_revision":       "INTEGER NOT NULL DEFAULT 0",
-			"lifecycle_revision":     "INTEGER NOT NULL DEFAULT 0",
-			"assigned_user_id":       "TEXT",
-			"assigned_user_login":    "TEXT",
-			"assigned_user_revision": "INTEGER NOT NULL DEFAULT 0",
+			"execution_policy":                   "TEXT NOT NULL DEFAULT 'managed' CHECK(execution_policy IN ('managed','monitor_only'))",
+			"execution_policy_revision":          "INTEGER NOT NULL DEFAULT 1",
+			"execution_policy_supported":         "INTEGER NOT NULL DEFAULT 0",
+			"execution_policy_observed_revision": "INTEGER NOT NULL DEFAULT 0",
+			"channel":                            "TEXT",
+			"channel_revision":                   "INTEGER NOT NULL DEFAULT 0",
+			"lifecycle_revision":                 "INTEGER NOT NULL DEFAULT 0",
+			"assigned_user_id":                   "TEXT",
+			"assigned_user_login":                "TEXT",
+			"assigned_user_revision":             "INTEGER NOT NULL DEFAULT 0",
 		},
 		// desired_state revision is immutable deployment material identity.  This
 		// separate token fences stale lifecycle/open-batch operator requests.
@@ -1317,6 +1325,16 @@ func (s *Store) RedeemEnrollToken(tok string, req model.EnrollRequest, now time.
 	if exp := parseTime(expiresAt); exp.IsZero() || !now.Before(exp) {
 		// ⚠ 解不出來的 expires_at 也算過期。壞掉的時間戳不可以變成永久有效的 token。
 		return "", "", ErrTokenExpired
+	}
+
+	if boundTo.Valid {
+		var mode string
+		if err := tx.QueryRow(`SELECT execution_policy FROM machine_registry WHERE machine_id=?`, boundTo.String).Scan(&mode); err != nil {
+			return "", "", err
+		}
+		if mode != model.ExecutionManaged && (!req.ExecutionPolicyV1 || !req.MonitorOnlySupported || mode != model.ExecutionMonitorOnly) {
+			return "", "", ErrTokenInvalid
+		}
 	}
 
 	agentTok, err := newToken()
@@ -1812,6 +1830,22 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 			return fmt.Errorf("store: record disk-clean job capability: %w", err)
 		}
 	}
+	{
+		observed := int64(0)
+		if c.ExecutionPolicyV1 && c.ExecutionPolicy != nil && c.ExecutionPolicy.Validate() == nil {
+			p, e := readExecutionPolicy(tx, machineID)
+			if e != nil {
+				return e
+			}
+			if p.Mode == c.ExecutionPolicy.Mode && p.Revision == c.ExecutionPolicy.Revision {
+				observed = p.Revision
+			}
+		}
+		if _, e := tx.Exec(`UPDATE machine_registry SET execution_policy_supported=?,execution_policy_observed_revision=? WHERE machine_id=?`, c.ExecutionPolicyV1 && c.MonitorOnlySupported, observed, machineID); e != nil {
+			return e
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit checkin: %w", err)
 	}

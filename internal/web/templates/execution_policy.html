@@ -1,0 +1,17 @@
+{{define "execution-policy-panel"}}{{with .}}
+<section class="panel" aria-label="Machine profile"><h2>Machine profile / 管理模式</h2>
+{{if .MonitorOnly}}<span class="st blue">只監控 / Monitor only</span><p>This machine reports health, identity and observations. Jobs, scripts, terminal access, CLI sign-ins and changes to the machine are unavailable.</p>{{else}}<span class="st blue">Managed / 可管理</span><p>This machine can receive approved work.</p>{{end}}
+{{if .Pending}}<p>The agent has not yet acknowledged this profile. The Hub already enforces it.</p>{{end}}
+{{if .Manage}}<form class="disk-form" method="post" action="/machines/{{.MachineID}}/execution-policy/preview">
+<input type="hidden" name="revision" value="{{.Revision}}">
+<div class="form-grid disk-form-grid"><label><span class="field-label">Profile</span><select name="mode"><option value="managed" {{if not .MonitorOnly}}selected{{end}}>Managed / 可管理</option><option value="monitor_only" {{if .MonitorOnly}}selected{{end}}>只監控 / Monitor only</option></select></label>
+<label><span class="field-label">Reason</span><input name="reason" maxlength="500" required></label></div><div class="command-bar"><button class="secondary">Preview profile change</button></div></form>{{end}}</section>
+{{end}}{{end}}
+{{define "execution_policy.html"}}{{template "head" .}}{{with .ExecutionPolicy}}
+<h1>Review machine profile</h1><section class="panel"><p>Machine: <code>{{.MachineID}}</code></p>
+{{if .MonitorOnly}}<h2>只監控 / Monitor only</h2><p>The Hub will refuse all machine execution and close terminal sessions and pause matching schedules. The agent will stop execution when it receives this profile. It will keep reporting health and observations.</p>{{else}}<h2>Managed / 可管理</h2><p>The machine may receive approved jobs, scripts, CLI sign-ins, terminal sessions and host changes again. Paused schedules stay disabled until you review and enable them.</p>{{end}}
+<p>Reason: {{.Reason}}</p><p>Before choosing monitor only, finish or cancel current work. Existing agents must support this profile.</p>
+<form method="post" action="/machines/{{.MachineID}}/execution-policy/apply">
+<input type="hidden" name="mode" value="{{.Mode}}"><input type="hidden" name="reason" value="{{.Reason}}"><input type="hidden" name="revision" value="{{.Revision}}"><input type="hidden" name="preview_digest" value="{{.Digest}}"><input type="hidden" name="idempotency_key" value="{{.Key}}">
+<label><input type="checkbox" name="confirm" value="yes" required> I confirm this profile change.</label><div class="command-bar"><button>Confirm profile</button> <a href="/machines/{{.MachineID}}">Cancel</a></div></form></section>
+{{end}}{{template "foot" .}}{{end}}

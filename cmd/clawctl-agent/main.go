@@ -45,6 +45,8 @@ import (
 var version = "dev"
 
 type config struct {
+	ExecutionPolicy          *model.ExecutionPolicy `json:"execution_policy,omitempty"`
+	execution                *executionGuard
 	ProxyURL                 string `json:"proxy_url,omitempty"`
 	HubURL                   string `json:"hub_url"`
 	MachineID                string `json:"machine_id"`
@@ -73,6 +75,7 @@ type appliedSettings struct {
 // 分開存，checkin 恰好在兩次 Load 中間更新時，Agent 會把 A 規則的量測標成
 // B token，Hub 就無法知道這批證據實際用了哪一份政策。
 type workloadPolicyBundle struct {
+	execution    *executionGuard
 	readiness    model.ReadinessConfig
 	expectations []model.Expectation
 	token        string
@@ -269,7 +272,7 @@ func runEnroll(args []string) {
 		log.Printf("pre-enrollment observation failed: %v", err)
 	}
 
-	req := model.EnrollRequest{
+	req := model.EnrollRequest{ExecutionPolicyV1: true, MonitorOnlySupported: monitorOnlyRootSafe(),
 		SchemaVersion: model.SchemaVersion,
 		EnrollToken:   token,
 		Hostname:      obs.Identity.Hostname,
@@ -314,7 +317,10 @@ func enrollmentConfig(hubURL string, resp model.EnrollResponse) (config, error) 
 		resp.CheckinIntervalSeconds, resp.ObservationIntervalSeconds, resp.SettingsDigest); err != nil {
 		return zero, err
 	}
-	return config{
+	if resp.ExecutionPolicy != nil && resp.ExecutionPolicy.Validate() != nil {
+		return zero, errExecutionBlocked
+	}
+	return config{ExecutionPolicy: resp.ExecutionPolicy,
 		HubURL: hubURL, MachineID: resp.MachineID, AgentToken: resp.AgentToken,
 		EnrollmentSchemaVersion:    resp.SchemaVersion,
 		EnrollmentSettingsDigest:   resp.SettingsDigest,
@@ -416,6 +422,13 @@ func runVerify(args []string) {
 		var receipt model.AgentReadinessResponse
 		if err := doJSON(ctx, http.MethodGet, cfg.HubURL+"/v1/agent/readiness", cfg.AgentToken, nil, &receipt); err != nil {
 			last = err.Error()
+		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence); pending == "" {
+			jobsLabel := "enabled"
+			if receipt.ExecutionPolicy != nil && receipt.ExecutionPolicy.Mode == model.ExecutionMonitorOnly {
+				jobsLabel = "monitor-only"
+			}
+			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=%s agent=%s",
+				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), jobsLabel, receipt.AgentVersion)
 		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence, *monitorOnly); pending == "" {
 			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=%t agent=%s",
 				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), *receipt.JobsEnabled, receipt.AgentVersion)
@@ -454,6 +467,9 @@ func readinessPending(receipt model.AgentReadinessResponse, machineID, agentVers
 		return "agent version received by Hub does not match"
 	}
 	wantJobs := len(monitorOnly) == 0 || !monitorOnly[0]
+	if receipt.ExecutionPolicy != nil && receipt.ExecutionPolicy.Validate() == nil && receipt.ExecutionPolicy.Mode == model.ExecutionMonitorOnly {
+		wantJobs = false
+	}
 	if receipt.JobsEnabled == nil || *receipt.JobsEnabled != wantJobs {
 		return "Hub has not confirmed requested jobs setting"
 	}
@@ -539,9 +555,8 @@ func runAgent() {
 	}
 
 	observationNudge := make(chan struct{}, 1)
-	startJobs(ctx, cfg, observationNudge)
-	startSignins(ctx, cfg)
-	go runTerminalLink(ctx, cfg)
+	cfg.execution = newExecutionGuard(cfg.ExecutionPolicy)
+	go startExecutionLoops(ctx, cfg, observationNudge)
 
 	// --- 心跳 goroutine。
 	go func() {
@@ -563,9 +578,13 @@ func runAgent() {
 			hb.CallActivity = []model.CallActivity{heartbeatActivity(processSignature, heartbeatCalls, observationProgress.Load())}
 			hb.SchemaVersion = model.SchemaVersion
 			hb.AgentVersion = version
-			jobsEnabled := cfg.JobsEnabled
+			jobsEnabled := cfg.JobsEnabled && cfg.executionAllowed()
 			hb.JobsEnabled = &jobsEnabled
 			advertiseJobCapabilities(&hb)
+			hb.ExecutionPolicyV1 = true
+			hb.MonitorOnlySupported = monitorOnlyRootSafe()
+			currentExecutionPolicy := cfg.execution.Snapshot()
+			hb.ExecutionPolicy = &currentExecutionPolicy
 			echoDiskTimerTransitions(&hb, timerTransitions)
 			now := applied.Load()
 			hb.SettingsDigest = now.digest
@@ -581,18 +600,27 @@ func runAgent() {
 			}
 			rtt := time.Since(callStart)
 			if postErr == nil {
-				if err := adoptHostProfile(resp); err != nil {
-					log.Print("Host setup profile could not be saved")
+				policyErr := adoptExecutionPolicy(cfg, resp.ExecutionPolicy)
+				if policyErr != nil {
+					log.Print("Execution remains blocked: policy could not be accepted")
 				}
-				for _, c := range resp.SigninCommands {
-					handleSigninCommand(ctx, c)
+				if cfg.executionAllowed() {
+					if err := adoptHostProfile(resp); err != nil {
+						log.Print("Host setup profile could not be saved")
+					}
+					for _, c := range resp.SigninCommands {
+						handleSigninCommand(ctx, c)
+					}
 				}
 				timerTransitions = resp.DiskTimerTransitions
+				if !cfg.executionAllowed() {
+					timerTransitions = nil
+				}
 				now = adoptSettings(now, resp, &applied, cfg, seq)
 				// ⚠ 期望由 Hub 下發，agent 不自己決定要量什麼。規則與 token
 				// 是同一份證據的身分，必須用同一次 atomic Store 發布。
 				bundle := &workloadPolicyBundle{
-					readiness:    resp.ReadinessConfig,
+					execution: cfg.execution, readiness: resp.ReadinessConfig,
 					expectations: append([]model.Expectation(nil), resp.Expectations...),
 					token:        resp.WorkloadPolicyToken,
 				}
@@ -706,8 +734,18 @@ func applyWorkloadPolicy(obs *model.ObservationBatch, policy *workloadPolicyBund
 		obs.DiskJobResults = readPendingDiskJobResults("/var/lib/clawctl-fleet-apply/disk-jobs")
 		obs.HostProfileApply = readHostApplyResult("/var/lib/clawctl-fleet-apply/last.json")
 	}
-	obs.Readiness = probe.CollectReadiness(ctx, policy.readiness, obs.Credentials)
-	probe.CollectReadinessUnits(ctx, policy.readiness, obs.Readiness)
+	readiness := policy.readiness
+	if policy.execution != nil {
+		scope, release, err := policy.execution.Scope(ctx)
+		if err != nil {
+			readiness.AutoRemediate = false
+		} else {
+			ctx = scope
+			defer release()
+		}
+	}
+	obs.Readiness = probe.CollectReadiness(ctx, readiness, obs.Credentials)
+	probe.CollectReadinessUnits(ctx, readiness, obs.Readiness)
 	obs.Artifacts = probe.CheckArtifacts(policy.expectations)
 	// ⚠ 用 obs.MeasuredAt（agent 自己的時鐘）當事件窗口的原點。
 	// 這裡跟 artifact 不一樣：artifact 只回報 mtime、由 Hub 用 Hub 的
@@ -927,10 +965,24 @@ func loadConfig() (config, error) {
 		c.CheckinIntervalSeconds, c.ObservationIntervalSeconds, c.EnrollmentSettingsDigest); err != nil {
 		return c, fmt.Errorf("invalid enrollment receipt in config: %w", err)
 	}
+	if c.ExecutionPolicy != nil && c.ExecutionPolicy.Validate() != nil {
+		return c, errExecutionBlocked
+	}
 	return c, nil
 }
 
 func saveConfig(c config) error {
+	if c.execution != nil {
+		g := c.execution
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		p := g.policy
+		c.ExecutionPolicy = &p
+		c.execution = nil
+	}
+	if c.ExecutionPolicy != nil && c.ExecutionPolicy.Validate() != nil {
+		return errExecutionBlocked
+	}
 	if c.HubURL == "" || c.HubURL != strings.TrimSpace(c.HubURL) {
 		return errors.New("incomplete config: missing or invalid hub_url")
 	}

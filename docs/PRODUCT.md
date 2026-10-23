@@ -272,3 +272,10 @@ Intune 裡每個 app、每個 policy 都必須填一條**偵測規則（detectio
 
 要放寬的人，自己承擔。
 </content>
+
+Enrollment offers **只監控 / Monitor only** for appliances that should only report
+health and observations. Their machine page explains why execution controls are
+absent. Jobs (including read-only scripts), terminals, CLI sign-ins and host/disk
+changes are refused by both Hub and agent. Enrollment does not install the host
+applier. Changing a profile requires a human administrator's preview,
+confirmation and audit reason; switching back leaves schedules paused for review.

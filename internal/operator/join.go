@@ -48,6 +48,7 @@ type JoinBundle struct {
 	SHA256 string `json:"sha256"`
 }
 type JoinPayload struct {
+	MonitorOnly bool         `json:"monitor_only,omitempty"`
 	State       string       `json:"state"`
 	DisplayName string       `json:"display_name"`
 	EnrollToken string       `json:"enroll_token"`
@@ -178,7 +179,7 @@ func (s *Service) ListJoins() ([]store.JoinRequest, error) {
 	}
 	return rows, nil
 }
-func (s *Service) DecideJoin(ctx context.Context, code, name string, approve bool, hub string, bundle JoinBundle, actor Actor) error {
+func (s *Service) DecideJoin(ctx context.Context, code, name string, approve bool, hub string, bundle JoinBundle, actor Actor, monitorOnly ...bool) error {
 	j := s.joins()
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -219,7 +220,8 @@ func (s *Service) DecideJoin(ctx context.Context, code, name string, approve boo
 	if bundle.SHA256 == "" || (bundle.URL != expectedBundle && !legacyLinuxBundle) {
 		return errors.New("agent download unavailable")
 	}
-	preview, err := s.PreviewEnrollToken(EnrollTokenPreviewRequest{DisplayName: name, TTLSeconds: 600})
+	monitor := len(monitorOnly) == 1 && monitorOnly[0]
+	preview, err := s.PreviewEnrollToken(EnrollTokenPreviewRequest{MonitorOnly: monitor, DisplayName: name, TTLSeconds: 600})
 	if err != nil {
 		return err
 	}
@@ -235,7 +237,7 @@ func (s *Service) DecideJoin(ctx context.Context, code, name string, approve boo
 	if err != nil {
 		return err
 	}
-	ticket, err := s.CreateEnrollToken(EnrollTokenCreateRequest{DisplayName: name, TTLSeconds: 600, PreviewDigest: preview.PreviewDigest, Reason: "Approve waiting machine " + code, IdempotencyKey: key, Actor: actor})
+	ticket, err := s.CreateEnrollToken(EnrollTokenCreateRequest{MonitorOnly: monitor, DisplayName: name, TTLSeconds: 600, PreviewDigest: preview.PreviewDigest, Reason: "Approve waiting machine " + code, IdempotencyKey: key, Actor: actor})
 	if err != nil {
 		return err
 	}
@@ -245,7 +247,7 @@ func (s *Service) DecideJoin(ctx context.Context, code, name string, approve boo
 		_, _ = s.store.RevokeEnrollToken(ticket.MachineID)
 		return err
 	}
-	j.payloads[code] = joinDelivery{JoinPayload{"approved", ticket.DisplayName, ticket.EnrollmentToken, hub, ts, bundle}, now.Add(10 * time.Minute)}
+	j.payloads[code] = joinDelivery{JoinPayload{monitor, "approved", ticket.DisplayName, ticket.EnrollmentToken, hub, ts, bundle}, now.Add(10 * time.Minute)}
 	return nil
 }
 func (s *Service) PollJoin(secret string) (JoinPayload, int, error) {
