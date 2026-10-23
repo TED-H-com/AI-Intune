@@ -406,3 +406,20 @@ func isNil(value any) bool {
 		return false
 	}
 }
+
+// SendMachine delivers a bounded sign-in command on the existing live link.
+func (r *Registry) SendMachine(machine string, frame agentrelay.Downstream) error {
+	if r == nil {
+		return ErrNoLink
+	}
+	if frame.Type != agentrelay.DownstreamSignin {
+		return ErrInvalidSessionID
+	}
+	r.mu.RLock()
+	link := r.links[machine]
+	r.mu.RUnlock()
+	if link == nil {
+		return ErrNoLink
+	}
+	return link.Send(frame)
+}

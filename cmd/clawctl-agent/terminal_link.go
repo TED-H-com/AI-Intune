@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -245,11 +246,17 @@ func runTerminalLinkAttempt(ctx context.Context, cfg config, deps terminalLinkDe
 	}
 	reapTerminalRecord(ctx, profile, record, invocation, invocationOK)
 
+	terminalClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	if err := configureHTTPClient(terminalClient, cfg.ProxyURL); err != nil {
+		closeBATWithoutMapper(profile, batSession)
+		result.logMessage = "Invalid proxy_url in agent config"
+		return result
+	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, agentTerminalDialTimeout)
 	conn, response, err := deps.dialHub(dialCtx, strings.TrimRight(cfg.HubURL, "/")+agentTerminalPath, &websocket.DialOptions{
-		HTTPClient: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
+		HTTPClient:      terminalClient,
 		HTTPHeader:      http.Header{"Authorization": []string{"Bearer " + cfg.AgentToken}},
 		Subprotocols:    []string{agentTerminalSubprotocol},
 		CompressionMode: websocket.CompressionDisabled,
@@ -589,6 +596,13 @@ func runActiveTerminalLink(parent context.Context, conn *websocket.Conn, batSess
 		frame, err := agentrelay.DecodeDownstream(payload)
 		if err != nil {
 			break
+		}
+		if frame.Type == agentrelay.DownstreamSignin {
+			var c model.SigninCommand
+			if json.Unmarshal(frame.Data, &c) == nil && c.ID == frame.Session {
+				handleSigninCommand(parent, c)
+			}
+			continue
 		}
 		if dispatcher.dispatch(frame, len(frame.Data)) == terminalDispatchRefused {
 			break

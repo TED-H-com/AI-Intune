@@ -260,7 +260,7 @@ func registerAccountRoutes(mux *http.ServeMux, st *store.Store, ui *web.Server, 
 				return
 			}
 		}
-		token, err := st.CreateSession(account, ip, r.UserAgent())
+		token, err := st.CreateSession(account, ip, r.UserAgent(), r.URL.Path == "/login/mfa")
 		if err != nil {
 			if r.URL.Path == "/login/mfa" {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")

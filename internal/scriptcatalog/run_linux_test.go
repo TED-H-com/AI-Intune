@@ -180,3 +180,29 @@ func TestRunBATUsesPythonAndAgentHome(t *testing.T) {
 		t.Fatal("private temp directory retained")
 	}
 }
+
+func TestRunReadReportsUsesIsolatedPythonAndAgentHome(t *testing.T) {
+	requireAgentUser(t)
+	for _, id := range []string{"oci-cost-report-v1", "network-watch-v1", "bat-release-check-v1"} {
+		t.Run(id, func(t *testing.T) {
+			// Exercise the real runner without invoking host CLIs or reading credentials.
+			e := testEntry("import json, os, sys\nprint(json.dumps({'schema_version':1,'status':'ok','summary':'ok','metrics':{'agent_home':os.environ['HOME'],'isolated':sys.flags.isolated,'no_site':sys.flags.no_site,'args':json.load(sys.stdin)},'findings':[]}))\n")
+			e.ID, e.OutputCap = id, 4096
+			r, err := Run(context.Background(), e, []byte(`{}`), 3)
+			if err != nil || r.ExitCode != 0 || r.Stderr != "" {
+				t.Fatalf("report runner: %+v %v", r, err)
+			}
+			var result struct {
+				Metrics struct {
+					Home     string `json:"agent_home"`
+					Isolated int    `json:"isolated"`
+					NoSite   int    `json:"no_site"`
+				} `json:"metrics"`
+			}
+			account, _ := user.Current()
+			if json.Unmarshal([]byte(r.Stdout), &result) != nil || result.Metrics.Home != account.HomeDir || result.Metrics.Isolated != 1 || result.Metrics.NoSite != 1 {
+				t.Fatalf("invalid runner environment: %s", r.Stdout)
+			}
+		})
+	}
+}

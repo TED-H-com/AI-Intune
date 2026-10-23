@@ -70,6 +70,10 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return nil, &CallError{Code: "invalid_arguments", Message: "context is required"}
 	}
 	switch name {
+	case "join_requests_list":
+		return s.joinRequestsList(ctx, raw)
+	case "certificate_list", "certificate_get":
+		return s.certificateCall(ctx, name, raw)
 	case "disk_action_preview", "disk_action_decide", "disk_quarantine_list", "disk_restore_preview", "disk_restore_apply":
 		return s.diskActionCall(ctx, name, raw)
 	case "disk_approval_list", "disk_approval_decision_preview", "disk_approval_decision_apply":
@@ -102,6 +106,18 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		}
 		result, err := s.Hub.ApprovalsSummary(ctx, args.Window)
 		return result, hubErr(err)
+	case "loops_list":
+		var args struct {
+			MachineID string `json:"machine_id"`
+		}
+		if err := decodeSupervisionArgs(raw, &args); err != nil {
+			return nil, err
+		}
+		if len(args.MachineID) > 256 {
+			return nil, &CallError{Code: "invalid_arguments", Message: "invalid machine filter"}
+		}
+		result, err := s.Hub.Loops(ctx, args.MachineID)
+		return result, hubErr(err)
 	case "hub_status":
 		if err := decodeSupervisionArgs(raw, &struct{}{}); err != nil {
 			return nil, err
@@ -110,10 +126,22 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return result, hubErr(err)
 	case "fleet_overview":
 		return s.fleetOverview(ctx, raw)
+	case "signins_list":
+		return s.signinsList(ctx, raw)
 	case "machines_list":
 		return s.machinesList(ctx, raw)
 	case "machine_get":
 		return s.machineGet(ctx, raw)
+	case "machine_disks":
+		return s.machineDisks(ctx, raw)
+	case "host_profile_get":
+		return s.hostProfileGet(ctx, raw)
+	case "machine_readiness":
+		return s.machineReadiness(ctx, raw)
+	case "machine_safe_detail":
+		return s.machineSafeDetail(ctx, raw)
+	case "machine_oom_kills":
+		return s.machineOOMKills(ctx, raw)
 	case "machine_evidence":
 		return s.machineEvidence(ctx, raw)
 	case "jobs_list":
@@ -244,6 +272,23 @@ func (s *Service) machineGet(ctx context.Context, raw json.RawMessage) (any, err
 		return nil, err
 	}
 	result, err := s.Hub.Machine(ctx, args.MachineID)
+	if err != nil {
+		return nil, hubErr(err)
+	}
+	return result, nil
+}
+
+func (s *Service) machineSafeDetail(ctx context.Context, raw json.RawMessage) (any, error) {
+	var args struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return nil, err
+	}
+	if err := requireID("machine_id", args.MachineID); err != nil {
+		return nil, err
+	}
+	result, err := s.Hub.MachineSafe(ctx, args.MachineID)
 	if err != nil {
 		return nil, hubErr(err)
 	}

@@ -34,11 +34,11 @@ const (
 // every 派工 row in the live ledger carried `unknown_action` until it was
 // added. TestEveryDeclaredAuditActionIsReadable keeps the two in step.
 var allAuditActions = [...]AuditAction{
-	AuditConnect,
+	AuditConnect, AuditSigninStart, AuditSigninCodeSubmitted, AuditSigninCancel, AuditSigninResult, AuditSigninNotifications, AuditChannelManage, AuditChannelTest, AuditSecretTest,
 	AuditRetire,
 	AuditUnretire,
 	AuditEnrollToken,
-	AuditKeyedInstaller,
+	AuditKeyedInstaller, AuditJoinApprove, AuditJoinReject,
 	AuditRevokeToken,
 	AuditEnrollmentLimit,
 	AuditDeploymentCreate,

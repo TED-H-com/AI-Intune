@@ -103,6 +103,7 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	})
 
 	machineNav := map[string]string{
+		"/machines/join":                       "Waiting to join",
 		sectionHref("/machines", "fleet-kpis"): "概觀", sectionHref("/machines", "machines"): "所有裝置",
 		sectionHref("/machines", "findings"): "監視", "/jobs": "代理程式活動", "/machines/enrollment": "註冊裝置",
 		"/machines/configuration": "組態", "/machines/compliance": "合規性",
@@ -190,21 +191,24 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 		sectionHref("/updates", "channel-canary"): "Canary", sectionHref("/updates", "channel-stable"): "Stable",
 	})
 	reportsNav := map[string]string{
-		"/reports": "報告總覽", "/reports/changes": "變更",
+		"/reports": "報告總覽", "/reports/changes": "變更", "/checks": "Checks / 檢查",
 		"/reports/tickets": "票證使用量", "/reports/enrollment": "註冊",
 		"/reports/software": "軟體清查", "/reports/install": "安裝狀態",
 		"/reports/profile": "發佈與指派", "/audit": "稽核記錄",
 	}
 	assertSubNavigation(t, s, "/reports", "報告子選單", "報告總覽", reportsNav)
+	assertSubNavigation(t, s, "/checks", "報告子選單", "Checks / 檢查", reportsNav)
 	// 同一台機器的兩頁要給同一份子選單。少一項的選單看起來像那一節在這裡不存在。
 	assertSubNavigation(t, s, detailBase+"/timeline", "裝置詳細資料子選單", "事件時間軸", detailNav)
 	assertSubNavigation(t, s, detailBase+"/data", "裝置詳細資料子選單", "資料", detailNav)
-	tenantNav := map[string]string{"/tenant/schedules": "Schedules", "/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
+	tenantNav := map[string]string{"/tenant/offline-alerts": "離線通知", "/tenant/certificates": "Certificates", "/tenant/schedules": "Schedules", "/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
+	assertSubNavigation(t, s, "/tenant/offline-alerts", "租用戶子選單", "離線通知", tenantNav)
 	assertSubNavigation(t, s, "/tenant/maintenance", "租用戶子選單", "維護", tenantNav)
 	assertSubNavigation(t, s, "/tenant/data", "租用戶子選單", "資料揭露", tenantNav)
 	assertSubNavigation(t, s, "/tenant/disk-policies", "租用戶子選單", "Disk policies", tenantNav)
 	assertSubNavigation(t, s, "/tenant/approvals", "租用戶子選單", "Approvals", tenantNav)
 	assertSubNavigation(t, s, "/tenant/disk-alerts", "租用戶子選單", "Disk alerts", tenantNav)
+	assertSubNavigation(t, s, "/tenant/certificates", "租用戶子選單", "Certificates", tenantNav)
 	assertSubNavigation(t, s, "/reports/changes", "報告子選單", "變更", reportsNav)
 	assertSubNavigation(t, s, "/reports/tickets", "報告子選單", "票證使用量", reportsNav)
 	assertSubNavigation(t, s, "/reports/enrollment", "報告子選單", "註冊", reportsNav)

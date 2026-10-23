@@ -120,12 +120,14 @@ const (
 	DataCategoryIdentity             DataCategoryKey = "identity"
 	DataCategoryCheckins             DataCategoryKey = "checkins"
 	DataCategoryObservations         DataCategoryKey = "observations"
+	DataCategoryObservedLatest       DataCategoryKey = "observed_latest"
 	DataCategoryTickets              DataCategoryKey = "tickets"
 	DataCategoryCredentials          DataCategoryKey = "credentials"
 	DataCategoryVerifications        DataCategoryKey = "verifications"
 	DataCategoryState                DataCategoryKey = "state"
 	DataCategoryWorkload             DataCategoryKey = "workload"
 	DataCategoryCanary               DataCategoryKey = "canary"
+	DataCategoryLoops                DataCategoryKey = "loops"
 	DataCategoryJobs                 DataCategoryKey = "jobs"
 	DataCategoryDiskClean            DataCategoryKey = "disk_clean"
 	DataCategoryAssignments          DataCategoryKey = "assignments"
@@ -177,14 +179,22 @@ type dataCategoryShape struct {
 // 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var dataCategoryOrder = []DataCategoryKey{
 	DataCategoryRegistry, DataCategoryIdentity,
-	DataCategoryCheckins, DataCategoryObservations, DataCategoryTickets,
+	DataCategoryCheckins, DataCategoryObservations, DataCategoryObservedLatest, DataCategoryTickets,
 	DataCategoryCredentials, DataCategoryVerifications,
 	DataCategoryState, DataCategoryWorkload, DataCategoryCanary,
-	DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments,
+	DataCategoryLoops, DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments,
 	DataCategoryUsageRecords, DataCategoryUsageRecommendations, DataCategoryAudit,
 }
 
 var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
+	DataCategoryObservedLatest: {
+		title:    "最新觀測",
+		holds:    "每台機器、kind 與 subject 的最新一筆觀測，包含原始 payload 與兩個時鐘。不按時間清除；機器移除時一併移除。",
+		source:   DataSourceMachine,
+		tables:   []string{"observed_latest"},
+		freeText: "最新觀測 payload（機器送上來的原文）。",
+		path:     "/machines",
+	},
 	DataCategoryUsageRecords: {
 		title:  "AI usage records",
 		holds:  "Hashed account membership and session or job identifiers, token and call counts, usage estimates, collection freshness, and upload replay receipts. No credentials, prompts, paths, or task labels are stored.",
@@ -260,9 +270,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryState: {
 		title:    "狀態判定",
-		holds:    "Hub 判定這台進入哪一個狀態、什麼時候進去、什麼時候離開。",
+		holds:    "Hub 判定這台進入哪一個狀態、什麼時候進去、什麼時候離開。離線通知每台最多保留一筆事件與送達狀態，直到復原或退役。",
 		source:   DataSourceHub,
-		tables:   []string{"machine_state_history", "machine_state_transition_events"},
+		tables:   []string{"machine_state_history", "machine_state_transition_events", "machine_offline_alerts"},
 		freeText: "判定理由（Hub 自己寫的句子，長度不設上限）。",
 		path:     "/machines",
 	},
@@ -281,27 +291,35 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 		freeText: "判定理由（Hub 自己寫的句子）。",
 		path:     "/deployments",
 	},
+	DataCategoryLoops: {
+		title:  "No-progress loop evidence",
+		holds:  "Opaque process and call hashes, cumulative call/progress counters, bounded sliding-window samples, and derived loop episodes with acknowledgement and resolution times. Active samples expire outside the configured window and inactive stream baselines expire after 24 hours during activity ingestion; episode history is retained.",
+		source: DataSourceHub,
+		tables: []string{"loop_streams", "loop_samples", "loop_episodes"},
+		path:   "/attention/loops",
+	},
 	DataCategoryJobs: {
 		title:  "工作單",
-		holds:  "派給這台的每一張工作單：狀態、修訂號、租約、逾時、產出物摘要，以及它屬於哪一次部署的哪一批。",
+		holds:  "派給這台的每一張工作單：狀態、修訂號、租約、逾時、產出物摘要，以及它屬於哪一次部署的哪一批。 New disk setup jobs retain approved identity, settings, state and result without automatic pruning; view them on the machine Disks panel.",
 		source: DataSourceOperator,
-		tables: []string{"jobs", "deployment_targets"},
+		tables: []string{"jobs", "deployment_targets", "disk_setup_jobs"},
 		path:   "/jobs",
 	},
 	DataCategoryDiskClean: {
 		title:    "磁碟清理",
-		holds:    "清理摘要、指派、批准、私密報告、精確 manifest、隔離與還原、到期工作、計時器證據、權責、canary 及告警。報告和壓力紀錄 30 天、未完成上傳 24 小時；計時器歷史最多 10 筆及 14 天並保留最新證據、已清除告警及 canary 90 天、通知預算 48 小時。",
+		holds:    "清理摘要、指派、批准、私密報告、精確 manifest、隔離與還原、到期工作、計時器證據、權責、canary 及告警。報告和壓力紀錄 30 天、未完成上傳 24 小時；計時器歷史最多 10 筆及 14 天並保留最新證據、已清除告警及 canary 90 天、通知預算 48 小時。 Growth samples: 25h by Hub receipt; latest mount rates retained until replaced, unknown after 15m.",
 		source:   DataSourceHub,
-		tables:   []string{"disk_reports", "disk_deep_trigger_slots", "ops_approvals", "ops_manifests", "disk_quarantine", "disk_action_receipts", "disk_action_items", "disk_expiry_jobs", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state", "disk_timer_observations", "disk_timer_ingestion", "disk_ownership", "disk_alerts", "disk_alert_delivery_reservations", "disk_canary_days"},
+		tables:   []string{"disk_reports", "disk_deep_trigger_slots", "ops_approvals", "ops_manifests", "disk_quarantine", "disk_action_receipts", "disk_action_items", "disk_expiry_jobs", "maintenance_summaries", "maintenance_rollout_targets", "maintenance_assignments", "maintenance_alert_state", "disk_timer_observations", "disk_timer_ingestion", "disk_ownership", "disk_alerts", "disk_alert_delivery_reservations", "disk_canary_days", "disk_growth_samples", "disk_growth_evidence"},
 		freeText: "摘要裡的主機名稱、使用者、attention、分類備註、報告路徑與告警確認理由。",
 		path:     "/tenant/maintenance",
 	},
 	DataCategoryAssignments: {
-		title:  "指派",
-		holds:  "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。",
-		source: DataSourceOperator,
-		tables: []string{"machine_profile_assignments", "ticket_static_assignment"},
-		path:   "/machines/configuration",
+		title:    "指派",
+		holds:    "指到這台的設定檔與票證：指派時刻、指派的人、設定檔摘要。Channel bindings and bot inventory (name, kind, host, agent type, token reference, status and notes) are retained until explicitly removed. They have no routing behavior. Readiness: host_readiness_config, fleet_readiness_profile. fleet_host_profile: shared Linux setup. Sign-in metadata and logout dedup state kept; login URLs, codes and credentials are not stored.",
+		source:   DataSourceOperator,
+		tables:   []string{"machine_profile_assignments", "ticket_static_assignment", "channel_bindings", "channel_bots", "host_readiness_config", "fleet_host_profile", "signin_sessions", "signin_notification_state"},
+		freeText: "Bot inventory names, token references and notes; resolved tokens are not stored.",
+		path:     "/machines/configuration",
 	},
 	DataCategoryAudit: {
 		title:       "稽核記錄",

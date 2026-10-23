@@ -1,0 +1,45 @@
+{{define "readiness-rows"}}
+<table><thead><tr><th>Check</th><th>Status</th><th>Next action</th></tr></thead><tbody>{{range .}}<tr><td>{{.Name}}</td><td><strong>{{readinessStatus .Status}}</strong></td><td>{{.NextAction}} <a href="{{.Doc}}">Instructions</a></td></tr>{{end}}</tbody></table>
+{{end}}
+{{define "readiness-panel"}}
+<div class="panel" id="readiness"><h2>Readiness</h2>
+<p>Reports refresh automatically. Missing or old reports show Unknown. <a href="/channels">Configure notification channels</a>.</p>
+{{range .Items}}{{$host := .}}<h3><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a></h3>
+<p><a href="/machines/{{.MachineID}}#disks">Disks ready to set up ({{.ReadyDisks}})</a></p>
+<p>Agent service user: {{if .Facts.ServiceUser}}{{.Facts.ServiceUser}}{{else}}Unknown{{end}} · Last report: {{if .ReceivedAt}}{{.ReceivedAt}}{{else}}Waiting for the first report{{end}}</p>
+{{range readinessBuckets}}{{$bucket := .}}
+{{if eq . "done"}}<details><summary>Done ({{$host.Done}})</summary>{{else}}<h4>{{readinessBucketTitle .}} ({{if eq . "needs_you"}}{{$host.NeedsYou}}{{else}}{{$host.Auto}}{{end}})</h4>{{end}}
+<ul>{{range $host.Items}}{{if eq .Bucket $bucket}}<li><strong>{{.Name}}</strong> — {{readinessStatus .Status}}. {{.NextAction}} <a href="{{.Doc}}">Instructions</a></li>{{end}}{{end}}</ul>
+{{if eq . "done"}}</details>{{end}}{{end}}
+{{if eq .NeedsYou 0}}<p>Nothing needs you right now.</p>{{end}}
+{{if .Facts.BackupLastSuccess}}<p>Backup last completed OK: {{.Facts.BackupLastSuccess}}</p>{{end}}
+{{if $.Manage}}<form method="post" action="/readiness" class="disk-form">
+<input type="hidden" name="machine" value="{{.MachineID}}">
+<label>Access path<select name="path"><option value="">Uses fleet default</option>{{ $path := .Config.Path }}{{range readinessPaths}}<option value="{{.}}" {{if eq . $path}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+<label>Scoped sudoers drop-in<input name="sudoers_path" value="{{.Config.SudoersPath}}" placeholder="Uses fleet default"></label>
+<label>Backup user service unit<input name="backup_unit" value="{{.Config.BackupUnit}}" placeholder="Uses fleet default"></label>
+<button>Save readiness targets</button></form>{{else}}<p>Ask a Hub administrator to configure readiness targets.</p>{{end}}
+{{else}}<p>No enrolled machines. <a href="/machines/enrollment">Enroll the first machine</a> to begin its readiness checklist.</p>{{end}}</div>
+{{end}}
+{{define "readiness.html"}}{{template "head" .}}<h1>Host readiness</h1>
+{{$v := .Readiness}}
+<section class="panel"><h2>Needs you ({{$v.NeedsYou}})</h2>
+{{if eq $v.NeedsYou 0}}<p>Nothing needs you right now.</p>{{end}}
+{{range $v.Summary}}{{if eq .Bucket "needs_you"}}{{template "readiness-group" .}}{{end}}{{end}}
+<details><summary>Fixing itself ({{$v.Auto}}) — the Hub and agents are handling these</summary>
+{{range $v.Summary}}{{if eq .Bucket "auto"}}{{template "readiness-group" .}}{{end}}{{end}}</details>
+<details><summary>Done ({{$v.Done}})</summary>{{range $v.Summary}}{{if eq .Bucket "done"}}{{template "readiness-group" .}}{{end}}{{end}}</details></section>
+<section class="panel"><h2>Fleet defaults</h2>
+{{if $v.Manage}}<form method="post" action="/readiness" class="disk-form">
+<input type="hidden" name="scope" value="fleet">
+<label>Access path<select name="path"><option value="">Choose an access path</option>{{range readinessPaths}}<option value="{{.}}" {{if eq . $v.Fleet.Path}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+<label>Scoped sudoers drop-in<input name="sudoers_path" value="{{$v.Fleet.SudoersPath}}" placeholder="/etc/sudoers.d/agent-scoped"></label>
+<label>Backup user service unit<input name="backup_unit" value="{{$v.Fleet.BackupUnit}}" placeholder="backup.service"></label>
+<fieldset><legend>Expected CLIs</legend>{{range readinessCLIs}}<label><input type="checkbox" name="expected_clis" value="{{.}}" {{if readinessHasCLI $v.Fleet .}}checked{{end}}>{{.}}</label>{{end}}</fieldset>
+<label>Expected user timers and services (one per line, maximum 16)<textarea name="expected_user_units">{{readinessLines $v.Fleet.ExpectedUserUnits}}</textarea></label>
+<label><input type="checkbox" name="auto_remediate" {{if $v.Fleet.AutoRemediateUserUnits}}checked{{end}}>Let agents turn on expected user timers and services that are installed but off</label>
+<p>On by default. Only listed expected user units can be turned on; an empty list does nothing. Eligible installed user units can be enabled or started at most once per hour. Missing units need installation.</p>
+<button>Save fleet defaults</button></form>
+{{else}}<p>Access path: {{$v.Fleet.Path}} · Scoped sudoers drop-in: {{$v.Fleet.SudoersPath}} · Backup: {{$v.Fleet.BackupUnit}}</p><p>Expected CLIs: {{range $v.Fleet.ExpectedCLIs}}{{.}} {{else}}claude codex grok agy{{end}}</p><p>Expected user timers and services: {{range $v.Fleet.ExpectedUserUnits}}{{.}} {{else}}None{{end}}</p><p>Turn on installed user units automatically: {{if $v.Fleet.AutoRemediateUserUnits}}On{{else}}Off{{end}}</p>{{end}}</section>
+{{template "readiness-panel" .Readiness}}{{template "foot" .}}{{end}}
+{{define "readiness-group"}}<p><strong>{{.Name}}</strong> — {{range $i,$h := .Hosts}}{{if $i}}, {{end}}<a href="/readiness?machine={{$h.ID}}#readiness">{{$h.Name}}</a>{{end}}<br>{{.Action}}</p>{{end}}

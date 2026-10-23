@@ -174,8 +174,10 @@ rm "$TMP/first/claude" "$TMP/bin/claude" "$TMP/bin/codex" "$TMP/bin/node"
 mkdir -p "$HOME/.grok/bin"
 cp "$TMP/bin/cli" "$HOME/.grok/bin/grok"
 command() {
-    # The installer must see node, claude and codex as missing even when the host has them in /usr/bin.
-    if [ "${1:-}" = -v ]; then case "${2:-}" in node|claude|codex) return 1 ;; esac; fi
+    # These tools are deliberately absent in this fixture, regardless of host CLIs.
+    if [ "${1:-}" = -v ]; then
+        case "${2:-}" in node|claude|codex) return 1 ;; esac
+    fi
     builtin command "$@"
 }
 export -f command

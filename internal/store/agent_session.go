@@ -428,6 +428,7 @@ func (s *Store) OpenAgentSession(req OpenAgentSessionRequest) (AgentSessionResul
 // CloseAgentSession closes an open session. A session already closed is a
 // successful no-op and retains its first close timestamp and reason.
 func (s *Store) CloseAgentSession(req CloseAgentSessionRequest) (AgentSessionResult, error) {
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return AgentSessionResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略")
@@ -446,7 +447,7 @@ func (s *Store) CloseAgentSession(req CloseAgentSessionRequest) (AgentSessionRes
 		req.SessionID, req.OperatorTailnetUserID, req.OperatorTailnetUserLogin,
 		req.IdempotencyKey, req.RequestDigest)
 	sessionIDValid := validAgentSessionID(req.SessionID)
-	reasonValid := validSingleLineText(req.Reason, auditMaxReason, false)
+	reasonValid := validAuditReason(req.Reason)
 	if sessionIDValid && reasonValid {
 		audit.Reason = req.Reason
 	}

@@ -46,6 +46,8 @@ func (h *hub) machineAndPublicRoutes(mux *http.ServeMux) []string {
 	patterns := h.agentRoutes(mux)
 	patterns = append(patterns, "GET /healthz")
 	mux.HandleFunc(patterns[len(patterns)-1], h.handleHealthz)
+	mux.HandleFunc("GET /version", handleVersion)
+	patterns = append(patterns, "GET /version")
 	return patterns
 }
 
@@ -72,6 +74,8 @@ func (h *hub) agentRoutes(mux *http.ServeMux) []string {
 		"POST /v1/verifications",
 		"GET /v1/verification-assignments",
 	}
+	patterns = append(patterns, "POST /v1/agent/signins")
+	mux.HandleFunc("POST /v1/agent/signins", h.authed(h.handleSigninUpdate))
 	patterns = append(patterns, "POST /v1/disk-actions/{job_id}/results")
 	mux.HandleFunc("POST /v1/disk-actions/{job_id}/results", h.authed(h.handleDiskActionResults))
 	patterns = append(patterns, "GET /v1/ops-manifests/{id}")
@@ -180,6 +184,10 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 	if !decode(w, r, &c) {
 		return
 	}
+	if err := store.ValidateLoopActivity(c.CallActivity); err != nil {
+		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "invalid call activity")
+		return
+	}
 	// ⚠ received_at 由 Hub 決定，不接受 Agent 給的時間。
 	// 生死判斷一律用這個 —— 機器時鐘快兩天不能讓它看起來永遠新鮮。
 	received := time.Now().UTC()
@@ -207,7 +215,39 @@ func (h *hub) handleCheckin(w http.ResponseWriter, r *http.Request, machineID st
 		return
 	}
 	settings, settingsDigest := h.resolveAgentSettings(machineID)
+	readinessConfig, err := h.store.EffectiveReadinessConfig(machineID)
+	if err != nil {
+		h.writeStoreError(w, "readiness config", machineID, err)
+		return
+	}
+	var hostProfile *model.HostProfile
+	var hostDigest string
+	linux, profileErr := h.store.LinuxMachine(machineID)
+	if profileErr != nil {
+		h.writeStoreError(w, "host platform", machineID, profileErr)
+		return
+	}
+	if linux {
+		p, e := h.store.HostProfile()
+		if e != nil {
+			h.writeStoreError(w, "host profile", machineID, e)
+			return
+		}
+		hostProfile = &p
+		hostDigest, _ = p.Digest()
+	}
+	var diskJobs []model.DiskJob
+	if linux {
+		diskJobs, err = h.store.DeliverDiskJobs(machineID)
+		if err != nil {
+			h.writeStoreError(w, "disk setup jobs", machineID, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, model.CheckinResponse{
+		DiskJobs: diskJobs, HostProfile: hostProfile, HostProfileDigest: hostDigest,
+		SigninCommands:             h.store.SigninCommands(machineID),
+		ReadinessConfig:            readinessConfig,
 		DiskTimerTransitions:       transitions,
 		ReceivedAt:                 received,
 		CheckinIntervalSeconds:     settings.CheckinIntervalSeconds,
@@ -244,6 +284,10 @@ func (h *hub) handleObservations(w http.ResponseWriter, r *http.Request, machine
 		return
 	}
 	if err := h.store.RecordObservation(machineID, b, time.Now().UTC()); err != nil {
+		if errors.Is(err, model.ErrInvalidOOM) {
+			writeErr(w, 400, "BAD_REQUEST", "invalid OOM evidence")
+			return
+		}
 		h.writeStoreError(w, "寫入", machineID, err)
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"strings"
 	"time"
@@ -59,6 +60,14 @@ type operatorCatalogManifestReceipt struct {
 func (s *Store) ApplyOperatorCatalogManifest(req OperatorCatalogManifestRequest,
 	verify OperatorCatalogManifestVerify,
 ) (OperatorCatalogManifestResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorCatalogManifestResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorCatalogManifestResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -90,7 +99,7 @@ func (s *Store) ApplyOperatorCatalogManifest(req OperatorCatalogManifestRequest,
 	rejectCode := ""
 	switch {
 	case canonicalErr != nil || !validCatalogPublisher(req.PublishedBy) ||
-		!validSingleLineText(req.Reason, auditMaxReason, false):
+		!validAuditReason(req.Reason):
 		rejectCode = OperatorCodeCatalogManifestInvalid
 	case verify == nil:
 		return OperatorCatalogManifestResult{}, errors.New("store: catalog manifest verification callback is nil")
@@ -196,7 +205,7 @@ func operatorCatalogManifestAudit(req OperatorCatalogManifestRequest) AuditEntry
 	audit := req.Audit
 	audit.Action = AuditCatalogManifest
 	audit.Subject = catalogManifestSubject(req.Manifest.ID, req.Manifest.Version)
-	if validSingleLineText(req.Reason, auditMaxReason, false) {
+	if validAuditReason(req.Reason) {
 		audit.Reason = req.Reason
 	} else {
 		audit.Reason = ""
@@ -459,7 +468,7 @@ func validateOperatorCatalogManifestOriginalAudit(tx dbTx, req OperatorCatalogMa
 	 WHERE action=? AND COALESCE(machine_id,'')=? AND subject=? AND COALESCE(reason,'')=?
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome=?
 	   AND COALESCE(detail,'')=?`, string(AuditCatalogManifest), audit.MachineID,
-		truncAudit(audit.Subject, auditMaxReason), truncAudit(audit.Reason, auditMaxReason),
+		truncAudit(audit.Subject, auditMaxReason), truncReason(audit.Reason),
 		req.IdempotencyKey, req.RequestDigest, createdAt, outcome, detail).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("store: inspect original catalog manifest audit: %w", err)
@@ -510,6 +519,14 @@ type operatorMachineProfileReceipt struct {
 func (s *Store) ApplyOperatorMachineProfile(req OperatorMachineProfileRequest,
 	verify OperatorMachineProfileVerify,
 ) (OperatorMachineProfileResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		normalizedReason, reasonErr := boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorMachineProfileResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+		req.Reason = normalizedReason
+	}
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorMachineProfileResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -541,7 +558,7 @@ func (s *Store) ApplyOperatorMachineProfile(req OperatorMachineProfileRequest,
 	rejectCode := ""
 	switch {
 	case canonicalErr != nil || !validCatalogPublisher(req.PublishedBy) ||
-		!validSingleLineText(req.Reason, auditMaxReason, false):
+		!validAuditReason(req.Reason):
 		rejectCode = OperatorCodeMachineProfileInvalid
 	case verify == nil:
 		return OperatorMachineProfileResult{}, errors.New("store: machine profile verification callback is nil")
@@ -681,7 +698,7 @@ func operatorMachineProfileAudit(req OperatorMachineProfileRequest) AuditEntry {
 	audit := req.Audit
 	audit.Action = AuditMachineProfile
 	audit.Subject = machineProfileSubject(req.Profile.ID, req.Profile.Revision)
-	if validSingleLineText(req.Reason, auditMaxReason, false) {
+	if validAuditReason(req.Reason) {
 		audit.Reason = req.Reason
 	} else {
 		audit.Reason = ""
@@ -941,7 +958,7 @@ func validateOperatorMachineProfileOriginalAudit(tx dbTx, req OperatorMachinePro
 	 WHERE action=? AND COALESCE(machine_id,'')=? AND subject=? AND COALESCE(reason,'')=?
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome=?
 	   AND COALESCE(detail,'')=?`, string(AuditMachineProfile), audit.MachineID,
-		truncAudit(audit.Subject, auditMaxReason), truncAudit(audit.Reason, auditMaxReason),
+		truncAudit(audit.Subject, auditMaxReason), truncReason(audit.Reason),
 		req.IdempotencyKey, req.RequestDigest, createdAt, outcome, detail).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("store: inspect original machine profile audit: %w", err)

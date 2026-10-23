@@ -17,15 +17,25 @@ import (
 // built-in credentials/backups, generated images, models, user data and all
 // repositories are unconditional and cannot be overridden by this document.
 type DiskPolicy struct {
-	DataMounts        []string        `json:"data_mounts,omitempty"`
-	CanaryDays        int             `json:"canary_days,omitempty"`
-	SchemaVersion     int             `json:"schema_version"`
-	SafeTier          DiskSafeTier    `json:"safe_tier"`
-	ProtectPaths      []string        `json:"protect_paths"`
-	Thresholds        DiskThresholds  `json:"thresholds"`
-	QuarantineTTLDays int             `json:"quarantine_ttl_days"`
-	ScanBudgets       DiskScanBudgets `json:"scan_budgets"`
+	Growth            *DiskGrowthPolicy `json:"growth,omitempty"`
+	DataMounts        []string          `json:"data_mounts,omitempty"`
+	CanaryDays        int               `json:"canary_days,omitempty"`
+	SchemaVersion     int               `json:"schema_version"`
+	SafeTier          DiskSafeTier      `json:"safe_tier"`
+	ProtectPaths      []string          `json:"protect_paths"`
+	Thresholds        DiskThresholds    `json:"thresholds"`
+	QuarantineTTLDays int               `json:"quarantine_ttl_days"`
+	ScanBudgets       DiskScanBudgets   `json:"scan_budgets"`
 }
+type DiskGrowthPolicy struct {
+	GBPerHour     int `json:"gb_per_hour"`
+	WindowMinutes int `json:"window_minutes"`
+}
+
+func (p DiskGrowthPolicy) Valid() bool {
+	return p.GBPerHour >= 1 && p.GBPerHour <= 1000000 && p.WindowMinutes >= 10 && p.WindowMinutes <= 1440
+}
+
 type DiskSafeTier struct {
 	UserTmpMinDays int    `json:"user_tmp_min_days"`
 	VarTmpMinDays  int    `json:"var_tmp_min_days"`
@@ -63,7 +73,7 @@ func (p DiskPolicy) Protections() DiskProtectionRules {
 }
 
 func DefaultDiskPolicy() DiskPolicy {
-	return DiskPolicy{nil, 0, 1, DiskSafeTier{10, 14, 168, "dangling-and-build-cache", 500, 30, "lock-aware-prune", "verify-only", "native-gc-holder-aware"}, []string{}, DiskThresholds{85, 93, 80}, 7, DiskScanBudgets{500, 200000, 600}}
+	return DiskPolicy{nil, nil, 0, 1, DiskSafeTier{10, 14, 168, "dangling-and-build-cache", 500, 30, "lock-aware-prune", "verify-only", "native-gc-holder-aware"}, []string{}, DiskThresholds{85, 93, 80}, 7, DiskScanBudgets{500, 200000, 600}}
 }
 func CanonicalDiskPolicy(raw json.RawMessage) (DiskPolicy, json.RawMessage, string, error) {
 	var p DiskPolicy
@@ -74,6 +84,9 @@ func CanonicalDiskPolicy(raw json.RawMessage) (DiskPolicy, json.RawMessage, stri
 	}
 	if err := d.Decode(new(any)); err != io.EOF {
 		return p, nil, "", errors.New("policy must be one JSON document")
+	}
+	if p.Growth != nil && !p.Growth.Valid() {
+		return p, nil, "", errors.New("invalid disk growth policy")
 	}
 	t := p.SafeTier
 	b := p.ScanBudgets

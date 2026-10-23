@@ -26,6 +26,7 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/agentlink"
 	"github.com/teddashh/AI-Intune/internal/blobstore"
+	"github.com/teddashh/AI-Intune/internal/channels"
 	"github.com/teddashh/AI-Intune/internal/clientip"
 	"github.com/teddashh/AI-Intune/internal/expect"
 	"github.com/teddashh/AI-Intune/internal/ledgerlock"
@@ -35,6 +36,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/operatorendpoint"
 	"github.com/teddashh/AI-Intune/internal/report"
 	"github.com/teddashh/AI-Intune/internal/restoredrill"
+	"github.com/teddashh/AI-Intune/internal/secrets"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"github.com/teddashh/AI-Intune/internal/tailnet"
@@ -43,8 +45,11 @@ import (
 )
 
 var version = "dev"
+var commit = "unknown"
+var buildTime = "unknown"
 
 type hub struct {
+	pprofEnabled        bool
 	diskUploadLimiter   diskReportUploadLimiter
 	diskManifestLimiter diskManifestGrantLimiter
 	scriptRunLimiter    scriptRunRateLimiter
@@ -92,6 +97,8 @@ type hub struct {
 	// wins over built-in channels: the child still inherits CLAWCTL_NOTIFY_ENV
 	// so ops/notify-telegram.sh keeps working.
 	notifyCmd string
+	// notifierOverride is the in-process injection seam for deterministic delivery tests.
+	notifierOverride notifier
 	// notifyEnv is the path from --notify-env / CLAWCTL_NOTIFY_ENV. Secrets
 	// are read from that file only, never from flags or the process environment.
 	notifyEnv string
@@ -268,6 +275,9 @@ func main() {
 		case "tickets":
 			cmdTickets(os.Args[2:])
 			return
+		case "offline-alerts":
+			cmdOfflineAlerts(os.Args[2:])
+			return
 		case "enrollment-limit":
 			cmdEnrollmentLimit(os.Args[2:])
 			return
@@ -413,7 +423,7 @@ func classifyTopLevel(argv []string) (string, error) {
 	}
 	switch argv[0] {
 	case "add-admin", "set-email", "rename-user", "disable-user", "enable-user", "bootstrap-admin", "reset-admin-password", "regenerate-recovery-codes", "enroll-token", "machines", "audit", "retire", "report", "data", "tickets", "tailnet",
-		"enrollment-limit", "prune", "restore-drill", "job", "machine", "deployment",
+		"offline-alerts", "enrollment-limit", "prune", "restore-drill", "job", "machine", "deployment",
 		"artifact", "catalog", "verifier", "settings", "compliance", "version", "notify-check":
 		return argv[0], nil
 	default:
@@ -455,8 +465,12 @@ func runRollbackCompatibility(argv []string, out io.Writer) error {
 
 func serve(argv []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	pprofEnabled := fs.Bool("pprof", os.Getenv("CLAWCTL_HUB_PPROF") == "1", "enable admin-only /debug/pprof/")
+	unchangedRaw := fs.String("obs-unchanged-interval", os.Getenv("CLAWCTL_OBS_UNCHANGED_INTERVAL"), "identical cli_tool/systemd storage interval (default 30m; 0 disables)")
 	diskManifestSigningKey := fs.String("disk-manifest-signing-key", "", "private RSA PEM key for exact disk action grants; local helper public key must be independently pinned")
 	usageToolCallLimitStr := fs.String("usage-tool-call-limit", os.Getenv("CLAWCTL_USAGE_TOOL_CALL_LIMIT"), "maximum tool-call map entries per usage upload (default 1000)")
+	growthRate := fs.String("disk-growth-gb-per-hour", os.Getenv("CLAWCTL_DISK_GROWTH_GB_PER_HOUR"), "disk growth threshold in GB/hour (default 10)")
+	growthWindow := fs.String("disk-growth-window-minutes", os.Getenv("CLAWCTL_DISK_GROWTH_WINDOW_MINUTES"), "disk growth window minutes (default 30)")
 	diskOpsV2Writes := fs.Bool("disk-ops-v2-writes", false, "enable human-admin disk policy changes and safe cleanup jobs; targets require disk_ops_v2")
 	authModeFlag := fs.String("auth-mode", os.Getenv("CLAWCTL_AUTH_MODE"), "operator auth mode: tailscale (default), local, or both")
 	addr := fs.String("listen", "127.0.0.1:8770", "listen address (literal Tailscale IP:port; reads $CLAWCTL_LISTEN when unset). Flag default 127.0.0.1:8770 is a fail-closed placeholder that Hub rejects. No production default port; 8787 is only a convention example in docs; grant dst, CLAWCTL_PUBLIC_URL, agent --hub, and tunnel origin must use the same port as this address")
@@ -467,7 +481,21 @@ func serve(argv []string) {
 	reportAt := fs.String("report-at", "08:00", "local time HH:MM to send daily report each day")
 	stamp := fs.String("report-stamp", os.Getenv("CLAWCTL_REPORT_STAMP"),
 		"write unix timestamp to this file after daily report delivery; read by external dead man's switch (see ops/deadman.sh)")
+	if raw := os.Getenv("CLAWCTL_HUB_ARGON_CONCURRENCY"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			log.Fatal("CLAWCTL_HUB_ARGON_CONCURRENCY must be a positive integer")
+		}
+		store.SetMaxConcurrentPasswordHashes(n)
+	}
 	def := store.DefaultRetention()
+	if raw := os.Getenv("CLAWCTL_KEEP_OBSERVATIONS"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatal("CLAWCTL_KEEP_OBSERVATIONS must be a duration")
+		}
+		def.Observations = d
+	}
 	keepObs := fs.Duration("keep-observations", def.Observations, "how long to keep observations")
 	keepCheckins := fs.Duration("keep-checkins", def.Checkins, "how long to keep check-ins")
 	keepOccupancy := fs.Duration("keep-occupancy", def.Occupancy, "how long to keep ticket occupancy records")
@@ -619,6 +647,33 @@ func serve(argv []string) {
 	if err := st.ConfigureUsageToolCallLimit(usageToolCallLimit); err != nil {
 		log.Fatal(err)
 	}
+	growthDefaults := store.DiskGrowthPolicy{GBPerHour: 10, WindowMinutes: 30}
+	if *growthRate != "" {
+		parsed, err := strconv.Atoi(*growthRate)
+		if err != nil {
+			log.Fatal("invalid disk growth threshold")
+		}
+		growthDefaults.GBPerHour = parsed
+	}
+	if *growthWindow != "" {
+		parsed, err := strconv.Atoi(*growthWindow)
+		if err != nil {
+			log.Fatal("invalid disk growth window")
+		}
+		growthDefaults.WindowMinutes = parsed
+	}
+	if err := st.ConfigureDiskGrowth(growthDefaults); err != nil {
+		log.Fatal(err)
+	}
+	unchangedInterval := 30 * time.Minute
+	if *unchangedRaw != "" {
+		var err error
+		unchangedInterval, err = time.ParseDuration(*unchangedRaw)
+		if err != nil || unchangedInterval < 0 {
+			log.Fatal("CLAWCTL_OBS_UNCHANGED_INTERVAL must be a nonnegative duration")
+		}
+	}
+	st.SetObservationUnchangedInterval(unchangedInterval)
 	st.ConfigureDiskOpsV2Writes(*diskOpsV2Writes)
 	if *diskManifestSigningKey != "" {
 		if err := configureDiskManifestSigningKey(st, *diskManifestSigningKey); err != nil {
@@ -626,7 +681,8 @@ func serve(argv []string) {
 		}
 	}
 	h := &hub{
-		store: st, tailnet: tailnetCache, agentLinks: agentlink.New(), artifactsDir: artifactsDir, blobs: objectBlobs, operatorService: operatorService, publicURL: operatorBase,
+		pprofEnabled: *pprofEnabled,
+		store:        st, tailnet: tailnetCache, agentLinks: agentlink.New(), artifactsDir: artifactsDir, blobs: objectBlobs, operatorService: operatorService, publicURL: operatorBase,
 		hubHost:   *hubHost,
 		startedAt: time.Now(), drillStamp: drillStampPath(*dbPath),
 		notifyCmd: notifySetup.cmd, notifyEnv: notifySetup.envPath,
@@ -670,6 +726,7 @@ func serve(argv []string) {
 	if err != nil {
 		log.Fatalf("failed to load templates: %v", err)
 	}
+	ui.SetBuildInfo(version, commit)
 	ui.SetDrillStampReader(func() (time.Time, bool) { return readDrillStamp(h.drillStamp) })
 	ui.SetTerminalLinks(h.agentLinks)
 	installOperatorTerminalSessionCloser(h)
@@ -677,7 +734,23 @@ func serve(argv []string) {
 	ui.SetTailnetCache(tailnetCache)
 	ui.SetOperatorService(operatorService)
 	ui.SetHubBase(h.publicURL)
+	if err := ui.ConfigureJoinFromEnv(); err != nil {
+		log.Fatal(err)
+	}
+	secretRegistry, err := secrets.LoadConfig(os.Getenv("CLAWCTL_SECRETS_CONFIG"), secrets.NotifyReferences(h.notifyEnv))
+	if err != nil {
+		log.Fatal("invalid secrets configuration")
+	}
+	ui.SetSecretProvider(secretRegistry)
+	if err := ui.ConfigureInbound(os.Getenv("CLAWCTL_CHANNELS_INBOUND_CONFIG")); err != nil {
+		log.Fatal("invalid inbound channels configuration")
+	}
+	if err := h.store.InitializeChannels(context.Background(), channels.NotifyConfigs(h.notifyEnv)); err != nil {
+		log.Fatalf("initialize channel inventory: %v", err)
+	}
+
 	ui.SetTerminalLimits(h.terminalIdleTimeout, h.terminalMaxLifetime)
+	h.store.SetSigninTransport(h.sendSignin)
 	if err := ui.SetRetentionPolicy(h.retention); err != nil {
 		log.Fatalf("invalid web retention policy configuration: %v", err)
 	}
@@ -704,7 +777,7 @@ func serve(argv []string) {
 
 	srv := &http.Server{
 		Addr:    *addr,
-		Handler: maintenanceMiddleware(upgradeMaintenanceMarker(*dbPath), handler),
+		Handler: requestDurationLogging(maintenanceMiddleware(upgradeMaintenanceMarker(*dbPath), handler), log.Printf),
 		// ⚠ 這幾個 timeout 不是裝飾。一個卡住的連線會佔著 goroutine，
 		// 而 Hub 是單點 —— 它不能因為一台機器的網路很爛就變慢。
 		ReadHeaderTimeout: 10 * time.Second,
@@ -746,11 +819,14 @@ func serve(argv []string) {
 	// 這一筆是早報「三台同時失聯」唯一能拿來對的東西。
 	h.journalStart(time.Now())
 
+	go ui.RunSigninNotifications(ctx)
 	go h.reconcileLoop(ctx)
 	go h.agentSessionRevocationLoop(ctx)
 	go h.jobReaperLoop(ctx)
 	go h.scheduleLoop(ctx)
+	go h.certificateLoop(ctx)
 	go h.reportLoop(ctx)
+	go h.offlineAlertLoop(ctx)
 	go h.pruneLoop(ctx)
 	go watchdogLoop(ctx, h)
 
@@ -910,6 +986,10 @@ func (h *hub) reconcileLoop(ctx context.Context) {
 
 func (h *hub) reconcile() {
 	if err := h.store.ReconcileFleet(time.Now().UTC()); err != nil {
+		if errors.Is(err, store.ErrReconcileEvidenceChanged) {
+			log.Printf("reconciliation deferred: evidence changed; retry next tick")
+			return
+		}
 		log.Printf("reconciliation failed: %v", err)
 	}
 }
@@ -1181,6 +1261,14 @@ func (h *hub) buildReport(now, since time.Time) (string, error) {
 			}
 		}
 		in.Machines = append(in.Machines, rm)
+	}
+	in.ScheduledChecks, err = h.store.ScheduledChecks(since, now, true)
+	if err != nil {
+		return "", err
+	}
+	in.UntargetedMachines, err = h.store.UntargetedScheduleMachines(ov.Machines, in.ScheduledChecks, now)
+	if err != nil {
+		return "", err
 	}
 	return report.Render(in), nil
 }

@@ -126,6 +126,8 @@ func TestUsagePolicyRetentionDurationBounds(t *testing.T) {
 
 func TestUsagePruneUsesPublishedPolicy(t *testing.T) {
 	s, m, in := usageFixture(t)
+	// Keep store-generated timestamps older than the prune retention cutoffs.
+	s.nowFn = func() time.Time { return time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC) }
 	if _, err := s.MergeUsageFile(m, in); err != nil {
 		t.Fatal(err)
 	}

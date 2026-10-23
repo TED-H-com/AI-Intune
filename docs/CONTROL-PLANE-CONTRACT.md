@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-299（22 non-operator＋277 operator；140 operator JSON＋137 HTML/BFF/CSV/download），exact auth tally 是
-`view=107`／`operate=33`／`admin=137`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+353（30 non-operator＋323 operator；159 operator JSON＋164 HTML/BFF/CSV/download），exact auth tally 是
+`view=128`／`operate=34`／`admin=161`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1190,3 +1190,107 @@ per-machine/global delivery budgets prevent flapping from bypassing throttles. R
 helper absence fails closed. Canary comparison uses daily policy-bound read previews;
 alerts use persisted episodes and the existing notifications ledger. P2-04 retains
 its exact human quarantine/restore operations; P2-05 adds no privileged agent actions.
+
+Inbound chat is an opt-in provider-authenticated front end over the same operator service; see [CHANNELS.md](CHANNELS.md).
+
+### Host profile data handoff
+
+`GET /machines/host-profile` is the human View surface; only human Admin can
+`POST /machines/host-profile`. The audited fleet profile is optional and Linux
+only. `GET /v1/operator/host-profile` and read-only MCP `host_profile_get` return
+the same profile and per-host status. The check-in adds `host_profile` and
+`host_profile_digest`; the agent validates the digest and atomically saves data.
+A separate root service applies the fixed vocabulary and embedded templates;
+observations relay `host_profile_apply`. This is not an arbitrary job executor,
+and does not relax the observer's privilege boundary or enable root Hub jobs.
+See [HOST-PROFILE](HOST-PROFILE.md) for ownership, validation and evidence limits.
+
+## One-command Linux and Windows join
+
+Windows `amd64` and `arm64` endpoints can run `irm https://hub.example.com/join.ps1 | iex`
+in an elevated PowerShell session under the intended agent account. The public
+`GET /join.ps1` script templates the same HTTPS Hub URL and prints the join code,
+approval page and expiry. Download it first to pass `-Hub`, `-LogFile` (default
+`%ProgramData%\clawctl\join.log`) or `-JobsEnabled`. Windows defaults to
+monitor-only (`jobs_enabled=false`) and installs a user logon scheduled task.
+It uses the approval's one-time enrollment token, verifies the approved SHA-256,
+rejects archive traversal/links, and deletes temporary secrets. Windows joins
+use public HTTPS without configuring Tailscale; Linux-only jobs remain blocked
+at server dispatch and claim even when jobs are enabled. See the Windows
+commands in [README](../README.md#4-enroll-an-endpoint).
+
+
+Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
+non-root agent account, then match its code at `/machines/join`. The public
+`GET /join.sh` script uses the validated HTTPS `CLAWCTL_PUBLIC_URL`; `--hub`
+and `--user` are explicit alternatives. Viewers can read waiting requests;
+`POST /machines/join/decide` requires a human Admin and the enrollment MFA
+window. Approve all uses the displayed suggested names. Names capitalise the
+first letter of each dash-separated word, preserving the rest (`host-b` → `Host-B`).
+`GET /v1/operator/joins` and read-only MCP `join_requests_list` return metadata,
+never credentials. There is no MCP join write tool.
+
+Machine routes are `POST /v1/join/start`, `POST /v1/join/poll`, and
+`GET /v1/join/bundle/{arch}`. Start accepts bounded strict JSON, permits five
+requests per client IP per minute, and fails closed at 20 waiting/approved
+requests globally. IPs use the existing trusted-proxy resolver. Join codes and
+256-bit device secrets expire after 15 minutes; poll delivers approval once,
+atomically marking the request redeemed. All join responses use no-store.
+The script downloads the bundle while pending, then checks its SHA-256 from
+the approved payload before extraction. Bundle access requires the matching
+pending/approved, unexpired device secret, OS and architecture; redemption ends
+that authority. Secrets stay out of URLs, argv, logs and operator reads.
+Windows bundle keys are `windows-amd64` and `windows-arm64`; `linux-amd64`
+and `linux-arm64` select Linux, as do the legacy `amd64` and `arm64` keys.
+Approval selects the digest by OS and architecture; cross-OS downloads fail.
+
+Enrollment tickets use the canonical operator service, are single-use and
+last 600 seconds. Optional Hub-issued Tailscale keys for Linux joins are single-use,
+non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
+OAuth client configuration is optional; without it the machine joins without
+Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,
+`CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`, and `CLAWCTL_TAILSCALE_JOIN_TAG`.
+`CLAWCTL_TAILSCALE_API_BASE` is accepted only in test binaries; production
+always uses the official API. The CLI reads its key using `--auth-key=file:...`.
+
+SQLite stores only device-secret hashes and request metadata. Minted credentials
+are held in process memory for at most ten minutes and deleted on redemption.
+Restart or delivery expiry shows “Approval expired”; a human can approve again
+while the request is still valid. An already minted enrollment ticket expires
+naturally and cannot be reconstructed. Join decisions and their secret-free
+`join_approve` / `join_reject` audit rows commit together. Rows older than seven
+days past expiry are pruned lazily on start/list, without changing ledger retention.
+
+## New disk provisioning contract
+
+The machine Disks panel is the human approval surface. Two Admin + fresh-MFA
+HTML POSTs (`/machines/{id}/disks/approve`, `/machines/{id}/disks/cancel`) and one
+View JSON GET (`/v1/operator/machines/{id}/disks`) are additive, human-only routes.
+MCP `machine_disks` is read-only and calls the strict operator client. Readiness
+links to eligible disks; existing disks are facts only. There is no wipe, force,
+overwrite or reuse control.
+
+`disk_setup_jobs` binds one single-use ID to machine, device, serial/WWN, model,
+exact byte size and approved mount/filesystem/label/owner. Active disk identities
+are unique. Pending approvals expire after 24 hours or may be cancelled;
+delivery is retryable and final results are idempotent. Atomic audit actions are
+`disk_setup_approve`, `disk_setup_cancel`, `disk_setup_result`. Linux agent files
+are unprivileged data; the root applier independently checks identity and empty
+state immediately before acting, reserves the ID durably, stops on failure and
+retains receipts forever for replay protection. Agent-relayed results are host
+facts, not independent verification. See [HOST-PROFILE](HOST-PROFILE.md#new-disk-setup)
+for the checks and compromised-account limitation.
+
+## Fleet Sign-ins
+
+The server-rendered `/signins` page groups metadata-only auth_health observations
+across hosts. Start, paste-back, cancellation and optional notification settings
+are human Admin forms with fresh local MFA and CSRF checks. Sessions are bound to
+one machine/CLI/slot, single active, and expire in 15 minutes. URL/device-code
+projections and once-delivered pasted codes are volatile, never SQL or audit
+payloads. Agent delivery uses the existing link or the check-in response. Linux
+login PTYs run as user-manager services outside the agent home sandbox; each
+service has a hard runtime limit and control-group cleanup. The read-only
+`GET /v1/operator/signins` and MCP `signins_list` expose status without URLs or
+codes. No MCP write tools are added. Notification settings default off and reuse
+Channels with a 12-hour per-item deduplication window.

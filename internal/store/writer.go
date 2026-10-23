@@ -22,8 +22,9 @@ const (
 	sqlitePrimaryBusy   = 5
 	sqlitePrimaryLocked = 6
 
-	defaultWriterWait = 15 * time.Second
-	slowWriterLimit   = time.Second
+	defaultInteractiveWriterWait = 5 * time.Second
+	defaultWriterWait            = 15 * time.Second
+	slowWriterLimit              = time.Second
 )
 
 // ErrWriterBusy is returned when this process cannot acquire the single writer
@@ -73,16 +74,18 @@ type dbTx interface {
 
 // writeTx is a writer transaction checked out from the single writer connection.
 // Commit and Rollback return that connection to the pool. The context used to
-// wait for the connection is not the transaction lifetime: a long reconcile or
-// prune must not be rolled back just because the queue budget was 15s.
+// wait for a bulk connection is not the transaction lifetime: a long reconcile
+// or prune must not be rolled back because its queue budget was 15s. Interactive
+// transactions are short and retain their deadline through commit.
 type writeTx struct {
 	dbTx
-	conn  *sql.Conn
-	store *Store
-	name  string
-	wait  time.Duration
-	began time.Time
-	once  sync.Once
+	conn   *sql.Conn
+	store  *Store
+	name   string
+	wait   time.Duration
+	began  time.Time
+	once   sync.Once
+	cancel context.CancelFunc
 }
 
 func (w *writeTx) Commit() error {
@@ -113,12 +116,92 @@ func (w *writeTx) finish() {
 		if w.conn != nil {
 			_ = w.conn.Close()
 		}
+		if w.cancel != nil {
+			w.cancel()
+		}
+		w.store.gate.release()
 	})
 }
 
 type writerGate struct {
-	waitNS atomic.Int64
-	stats  writeStats
+	waitNS            atomic.Int64
+	interactiveWaitNS atomic.Int64
+	stats             writeStats
+	mu                sync.Mutex
+	held              bool
+	bulk, interactive []chan struct{}
+}
+
+// acquire reserves the writer before touching database/sql's FIFO pool. Handoff
+// and cancellation share the mutex so a timed-out waiter cannot leak the slot.
+func (g *writerGate) acquire(ctx context.Context, interactive bool) error {
+	g.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		g.mu.Unlock()
+		return err
+	}
+	if !g.held {
+		g.held = true
+		g.mu.Unlock()
+		return nil
+	}
+	ready := make(chan struct{})
+	queue := &g.bulk
+	if interactive {
+		queue = &g.interactive
+	}
+	*queue = append(*queue, ready)
+	g.mu.Unlock()
+	select {
+	case <-ready:
+		return nil
+	case <-ctx.Done():
+		g.mu.Lock()
+		for i, ch := range *queue {
+			if ch == ready {
+				*queue = append((*queue)[:i], (*queue)[i+1:]...)
+				g.mu.Unlock()
+				return ctx.Err()
+			}
+		}
+		// Already handed the slot: release it on behalf of the cancelled caller.
+		g.mu.Unlock()
+		g.release()
+		return ctx.Err()
+	}
+}
+
+func (g *writerGate) release() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	queue := &g.interactive
+	if len(*queue) == 0 {
+		queue = &g.bulk
+	}
+	if len(*queue) == 0 {
+		g.held = false
+		return
+	}
+	ready := (*queue)[0]
+	(*queue)[0] = nil
+	*queue = (*queue)[1:]
+	close(ready)
+}
+
+// SetInteractiveWriterWait overrides the interactive acquisition and transaction
+// budget. Zero restores the 5s default (priority lane: next after the current holder); SetWriterWait controls only bulk waits.
+func (s *Store) SetInteractiveWriterWait(d time.Duration) {
+	if s != nil {
+		s.gate.interactiveWaitNS.Store(int64(d))
+	}
+}
+
+func (s *Store) beginWriteInteractive(ctx context.Context, name string) (*writeTx, error) {
+	wait := time.Duration(s.gate.interactiveWaitNS.Load())
+	if wait <= 0 {
+		wait = defaultInteractiveWriterWait
+	}
+	return s.beginWritePriority(ctx, name, true, wait)
 }
 
 // SetWriterWait overrides how long beginWrite waits for the single writer
@@ -140,14 +223,35 @@ func (s *Store) writerWait() time.Duration {
 }
 
 func (s *Store) beginWrite(ctx context.Context, name string) (*writeTx, error) {
+	return s.beginWritePriority(ctx, name, false, s.writerWait())
+}
+
+func (s *Store) beginWritePriority(ctx context.Context, name string, interactive bool, budget time.Duration) (*writeTx, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	acqCtx, cancel := context.WithTimeout(ctx, s.writerWait())
+	acqCtx, cancel := context.WithTimeout(ctx, budget)
+	keepDeadline := false
+	defer func() {
+		if !keepDeadline {
+			cancel()
+		}
+	}()
 	start := time.Now()
-	conn, err := s.db.Conn(acqCtx)
+	err := s.gate.acquire(acqCtx, interactive)
+	var conn *sql.Conn
+	if err == nil {
+		conn, err = s.db.Conn(acqCtx)
+		if err != nil {
+			s.gate.release()
+		}
+	}
 	waited := time.Since(start)
-	cancel()
+	// Bulk budgets bound only acquisition; interactive budgets also bound the
+	// small transaction; rejected logins retry expired persistence on the bulk lane.
+	if err != nil || !interactive {
+		cancel()
+	}
 	s.observeWriteWait(name, waited)
 	if waited > slowWriterLimit && err != nil {
 		log.Printf("WARN db writer slow name=%s wait=%s hold=%s", name, waited.Round(time.Millisecond), time.Duration(0))
@@ -161,17 +265,26 @@ func (s *Store) beginWrite(ctx context.Context, name string) (*writeTx, error) {
 		}
 		return nil, fmt.Errorf("store: acquire writer %s: %w", name, err)
 	}
-	// Background, not acqCtx: cancelling the wait must not roll the transaction
-	// back once the connection is in hand.
-	tx, err := conn.BeginTx(context.Background(), nil)
+	txCtx := context.Background()
+	if interactive {
+		txCtx = acqCtx
+	}
+	tx, err := conn.BeginTx(txCtx, nil)
 	if err != nil {
+		cancel()
 		_ = conn.Close()
+		s.gate.release()
 		if IsBusy(err) {
 			return nil, s.noteBusy(fmt.Errorf("store: begin write %s: %w", name, err))
 		}
 		return nil, fmt.Errorf("store: begin write %s: %w", name, err)
 	}
-	return &writeTx{dbTx: tx, conn: conn, store: s, name: name, wait: waited, began: time.Now()}, nil
+	w := &writeTx{dbTx: tx, conn: conn, store: s, name: name, wait: waited, began: time.Now()}
+	if interactive {
+		w.cancel = cancel
+		keepDeadline = true
+	}
+	return w, nil
 }
 
 // boundExec adapts the single writer to helpers that take an Exec-only surface

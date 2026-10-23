@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
@@ -59,8 +60,10 @@ func normalizeScript(req ScriptRunRequest) (ScriptRunRequest, scriptcatalog.Entr
 			return req, e, scriptBad("invalid or duplicate target")
 		}
 	}
-	if strings.TrimSpace(req.Reason) != req.Reason || req.Reason == "" || len(req.Reason) > 500 || scriptcatalog.Redact(req.Reason) != req.Reason {
-		return req, e, scriptBad("reason must be bounded and contain no credentials")
+	var reasonErr error
+	req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+	if reasonErr != nil {
+		return req, e, scriptBad(reasonErr.Error())
 	}
 	return req, e, nil
 }
@@ -75,7 +78,7 @@ func scriptScope(e scriptcatalog.Entry, a AuditEntry) error {
 		if e.Mode != "read" {
 			return operatorError("SERVICE_TOKEN_READ_SCRIPTS_ONLY", "service tokens require a read-only catalog script")
 		}
-		if a.AuthCapability != "operate" {
+		if a.AuthCapability != "operate" && a.AuthCapability != operatorauth.ServiceScopeOperatorAdmin {
 			return operatorError("SCRIPT_SCOPE_REQUIRED", "read scripts require operate")
 		}
 		return nil
