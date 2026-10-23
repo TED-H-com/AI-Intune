@@ -2,7 +2,12 @@
 
 Status: **Proposed design, docs only.** Nothing here authorizes implementation or deployment.
 Owner: the admin. Language: English.
-Baseline: Hub `v33` at commit `f52a345` (Windows join-code enrollment #115, Windows task XML fix #116).
+Code baseline: public main `cee5908`, reviewed 2026-10-23; this is not a deployed Hub version.
+The generic update protocol, product tables and `/updates` UI below are proposals.
+Current release publication signs Hub OCI images only; native agent bundles are not published by
+that workflow. U2 therefore includes publishing and verifying signed native release assets.
+Existing OpenClaw deployment records keep their current meaning; generic product runs need an
+explicit adapter into the rollout driver, not a reinterpretation of existing records.
 Builds on: `docs/SPEC.md` rollout/canary rules (M4 canary pause), `docs/CONTROL-PLANE-CONTRACT.md`
 (`jobs_enabled` creation gate), `docs/design/HUB-PHASE2-STANDARD-OPS.md` (`ops_approvals` ledger),
 `docs/design/token-usage-monitoring.md` (operating principle), `docs/RELEASE.md` (signed releases).
@@ -15,8 +20,10 @@ Same rules as Phase 2 §1A and the token-usage design:
   is complete in the Hub web UI with no AI agent and no chat notifier.
 - **Same action, any caller.** UI, JSON API and MCP (Hermes, Grok Bot acting for the admin) call one
   canonical `updates` operator service under the same scopes, ledger and audit. An agent never gets a
-  capability a UI user lacks, and MCP cannot approve on behalf of a human unless the admin grants the
-  `updates:approve` scope to that operator token explicitly.
+  capability a UI user lacks. V1 mutations and approvals require an authenticated human admin.
+  Current service scopes are `view`, `operate`, and `operator-admin` with exact route admission;
+  no `updates:approve` scope exists. Delegating update mutations requires a separate reviewed
+  authorization contract and defaults off.
 - **Optional integrations.** Telegram/Discord are opt-in notifiers over the existing notifier
   ("3 machines drift on OpenClaw", "canary passed, Continue?"). Every notification is also a Hub banner.
   Chat buttons deep-link to the Hub; they do not approve by themselves in v1.
@@ -50,7 +57,7 @@ Same rules as Phase 2 §1A and the token-usage design:
 - No bypass, override or "force" path for agentic-home signature, publisher-key or review checks.
 - No updates on machines in monitor-only mode (`jobs_enabled=false`), including fresh Windows join-code
   enrollments, until an admin enables jobs.
-- No auto-update of the Hub itself (the Fly deploy skill remains the path for `clawctl-hub-ted`).
+- No auto-update of the Hub itself (the Fly deploy skill remains the path for the deployed Hub).
 
 ## 4. Managed products
 
@@ -59,13 +66,14 @@ private overlay (e.g. forks).
 
 | product_id | Default GitHub repo | Platforms | Artifact verification | Install mechanism |
 | --- | --- | --- | --- | --- |
-| `clawctl-agent` | `TED-H-com/AI-Intune` | linux, windows, macOS | cosign keyless (identity pinned to `release.yml@refs/tags/v*`) + SHA256SUMS | staged binary swap + service restart; previous binary kept |
-| `agentic-home` | `TED-H-com/agentic-smart-home` | agentic-home | signed `host-update.json` / `controller-update.json`, publisher key `18dd73f8` | device bootstrap `--review` / `--apply <review_digest>` (§7) |
+| `clawctl-agent` | `TED-H-com/AI-Intune` | linux, windows, macOS | proposed signed native assets + SHA256SUMS; current workflow signs Hub images only | staged binary swap + service restart; previous binary kept |
+| `agentic-home` | `TED-H-com/agentic-smart-home` | agentic-home | signed device manifests, full locally pinned publisher key (adapter contract to verify) | device bootstrap `--review` / `--apply <review_digest>` (§7) |
 | `bat-agent-connector` | overlay-defined | linux, windows | checksum manifest + signature (scheme per product, §11 Q4) | product installer |
 | `openclaw` | overlay-defined | linux | checksum + signature | product installer, existing OpenClaw revision recorded |
 | `hermes` | overlay-defined | linux | checksum + signature | product installer |
 
-A product without a configured, verifiable signature scheme is **report-only**: drift is shown, but
+Product-specific mechanisms above are target adapters, not verified upstream availability.
+A product without published, independently verifiable assets and a configured signature scheme is **report-only**: drift is shown, but
 install jobs cannot be created (typed blocker `unverifiable_product`).
 
 ## 5. Data model
@@ -77,7 +85,7 @@ product_catalog(
   product_id TEXT PK, display_name, github_owner, github_repo,
   asset_pattern_json,          -- per-platform asset name templates
   verify_scheme TEXT,          -- cosign_keyless | minisign | agentic_home_manifest | none
-  verify_identity_json,        -- pinned cert identity / public key fingerprint (e.g. 18dd73f8)
+  verify_identity_json,        -- pinned cert identity / full public key fingerprint (never an abbreviated key ID)
   install_adapter TEXT, enabled BOOL, updated_at)
 
 product_releases(              -- what the Hub saw on GitHub
@@ -120,8 +128,9 @@ update_attempts(
   error_code, error_detail_redacted, started_at, finished_at)
 ```
 
-Effective policy = most specific of machine → ring → fleet default; default for every product is
-`approve_each`, and `frozen` wins over everything. Drift = `installed_version < product_latest.tag`
+Effective policy: any applicable `frozen` rule blocks updates; otherwise choose the most specific
+rule, machine → ring → fleet default. Conflicting ring rules block creation until resolved. The proposed
+default for every product is `approve_each`. Drift = `installed_version < product_latest.tag`
 with `measured=true`; unmeasured is shown as `unknown`, never as "up to date".
 
 ## 6. Agent protocol
@@ -136,7 +145,7 @@ Add to the check-in payload, versioned and omit-safe like `device_sync_v1`:
   {"product_id": "openclaw", "version": "2.3.1", "measured": true, "source": "binary --version"},
   {"product_id": "agentic-home", "version": "2026.10.1", "measured": true,
    "source": "/etc/agentic-home/release", "update_inbox": true, "reconcile": true,
-   "trusted_publisher_keys": ["18dd73f8"]},
+   "trusted_publisher_keys": ["full-publisher-key-fingerprint"]},
   {"product_id": "hermes", "measured": false, "error": "not_installed"}
 ],
 "update_executor_v1": true
@@ -147,9 +156,12 @@ The Hub must not infer capability from `agent_version` text; omission means unsu
 ### 6.2 Update job
 
 A new job kind `product_update_v1`, created only through the existing gate: latest check-in has
-`jobs_enabled=true`, `update_executor_v1=true`, machine lifecycle active, no conflicting nonterminal
+agent `jobs_enabled=true`, Hub execution policy enabled, `update_executor_v1=true`, machine lifecycle active, no conflicting nonterminal
 job, and a preview digest pinned to (machine, product, from_version, target_tag, release assets
-digest, policy revision). Payload:
+digest, policy revision). Recheck authorization and execution policy at creation, dispatch and
+immediately before applying; a preview is not a reusable grant. Consume an approval exactly once
+with job creation, authorizing before idempotency replay. A policy change invalidates stale queued
+work and stops running work at the next safe boundary. Payload:
 
 ```json
 {"kind":"product_update_v1","product_id":"openclaw","target_tag":"v2.4.0",
@@ -160,7 +172,7 @@ digest, policy revision). Payload:
 
 Agent steps, each reported as a phase event:
 
-1. **Fetch** directly from `github.com`/`objects.githubusercontent.com` over TLS (no Hub proxy). The
+1. **Fetch** directly from the configured GitHub release asset and its explicitly allowed HTTPS CDN redirects (no Hub proxy). Reject unexpected redirect origins and bind the asset to its configured repository and release identity. The
    Hub-supplied SHA256 is a hint for mismatch detection; the trust anchor is the signature verified with
    the identity/key **compiled into or locally configured on the agent**, not sent by the Hub.
 2. **Verify** signature and checksum; refuse on any mismatch (`verify_failed`, never retried silently).
@@ -176,20 +188,23 @@ Agent steps, each reported as a phase event:
 **Rollback job** `product_rollback_v1` targets `restore_point_id` (one-click in UI). Restore points are
 kept for the last 2 versions per product.
 
-**clawctl-agent self-update**: staged binary, restart via systemd/Scheduled Task, the new process must
-check in with the target version within N minutes; otherwise a watchdog (systemd `OnFailure=` /
-Windows task) restores the previous binary. Self-update is never batched with another product update.
+**clawctl-agent self-update**: staged binary, restart via systemd/Scheduled Task/launchd. An independent
+watchdog must observe a check-in with the target version before a configured deadline, restoring the
+previous binary if the process exits, hangs, or never checks in. `OnFailure=` alone does not detect a
+live but stuck process. Verify this behavior on each supported OS before admitting that platform. Self-update is never batched with another product update.
 
 ## 7. agentic-home as a managed OS platform
 
-agentic-home is a platform (like `ubuntu`, `windows`) with its own trusted update flow. The Hub drives
-that flow; it never replaces it.
+agentic-home is a proposed managed platform (like `ubuntu`, `windows`). The adapter must verify the
+upstream manifest, review/apply, expiry and reconcile contracts against a pinned upstream revision
+before implementation. The names and approximate expiry below describe the intended integration;
+they are not a claim that this repository has implemented or validated that adapter.
 
 ### 7.1 Mapping
 
 | Device concept | Hub concept |
 | --- | --- |
-| signed `host-update.json`, `controller-update.json` (publisher key `18dd73f8`) | release assets of `agentic-home` stable release |
+| signed `host-update.json`, `controller-update.json` with a full locally pinned publisher key | release assets of `agentic-home` stable release |
 | local inbox `/var/lib/agentic-home/update-inbox` (agentic-smart-home PR #126) | where the clawctl agent drops fetched, still-unverified manifests |
 | `bootstrap --review` → `review_digest` | attempt phase `reviewing`; digest reported to Hub |
 | `bootstrap --apply <review_digest>` | executed only after Hub approval matching that exact digest |
@@ -267,8 +282,10 @@ Each `update_run` creates a deployment in the existing rollout driver:
 ### 9.1 Trust boundaries
 
 Hub decides scheduling only. Artifact trust = signature verified on the device with locally pinned
-identities. Compromise of the Hub must at most cause *installing an already-signed, older or newer
-genuine release* — never arbitrary code. Mitigations for the residual risk: anti-downgrade (agent
+identities. The agent must restrict Hub requests to product-specific, locally trusted artifacts and fixed install
+adapters. A signature authenticates the publisher, not the safety of the release: a compromised
+publisher or trusted workflow can still publish malicious signed code. A compromised Hub can also
+request disruptive legitimate updates; local policy, rollout limits and rollback remain necessary. Mitigations for the residual risk: anti-downgrade (agent
 refuses `to_version < installed` except via `product_rollback_v1` to a local restore point), and
 `max_major_jump=0` by default (major bumps always need a human).
 
@@ -276,20 +293,20 @@ refuses `to_version < installed` except via `product_rollback_v1` to a local res
 
 | Threat | Mitigation |
 | --- | --- |
-| Malicious release in an upstream repo (compromised maintainer) | signature identity pinned to release workflow ref; canary + soak; frozen policy; yank (`yanked_at`) halts runs |
+| Malicious release in an upstream repo (compromised maintainer) | Pinned identity prevents substitution by other publishers, not compromise of that publisher. Canary + soak, local freeze and yank (`yanked_at`) limit exposure; independent review is still needed. |
 | Hub sends forged hashes/URLs | agent verifies with its own pinned identity; URLs must match allowed GitHub hosts and the configured repo |
 | MITM / CDN tampering | TLS + signature + checksum |
-| Hub compromise approves agentic-home apply | device checks publisher key `18dd73f8` and its own `review_digest`; Hub cannot mint a digest |
+| Hub compromise approves agentic-home apply | device checks locally pinned full publisher key and its own `review_digest`; Hub cannot mint a digest |
 | Downgrade / replay of an old signed release | anti-downgrade, monotonic version check; agentic-home manifests' own version rules |
-| Stolen operator/MCP token mass-approves | `updates:approve` is a separate scope, not granted to MCP by default; rate limit on approvals; audit + notifier |
+| Stolen operator/MCP token mass-approves | Update approval/mutation routes are human-admin-only in v1; no existing token scope inherits them. Any future delegation requires its own route policy, limits and review. |
 | Key rotation (new publisher key) | never auto-accepted; requires a device-local trust update via the product's own flow; Hub shows `untrusted_key` |
-| Supply chain of the agent itself | clawctl-agent releases use cosign keyless + SBOM + SLSA (RELEASE.md); verify identity regex is compiled in |
+| Supply chain of the agent itself | U2 must publish signed native assets and pin their exact issuer/identity locally. RELEASE.md currently covers Hub OCI images; its signatures do not authenticate separate agent downloads. |
 
 ### 9.3 GitHub token and rate limits
 
 - Polling uses **unauthenticated** requests by default (60 req/h/IP). With 5 products, ETag conditional
   requests (`If-None-Match` → 304 does not count against the limit when authenticated, and is cheap
-  otherwise) and a 30–60 min interval, this fits comfortably.
+  otherwise) and a 30–60 min interval, budget conservatively for pagination, other clients sharing the IP, and retries. Rate-limit headers are authoritative.
 - Optional token: a fine-grained PAT or GitHub App token, **read-only, public repositories only**, no
   scopes beyond metadata/contents read, stored as a Fly secret (`fly secrets set`), never logged,
   never sent to agents, never exposed via API/MCP. Configured in the private overlay.
@@ -320,25 +337,29 @@ Polished Intune-style pages (see `docs/INTUNE-UI-REFERENCE.md`):
    device review summary + digest + live countdown, "Review again" on expiry.
 5. **Run page**: canary → rings progress, pause/continue/cancel, failures with redacted diagnostics.
 6. **Alerts**: rollback happened, AI still paused, verify failed, poll rate-limited, re-tagged release.
-7. Monitor-only machines show drift but the actions are disabled with the reason
-   "Jobs disabled on this machine (monitor-only)" and a link to enable.
+7. Monitor-only machines show drift and a concise **"Monitor only"** state. Hide update actions that
+   the authenticated operator cannot use. Show **"Enable execution"** only when that operator may
+   change execution policy, following the existing confirmation flow. Keep protocol digests in the
+   structured receipt/details surface, not the primary confirmation copy.
 
-MCP tools (read first, then gated writes): `updates_list_drift`, `updates_get_run`,
-`updates_preview_run`, `updates_start_run` (needs `operate`), `updates_approve` (needs
-`updates:approve`, off by default), `updates_rollback`. Telegram/Discord: opt-in notifications only.
+Proposed MCP reads: `updates_list_drift`, `updates_get_run`. Proposed mutation tools
+`updates_preview_run`, `updates_start_run`, `updates_approve`, `updates_rollback` require the separately
+reviewed delegation phase; v1 mutations use the human-admin Web/CLI/JSON path. Telegram/Discord:
+opt-in notifications only. Every workflow must ship its Web, CLI, API, persistence, audit, tests,
+documentation and deployment verification before the next visible workflow begins.
 
 ## 11. Rollout phases
 
 | Phase | Scope | Exit criterion |
 | --- | --- | --- |
-| U0 | This doc reviewed; open questions decided | admin sign-off |
+| U0 | Reconciled proposal recorded; deployment choices and adapter contracts resolved | decisions recorded before dependent implementation; document merge alone is not approval |
 | U1 | Agent version reporting (`products_v1`) + Hub GitHub poller + drift UI (read-only) | drift correct on all fleet machines for 1 week |
-| U2 | Policies + `clawctl-agent` self-update with restore + watchdog rollback, approve_each only | 10 successful canary self-updates, 1 forced rollback drill |
+| U2 | Signed native release publication + policies + `clawctl-agent` self-update with independent watchdog rollback, approve_each only | 10 successful canary self-updates, 1 forced rollback drill |
 | U3 | OpenClaw / Hermes / BAT adapters with signature verification, rings, M4 canary pause | each product updated across rings once |
 | U4 | agentic-home platform flow (review/apply digest binding, inbox, reconcile, reboot, AI resume) | drill: expiry, reboot, failed apply, AI resume alert |
 | U5 | `auto` policy with soak gates; MCP write tools; optional chat notifications | 30 days with no unattended incident |
 
-Each phase is a separate PR series; no phase deploys to `clawctl-hub-ted` without the admin's explicit
+Each phase is a separate PR series; no phase deploys to the production Hub without the admin's explicit
 ask, following the Fly deploy skill.
 
 ## 12. Open questions (admin decides)
@@ -354,8 +375,8 @@ ask, following the Fly deploy skill.
    as a Fly secret?
 6. **Canary hosts and ring membership** (private overlay): which machine is ring 0 for each platform?
 7. **Soak time** for auto continue: 24h (proposed) vs one full working day per SPEC wording.
-8. **MCP approval**: should Hermes/Grok Bot ever hold `updates:approve`, or stay limited to
-   preview/start with a human approving in the UI (proposed)?
+8. **MCP delegation**: retain read-only service-token access for v1 (proposed); any future mutation
+   delegation needs exact routes and constraints reviewed separately. Do not assume a new scope exists.
 9. **Major version bumps**: always human-only (proposed)?
 10. **Restore-point retention**: last 2 versions (proposed) — disk constraints on small devices?
 11. **Prerelease channel**: out of scope for v1; wanted later for canary hosts?
