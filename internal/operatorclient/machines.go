@@ -19,6 +19,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/teddashh/AI-Intune/internal/netidentity"
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
@@ -868,6 +869,10 @@ func validateMachineIdentity(result operator.MachineDetailResult) error {
 			return err
 		}
 	}
+	if err := validateMachineLANIPv4(i.Value.LANIPv4); err != nil {
+		return err
+	}
+
 	return validateOptionalMachineDetailText(i.Value.TailscaleIP, result.Disclosure.MaxTextBytes, "identity.tailscale_ip")
 }
 
@@ -1131,4 +1136,19 @@ func validMachineFindingKind(kind string) bool {
 	default:
 		return false
 	}
+}
+
+func validateMachineLANIPv4(p operator.MachineLANIPv4) error {
+	if p.Items == nil || p.Total < 0 || p.Invalid < 0 || len(p.Items) > netidentity.MaxLANIPv4 ||
+		len(p.Items)+p.Invalid > p.Total || p.Truncated != (len(p.Items)+p.Invalid < p.Total) {
+		return errors.New("operator client: invalid LAN IPv4 metadata")
+	}
+	seen := map[string]bool{}
+	for _, value := range p.Items {
+		if !netidentity.ValidLANIPv4(value) || seen[value] {
+			return errors.New("operator client: invalid LAN IPv4")
+		}
+		seen[value] = true
+	}
+	return nil
 }

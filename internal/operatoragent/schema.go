@@ -142,8 +142,10 @@ func Tools() []Tool {
 	ttl := intBound(int(store.OperatorEnrollTokenMinTTLSeconds), int(store.OperatorEnrollTokenMaxTTLSeconds), "Seconds. Hub accepts 60 to 86400.")
 
 	return append([]Tool{
+		{Name: "signins_list", Description: "Read fleet CLI sign-in metadata. No login URLs, device codes, secrets, or write actions.", InputSchema: obj(map[string]any{}), Annotations: readAnn("signins_list")},
 		{Name: "jobs_summary", Description: "Read bounded Hub job counts and threshold flags. Scope view. Null flags mean insufficient evidence.", InputSchema: obj(map[string]any{"kind": strField(1, 256, "", "Executor kind"), "machine_id": strField(1, 256, "", "Machine identifier"), "window": strEnum("24h", "7d"), "per_machine": boolField}), Annotations: readAnn("jobs_summary")},
 		{Name: "approvals_summary", Description: "Read observed approvals. Scope view. Preview and pending metrics are null when not persisted.", InputSchema: obj(map[string]any{"window": strEnum("24h", "7d")}), Annotations: readAnn("approvals_summary")},
+		{Name: "loops_list", Description: "Read agent-reported loop episodes and policy. Scope view. Coverage is limited to agents reporting call activity.", InputSchema: obj(map[string]any{"machine_id": strField(1, 256, "", "Machine identifier")}), Annotations: readAnn("loops_list")},
 		{Name: "hub_status", Description: "Read Hub storage, uptime, restore drill and machine health. Scope view. No secrets or local paths.", InputSchema: obj(map[string]any{}), Annotations: readAnn("hub_status")},
 		{Name: "fleet_overview", Description: "Read GET /v1/operator/machines. Totals are the fleet index. Items are one page. A non-null next_cursor means this page is not the whole fleet.", InputSchema: obj(map[string]any{}), Annotations: readAnn("fleet_overview")},
 		{Name: "machines_list", Description: "Read GET /v1/operator/machines with the same filters as the operator client.", InputSchema: obj(map[string]any{
@@ -152,6 +154,12 @@ func Tools() []Tool {
 			"channel": strEnum("any", "none", "canary", "stable"), "limit": machineLimit, "cursor": cursor,
 		}), Annotations: readAnn("machines_list")},
 		{Name: "machine_get", Description: "Read GET /v1/operator/machines/{id}. Reachability is Hub's judgement from outbound check-ins.", InputSchema: obj(map[string]any{"machine_id": id256}, "machine_id"), Annotations: readAnn("machine_get")},
+		{Name: "machine_disks", Description: "Read a machine’s disk inventory and setup job results. Approvals are available only in the Hub.", InputSchema: obj(map[string]any{"machine_id": strField(1, 256, "", "Machine ID")}, "machine_id"), Annotations: readAnn("machine_disks")},
+		{Name: "host_profile_get", Description: "Read the fleet host setup profile and Linux host reports shown in Hub. Reports are agent-relayed evidence, not independent verification.", InputSchema: obj(map[string]any{}), Annotations: readAnn("host_profile_get")},
+		{Name: "join_requests_list", Description: "List machines waiting for Hub approval. Read only; no credentials are returned.", InputSchema: obj(map[string]any{}), Annotations: readAnn("join_requests_list")},
+		{Name: "machine_readiness", Description: "Read the host readiness checklist, Needs you / Fixing itself / Done counts, effective targets, and next actions shown in Hub. This tool is read-only; sign-in requires human consent.", InputSchema: obj(map[string]any{"machine_id": id256}, "machine_id"), Annotations: readAnn("machine_readiness")},
+		{Name: "machine_safe_detail", Description: "Read the opt-in scrubbed machine detail and evidence projection. Redaction flags are heuristic and do not prove secret absence.", InputSchema: obj(map[string]any{"machine_id": id256}, "machine_id"), Annotations: readAnn("machine_safe_detail")},
+		{Name: "machine_oom_kills", Description: "Read recent OOM attribution shown on machine detail. Counter rows can overlap kernel kills; unknown identities must not be inferred.", InputSchema: obj(map[string]any{"machine_id": id256}, "machine_id"), Annotations: readAnn("machine_oom_kills")},
 		{Name: "machine_evidence", Description: "Read GET /v1/operator/machines/{id}/evidence. limit 0 uses the server default.", InputSchema: obj(map[string]any{"machine_id": id256, "limit": machineEvidenceLimit}, "machine_id"), Annotations: readAnn("machine_evidence")},
 		{Name: "jobs_list", Description: "Read GET /v1/operator/jobs.", InputSchema: obj(map[string]any{
 			"machine_id":    map[string]any{"type": "string", "description": "Optional. When set, Hub rejects surrounding whitespace. No maximum length is published for this filter."},
@@ -217,5 +225,5 @@ func Tools() []Tool {
 			"machine_id": id256, "profile_id": profileID, "profile_revision": profileRevision, "confirm_display_name": confirmName,
 			"preview_digest": digestField, "reason": reason, "idempotency_key": idemField,
 		}, "machine_id", "profile_id", "profile_revision", "confirm_display_name", "preview_digest", "reason", "idempotency_key"), Annotations: writeAnn("profile_assignment_apply", true)},
-	}, append(diskCleanTools(id256, idemField), append(append(scriptTools(), scheduleTools()...), append(append(diskPolicyTools(), diskApprovalTools()...), diskActionTools()...)...)...)...)
+	}, append(diskCleanTools(id256, idemField), append(append(append(scriptTools(), scheduleTools()...), certificateTools()...), append(append(diskPolicyTools(), diskApprovalTools()...), diskActionTools()...)...)...)...)
 }

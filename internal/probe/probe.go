@@ -194,6 +194,7 @@ func Collect(ctx context.Context) (model.ObservationBatch, error) {
 	units := systemdUnits(ctx, watchedUnits)
 
 	batch := model.ObservationBatch{
+		OOMKills:      collectOOM(ctx),
 		SchemaVersion: model.SchemaVersion,
 		MeasuredAt:    now,
 		Identity:      identity(ctx),
@@ -202,6 +203,7 @@ func Collect(ctx context.Context) (model.ObservationBatch, error) {
 		Journals:      unitJournals(ctx, units),
 		OpenClaw:      openClaw(ctx, home, tools),
 		Credentials:   credentials(home, now),
+		AuthHealth:    AuthHealth(ctx, home, now),
 		CLITools:      tools,
 		BAT:           bat,
 	}
@@ -289,6 +291,7 @@ func identity(ctx context.Context) model.Identity {
 		id.Hostname = h
 	}
 	id.Kernel, id.Arch = kernelAndArch()
+	id.LANIPv4 = lanIPv4()
 	// tailscale 不在也無所謂，拿不到就是空字串（欄位是 omitempty）。
 	if out, _, err := run(ctx, quickTimeout, "tailscale", "ip", "-4"); err == nil {
 		if lines := strings.Fields(out); len(lines) > 0 {

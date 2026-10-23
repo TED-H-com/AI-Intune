@@ -169,10 +169,20 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 		"POST /v1/operator/deployments/{id}/skip-failed-batch-preview",
 		"POST /v1/operator/deployments/{id}/skip-failed-batches",
 	}
+	for _, pattern := range []string{"GET /v1/operator/offline-alert-settings", "POST /v1/operator/offline-alert-settings/preview", "POST /v1/operator/offline-alert-settings"} {
+		patterns = append(patterns, pattern)
+		mux.HandleFunc(pattern, h.handleOfflineAlertSettings)
+	}
+	patterns = append(patterns, "GET /v1/operator/machines/{id}/oom-kills")
+	mux.HandleFunc("GET /v1/operator/machines/{id}/oom-kills", h.handleOperatorOOMKills)
 	patterns = append(patterns, "GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status")
+	patterns = append(patterns, "GET /v1/operator/loops")
+	mux.HandleFunc("GET /v1/operator/loops", h.handleOperatorLoops)
 	mux.HandleFunc("GET /v1/operator/jobs-summary", h.handleOperatorJobsSummary)
 	mux.HandleFunc("GET /v1/operator/approvals-summary", h.handleOperatorApprovalsSummary)
 	mux.HandleFunc("GET /v1/operator/hub-status", h.handleOperatorHubStatus)
+	patterns = append(patterns, "GET /v1/operator/machines/{id}/safe")
+	mux.HandleFunc("GET /v1/operator/machines/{id}/safe", h.handleGetOperatorMachineSafe)
 	mux.HandleFunc(patterns[0], h.handleListOperatorMachines)
 	mux.HandleFunc(patterns[1], h.handleGetOperatorMachine)
 	mux.HandleFunc(patterns[2], h.handleGetOperatorMachineChannel)
@@ -341,7 +351,7 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 		patterns = append(patterns, pattern)
 		mux.HandleFunc(pattern, h.handleDiskApprovalDecision)
 	}
-	return patterns
+	return append(patterns, h.certificateRoutes(mux)...)
 }
 
 func (h *hub) handleListOperatorJobs(w http.ResponseWriter, r *http.Request) {
@@ -1219,4 +1229,40 @@ func (h *hub) rejectOperatorEnrollTokenRevocationTransport(w http.ResponseWriter
 
 func operatorActor(r *http.Request) operator.Actor {
 	return operator.ActorFromRequest(r, operator.SourceKindOperatorAPI)
+}
+
+func (h *hub) handleOperatorOOMKills(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.RawQuery != "" {
+		writeErr(w, 400, "BAD_REQUEST", "query parameters are not supported")
+		return
+	}
+	events, err := operator.New(h.store).MachineOOMKills(r.PathValue("id"), time.Now().UTC())
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, 404, store.OperatorCodeMachineNotFound, "machine not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "could not read OOM evidence")
+		return
+	}
+	writeJSON(w, 200, events)
+}
+
+func (h *hub) handleGetOperatorMachineSafe(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.ForceQuery || r.URL.RawQuery != "" {
+		writeErr(w, 400, "BAD_REQUEST", "Query parameters are not supported")
+		return
+	}
+	result, err := operator.New(h.store).MachineSafe(r.PathValue("id"), time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, 404, store.OperatorCodeMachineNotFound, "Machine not found")
+			return
+		}
+		writeErr(w, 500, "INTERNAL", "Unable to read scrubbed machine detail")
+		return
+	}
+	writeJSON(w, 200, result)
 }

@@ -210,6 +210,7 @@ const artifactFetchColumns = `operation_id,idempotency_key,request_digest,name,v
 func (s *Store) ApplyOperatorArtifactFetch(req OperatorArtifactFetchRequest,
 	prepare OperatorArtifactFetchPrepare,
 ) (OperatorArtifactFetchResult, error) {
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorArtifactFetchResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -241,7 +242,7 @@ func (s *Store) ApplyOperatorArtifactFetch(req OperatorArtifactFetchRequest,
 	// same second writer phase and become durable idempotent decisions.
 	rejectCode := ""
 	if !validArtifactFetchIdentifier(req.Name, 128) || !validArtifactFetchIdentifier(req.Version, 128) ||
-		!validSingleLineText(req.Reason, auditMaxReason, false) {
+		!validAuditReason(req.Reason) {
 		rejectCode = OperatorCodeArtifactFetchInvalid
 	} else if strings.TrimSpace(req.PreviewDigest) == "" {
 		rejectCode = OperatorCodePreviewRequired
@@ -362,7 +363,7 @@ func operatorArtifactFetchAudit(req OperatorArtifactFetchRequest) AuditEntry {
 	// A malformed reason is still bound by RequestDigest, but must not be copied
 	// into presentation/audit text. Canonical reasons are required for every
 	// accepted fetch and preserved verbatim.
-	if validSingleLineText(req.Reason, auditMaxReason, false) {
+	if validAuditReason(req.Reason) {
 		audit.Reason = req.Reason
 	} else {
 		audit.Reason = ""
@@ -578,7 +579,7 @@ func validateOperatorArtifactFetchOriginalAudit(tx dbTx, req OperatorArtifactFet
  WHERE action=? AND COALESCE(machine_id,'')=? AND subject=? AND COALESCE(reason,'')=?
    AND idempotency_key=? AND request_digest=? AND at=? AND outcome=?
    AND COALESCE(detail,'')=?`, string(AuditArtifactFetch), audit.MachineID,
-		truncAudit(audit.Subject, auditMaxReason), truncAudit(audit.Reason, auditMaxReason),
+		truncAudit(audit.Subject, auditMaxReason), truncReason(audit.Reason),
 		req.IdempotencyKey, req.RequestDigest, createdAt, outcome, detail).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("store: inspect original artifact fetch audit: %w", err)

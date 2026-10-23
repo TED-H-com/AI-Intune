@@ -93,29 +93,96 @@ func closeCanarySilentFailureWithEvidenceTx(tx dbTx, machineID string, evidenceA
 	return nil
 }
 
-// ReconcileFleet 在拿到 SQLite writer reservation 之後才讀 Overview，並在同一
-// 筆交易裡寫入狀態歷史與 promote failure span。它只會開啟或延長
-// failure；只有同一批明確健康的 observation 才能關閉。另一個 Store 的 stable create
-// 只能完整地排在這次 judgement 前面或後面，不能插進 derive/materialize 之間。
+// ErrReconcileEvidenceChanged means concurrent commits exhausted this tick's retry budget.
+var ErrReconcileEvidenceChanged = errors.New("store: reconcile evidence changed")
+
+// ReconcileFleet derives outside the writer. Transactional per-machine revisions
+// captured immediately BEFORE Overview invalidate any judgement whose evidence
+// changed, including backdated commits and in-place updates. Shared deployment,
+// policy and credential-peer evidence has a global revision. Under BEGIN IMMEDIATE
+// validation orders stable create entirely before or after each machine's judgement:
+// a create in the derive/materialize gap forces a fresh judgement outside the writer.
+// Batches of eight bound writer hold; each machine's history and failure writes are
+// atomic and idempotent. Completed machines need not retry when another changes.
+// At most three derivations bound the tick even if new machines keep arriving;
+// derivation never holds a writer.
+// Only explicit healthy observations close failure spans.
 func (s *Store) ReconcileFleet(now time.Time) error {
 	now = now.UTC()
-	tx, err := s.beginWrite(context.Background(), "reconcile_fleet")
-	if err != nil {
-		return fmt.Errorf("store: begin fleet reconcile: %w", err)
+	completed := map[string]bool{}
+	conflicts := map[string]int{}
+	for round := 0; round < 3; round++ {
+		before, err := s.reconcileRevisions()
+		if err != nil {
+			return fmt.Errorf("store: reconcile watermark: %w", err)
+		}
+		ov, err := s.Overview(now)
+		if err != nil {
+			return fmt.Errorf("store: reconcile overview: %w", err)
+		}
+		var pending []MachineRow
+		for _, m := range ov.Machines {
+			if !completed[m.MachineID] {
+				pending = append(pending, m)
+			}
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+		if s.afterReconcileOverview != nil {
+			s.afterReconcileOverview()
+		}
+		for start := 0; start < len(pending); start += 8 {
+			end := start + 8
+			if end > len(pending) {
+				end = len(pending)
+			}
+			tx, err := s.beginWrite(context.Background(), "reconcile_fleet")
+			if err != nil {
+				return fmt.Errorf("store: begin fleet reconcile: %w", err)
+			}
+			var valid []MachineRow
+			for _, m := range pending[start:end] {
+				matches, err := reconcileRevisionMatches(tx, before, m.MachineID)
+				if err != nil {
+					tx.Rollback()
+					return fmt.Errorf("store: validate reconcile: %w", err)
+				}
+				if !matches {
+					conflicts[m.MachineID]++
+					if conflicts[m.MachineID] >= 3 {
+						tx.Rollback()
+						return fmt.Errorf("%w: machine %s; retry next tick", ErrReconcileEvidenceChanged, m.MachineID)
+					}
+					continue
+				}
+				valid = append(valid, m)
+			}
+			if err := materializeFleetBatch(tx, valid, now); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("store: commit fleet reconcile: %w", err)
+			}
+			for _, m := range valid {
+				completed[m.MachineID] = true
+			}
+		}
+		allCompleted := true
+		for _, m := range pending {
+			allCompleted = allCompleted && completed[m.MachineID]
+		}
+		if allCompleted {
+			return nil
+		}
 	}
-	defer tx.Rollback()
+	return fmt.Errorf("%w: retry next tick", ErrReconcileEvidenceChanged)
+}
 
-	// 這些讀走第二條 pooled connection。WAL 允許 reader 與已拿 writer
-	// reservation 的 transaction 共存，而 reservation 已擋住其他 writer。
-	ov, err := s.Overview(now)
-	if err != nil {
-		return fmt.Errorf("store: reconcile overview: %w", err)
-	}
-	if s.afterReconcileOverview != nil {
-		s.afterReconcileOverview()
-	}
-	for _, machine := range ov.Machines {
-		if err := recordStateTransitionTx(tx, machine.MachineID, machine.State, machine.Reason, ov.Now); err != nil {
+func materializeFleetBatch(tx dbTx, machines []MachineRow, now time.Time) error {
+	for _, machine := range machines {
+		if err := recordStateTransitionTx(tx, machine.MachineID, machine.State, machine.Reason, now); err != nil {
 			return fmt.Errorf("store: reconcile state %s: %w", machine.DisplayName, err)
 		}
 		failureReason := ""
@@ -130,13 +197,10 @@ func (s *Store) ReconcileFleet(now time.Time) error {
 			}
 		}
 		if failureReason != "" {
-			if _, err := recordCanarySilentFailureTx(tx, machine.MachineID, failureReason, ov.Now); err != nil {
+			if _, err := recordCanarySilentFailureTx(tx, machine.MachineID, failureReason, now); err != nil {
 				return fmt.Errorf("store: reconcile promote evidence %s: %w", machine.DisplayName, err)
 			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit fleet reconcile: %w", err)
 	}
 	return nil
 }

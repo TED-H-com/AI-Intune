@@ -91,6 +91,24 @@ var linuxAgentBundleArchiveEntries = []agentBundleArchiveEntry{
 	{name: "openclaw-gateway.service", mode: 0o644},
 }
 
+// Optional all-or-nothing extension; older Linux bundles remain valid.
+var fleetApplyArchiveEntries = []agentBundleArchiveEntry{
+	{name: "fleet-apply/clawctl-fleet-apply", mode: 0o755},
+	{name: "fleet-apply/clawctl-fleet-apply.path", mode: 0o644},
+	{name: "fleet-apply/clawctl-fleet-apply.service", mode: 0o644},
+	{name: "fleet-apply/clawctl-fleet-apply.timer", mode: 0o644},
+	{name: "fleet-apply/install.sh", mode: 0o755},
+	{name: "fleet-apply/installer.py", mode: 0o644},
+	{name: "fleet-apply/uninstall.sh", mode: 0o755},
+	{name: "fleet-apply/maintenance/conf/root.conf.example", mode: 0o644},
+	{name: "fleet-apply/maintenance/disk-clean", mode: 0o755},
+	{name: "fleet-apply/maintenance/install-timers.sh", mode: 0o755},
+	{name: "fleet-apply/maintenance/journald/50-disk-clean.conf", mode: 0o644},
+	{name: "fleet-apply/maintenance/systemd/system/disk-clean-root.service", mode: 0o644},
+	{name: "fleet-apply/maintenance/systemd/system/disk-clean-root.timer", mode: 0o644},
+	{name: "fleet-apply/maintenance/tmpfiles/00-disk-clean.conf", mode: 0o644},
+}
+
 var darwinAgentBundleArchiveEntries = []agentBundleArchiveEntry{
 	{name: "VERSION", mode: 0o644},
 	{name: "clawctl-agent", mode: 0o755},
@@ -477,9 +495,29 @@ func validateAgentBundleArchive(file *os.File, spec agentBundleSpec, version str
 			}
 		}
 	}
-	if header, err := tarReader.Next(); err != io.EOF || header != nil {
+	header, tailErr := tarReader.Next()
+	if spec.OS == "linux" && tailErr == nil {
+		for i, expected := range fleetApplyArchiveEntries {
+			if i > 0 {
+				header, tailErr = tarReader.Next()
+			}
+			if tailErr != nil || header == nil || header.Name != expected.name || header.Typeflag != tar.TypeReg || header.Mode&0o777 != expected.mode || header.Size <= 0 || header.Size > 1<<20 {
+				return errors.New("fleet applier bundle extension is invalid")
+			}
+			total += header.Size
+			if total > 2*maxAgentBundleFileBytes {
+				return errors.New("bundle archive is too large")
+			}
+			if n, err := io.Copy(io.Discard, tarReader); err != nil || n != header.Size {
+				return errors.New("fleet applier bundle extension is truncated")
+			}
+		}
+		header, tailErr = tarReader.Next()
+	}
+	if tailErr != io.EOF || header != nil {
 		return errors.New("bundle archive contains extra entries")
 	}
+
 	return nil
 }
 

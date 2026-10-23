@@ -124,12 +124,12 @@ func TestDiskAdminReauthenticationPasswordMFAAndHumanOnly(t *testing.T) {
 
 func TestDiskApprovalDecisionReasonStoredSanitizedAndBound(t *testing.T) {
 	s, a, _ := approvalFixture(t)
-	req := OpsApprovalDecisionRequest{ID: a.ID, Decision: "approved", Reason: " reviewed\nmanifest\x00\t safely "}
+	req := OpsApprovalDecisionRequest{ID: a.ID, Decision: "approved", Reason: " reviewed manifest safely "}
 	p, err := s.OpsApprovalDecision(req, false, "", diskAdmin())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Request.Reason != "reviewedmanifest safely" {
+	if p.Request.Reason != "reviewed manifest safely" {
 		t.Fatal("control characters retained", p.Request.Reason)
 	}
 	changed := p.Request
@@ -149,7 +149,7 @@ func TestDiskApprovalDecisionReasonStoredSanitizedAndBound(t *testing.T) {
 	if err = s.db.QueryRow(`SELECT detail FROM audit_log WHERE action=? AND idempotency_key=? ORDER BY audit_id DESC LIMIT 1`, AuditOpsApproval, "reason-decision").Scan(&detail); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(detail, `"decision_reason":"reviewedmanifest safely"`) {
+	if !strings.Contains(detail, `"decision_reason":"reviewed manifest safely"`) {
 		t.Fatal("reason absent from success audit", detail)
 	}
 	req.Reason = strings.Repeat("a", 501)

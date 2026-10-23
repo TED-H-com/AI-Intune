@@ -1,0 +1,16 @@
+{{define "host_profile.html"}}{{template "head" .}}
+<h1>Host setup profile</h1>
+<p>Choose how your Linux machines are set up. Changes apply automatically after check-in and are checked again every 30 minutes. Leave a setting unmanaged to keep local choices.</p>
+<p><a href="/machines/configuration">Back to Configuration</a> · <a href="https://github.com/TED-H-com/AI-Intune/blob/main/docs/HOST-PROFILE.md">What these settings do</a></p>
+{{with .HostProfile}}{{if .Saved}}<p role="status">Host setup profile saved. Machines will apply your choices after their next check-in.</p>{{end}}<div class="panel"><h2>Linux host settings</h2>
+{{if not .Manage}}<p>Read-only. Ask a Hub administrator to change host settings.</p>{{end}}
+<form method="post" action="/machines/host-profile" class="disk-form"><fieldset {{if not .Manage}}disabled{{end}}><legend>Managed settings</legend><div class="form-grid disk-form-grid">
+{{range .Fields}}<label><span class="field-label">{{.Label}}</span>
+{{if .Boolean}}<select name="{{.Name}}"><option value="">Do not manage</option><option value="true" {{if eq .Value "true"}}selected{{end}}>On</option><option value="false" {{if eq .Value "false"}}selected{{end}}>Off — undo changes made by host setup</option></select>
+{{else if eq .Name "power_profile"}}<select name="{{.Name}}"><option value="">Do not manage</option><option value="performance" {{if eq .Value "performance"}}selected{{end}}>Performance</option><option value="balanced" {{if eq .Value "balanced"}}selected{{end}}>Balanced</option><option value="power-saver" {{if eq .Value "power-saver"}}selected{{end}}>Power saver</option></select>
+{{else}}<input type="number" name="{{.Name}}" min="100" max="4096" value="{{.Value}}" placeholder="Not managed">{{end}}</label>{{end}}
+</div>{{if .Manage}}<div class="disk-button-row" style="margin-top:16px"><button>Save host setup profile</button></div>{{end}}</fieldset></form>
+<p>Daily root cleaning installs the existing safe preview timer. Deletion still requires local approval. Security updates require an installed unattended-upgrades package. Wi-Fi changes take effect on the next connection.</p></div>
+<div class="panel"><h2>Machine status</h2><p>Waiting means the current profile has not been reported, or the report is more than 15 minutes old or the last setup check is more than 90 minutes old. These reports come from each machine's agent.</p>
+<table><thead><tr><th>Machine</th><th>Setup</th><th>Settings</th><th>Restart needed</th><th>Report received</th></tr></thead><tbody>{{range .Fleet.Hosts}}<tr><td><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a></td><td>{{.Status}}</td><td>{{if .Result}}{{range $name,$item := .Result.Items}}<div>{{hostProfileLabel $name}}: {{$item.Status}} {{if $item.Detail}}— {{$item.Detail}}{{end}}</div>{{end}}{{else}}No report yet{{end}}</td><td>{{if .Result}}{{if .Result.RebootRequired}}Restart needed{{else}}No{{end}}{{else}}Unknown{{end}}</td><td>{{if .ReceivedAt}}{{.ReceivedAt}}{{else}}Not yet{{end}}</td></tr>{{else}}<tr><td colspan="5">No Linux machines enrolled.</td></tr>{{end}}</tbody></table></div>{{end}}
+{{template "foot" .}}{{end}}

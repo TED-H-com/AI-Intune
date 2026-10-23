@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/teddashh/AI-Intune/internal/operator"
+	"github.com/teddashh/AI-Intune/internal/store"
 )
 
 func (f *fakeHub) JobsSummary(context.Context, operator.SupervisionFilter) (operator.JobsSummary, error) {
@@ -55,5 +56,19 @@ func TestSupervisionToolsReadOnlyAndStrict(t *testing.T) {
 	f.err = &CallError{Code: "test", Message: "failed"}
 	if _, err := (&Service{Hub: f}).Call(context.Background(), "hub_status", json.RawMessage(`{}`)); err == nil {
 		t.Fatal("lost Hub error")
+	}
+}
+
+func (f *fakeHub) Loops(context.Context, string) (store.LoopsRead, error) {
+	f.call("Loops")
+	return store.LoopsRead{}, f.err
+}
+func TestLoopsTool(t *testing.T) {
+	f := &fakeHub{}
+	if _, err := (&Service{Hub: f}).Call(context.Background(), "loops_list", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Service{Hub: f}).Call(context.Background(), "loops_list", json.RawMessage(`{"unknown":true}`)); err == nil {
+		t.Fatal("accepted unknown field")
 	}
 }

@@ -2,10 +2,10 @@ package web
 
 import (
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/operator"
@@ -19,9 +19,9 @@ const enrollmentLimitBack = "/machines/enrollment"
 
 func (s *Server) previewEnrollmentLimit(w http.ResponseWriter, r *http.Request) {
 	reason := r.FormValue("reason")
-	if reason == "" || strings.TrimSpace(reason) != reason || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, "註冊上限",
-			"未建立上限預覽", "理由不可省略、前後不可有空白，且最多 500 字。", enrollmentLimitBack)
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	set, maxMachines, ok := parseEnrollmentLimitForm(r)

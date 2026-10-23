@@ -700,3 +700,52 @@ func TestPruneNotificationsKeepsNewestDelivered(t *testing.T) {
 		}
 	}
 }
+
+// Exercise the real batched prune, with revision triggers enabled. Retention
+// must remain cheap despite one indexed revision upsert per deleted row.
+func TestPruneTwentyThousandObservationsWithRevisions(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	id := mustEnroll(t, s, "prune-load", now.Add(-90*24*time.Hour))
+	old := fmtTime(now.Add(-60 * 24 * time.Hour))
+	_, err := s.DB().Exec(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<20001)
+ INSERT INTO observed_state(observation_id,machine_id,measured_at,received_at,kind,subject,payload,source)
+ SELECT 'prune-load-'||x, ?, ?, ?, 'resources', 'resources', '{}', 'agent_measurement' FROM n`, id, old, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One newer row protects only itself; all 20,001 old rows should go.
+	observeAt(t, s, id, now)
+	before, err := s.reconcileRevisions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	report, err := s.Prune(now, DefaultRetention(), false)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deleted int64
+	for _, c := range report.Counts {
+		if c.Table == "observed_state" {
+			deleted = c.Deleted
+		}
+	}
+	if deleted != 20001 {
+		t.Fatalf("deleted %d observations, want 20001", deleted)
+	}
+	after, err := s.reconcileRevisions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[id]-before[id] != deleted {
+		t.Fatalf("prune revision delta=%d, deletes=%d", after[id]-before[id], deleted)
+	}
+	t.Logf("pruned %d observations in %s", deleted, elapsed)
+	// Catch quadratic scans or per-row transactions, not small timing differences.
+	// Race builds need a separate budget for the instrumented pure Go SQLite VM.
+	if elapsed > prunePerformanceLimit {
+		t.Fatalf("prune took %s, want <%s", elapsed, prunePerformanceLimit)
+	}
+}

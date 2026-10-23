@@ -1,5 +1,9 @@
 /build/
 /dist/
+# go build ./cmd/<name> run at the repository root
+/clawctl-agent
+/clawctl-hub
+/clawctl-operator
 .work/
 *.exe
 *.test

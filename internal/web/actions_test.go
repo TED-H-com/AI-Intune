@@ -781,7 +781,7 @@ func TestConnectUndecodableObservationFailsClosedWithoutRenderingRawPayload(t *t
 	s, st := newServer(t)
 	id := onlineMachine(t, st, "typed-connect-invalid")
 	privatePayload := `{"running":true,"argv":"PRIVATE_BAT_ARGV"`
-	if _, err := st.DB().Exec(`UPDATE observed_state SET payload=? WHERE machine_id=? AND kind=?`,
+	if _, err := st.DB().Exec(`UPDATE observed_latest SET payload=? WHERE machine_id=? AND kind=?`,
 		privatePayload, id, store.KindBAT); err != nil {
 		t.Fatal(err)
 	}
