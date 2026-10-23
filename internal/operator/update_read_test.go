@@ -191,9 +191,8 @@ func TestUpdatesPreservesObservationTimeWhenOldAgentOmittedInstall(t *testing.T)
 	}
 	observeDeploymentMachine(t, st, "machine-old-agent", "old-agent-box", "canary",
 		"24.16.0", "2026.9.7", now.Add(-time.Minute))
-	if _, err := st.DB().Exec(`UPDATE observed_state SET payload=?
- WHERE rowid=(SELECT rowid FROM observed_state WHERE machine_id=? AND kind=? AND subject=?
- ORDER BY received_at DESC, measured_at DESC, rowid DESC LIMIT 1)`,
+	if _, err := st.DB().Exec(`UPDATE observed_latest SET payload=?
+ WHERE machine_id=? AND kind=? AND subject=?`,
 		`{"present":true}`, "machine-old-agent", store.KindOpenClaw, store.KindOpenClaw); err != nil {
 		t.Fatal(err)
 	}

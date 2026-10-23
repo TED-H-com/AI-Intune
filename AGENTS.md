@@ -11,3 +11,14 @@ For host migration and generic deploys, follow [skills/fleet-host-migration/SKIL
 For tool removal, follow [skills/fleet-tool-removal/SKILL.md](skills/fleet-tool-removal/SKILL.md).
 
 Do not merge PRs unless the human asked. Do not print secrets.
+
+## Interface copy
+
+- Every Web, CLI, installer, and API message contains only the current state, available action, concrete impact, and exact next step.
+- Never expose development history, implementation gaps, temporary guards, migration commentary, defensive explanations, responsibility disclaimers, or speculative caveats in the product interface.
+- Represent unavailable data as a concise typed state. Do not explain the implementation behind it.
+- Show only actions the authenticated operator can use. Do not replace unavailable actions with disabled controls or capability lectures.
+- Keep confirmations focused on target, effect, and required confirmation. Keep protocol evidence in structured receipts and audit records.
+- Do not expose placeholders, partial workflows, or temporary navigation. Finish the vertical slice before making it visible.
+- Put legal terms in the dedicated terms surface linked from installation or the final page, never inline with the task flow.
+- Tests must cover concise interface copy and prevent banned implementation language from returning. `forbiddenInterfaceCopy` in `internal/web/interface_copy_test.go` scans templates and production Go strings; extend it instead of loosening it.
