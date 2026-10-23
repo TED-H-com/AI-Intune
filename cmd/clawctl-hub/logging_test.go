@@ -15,24 +15,31 @@ func TestLoggingMiddleware(t *testing.T) {
 	defer slog.SetDefault(oldLogger)
 
 	var buf bytes.Buffer
-	handler := slog.NewJSONHandler(&buf, nil)
+	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	slog.SetDefault(slog.New(handler))
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /machines/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(1500 * time.Millisecond)
+	mux.HandleFunc("GET /slow", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	loggedMux := loggingMiddleware(mux)
-
-	t.Run("Fast Request", func(t *testing.T) {
+	t.Run("Fast Request with Route Pattern", func(t *testing.T) {
 		buf.Reset()
-		req := httptest.NewRequest("GET", "/test", nil)
+
+		var mockTime time.Time
+		nowFunc := func() time.Time {
+			ret := mockTime
+			mockTime = mockTime.Add(10 * time.Millisecond) // duration = 10ms
+			return ret
+		}
+
+		loggedMux := newLoggingMiddleware(100, nowFunc)(mux)
+
+		req := httptest.NewRequest("GET", "/machines/abc", nil)
 		rr := httptest.NewRecorder()
 		loggedMux.ServeHTTP(rr, req)
 
@@ -44,26 +51,34 @@ func TestLoggingMiddleware(t *testing.T) {
 		if !strings.Contains(logOutput, `"msg":"request"`) {
 			t.Errorf("Expected info log message, got: %s", logOutput)
 		}
-		if !strings.Contains(logOutput, `"method":"GET"`) {
-			t.Errorf("Expected method GET in log, got: %s", logOutput)
+		if !strings.Contains(logOutput, `"level":"DEBUG"`) {
+			t.Errorf("Expected level DEBUG in log, got: %s", logOutput)
+		}
+		if !strings.Contains(logOutput, `"route":"GET /machines/{id}"`) {
+			t.Errorf("Expected route GET /machines/{id} in log, got: %s", logOutput)
 		}
 		if !strings.Contains(logOutput, `"status":201`) {
 			t.Errorf("Expected status 201 in log, got: %s", logOutput)
 		}
-		if !strings.Contains(logOutput, `"duration_ms":`) {
-			t.Errorf("Expected duration_ms in log, got: %s", logOutput)
+		if !strings.Contains(logOutput, `"duration_ms":10`) {
+			t.Errorf("Expected duration_ms:10 in log, got: %s", logOutput)
 		}
 	})
 
-	t.Run("Slow Request", func(t *testing.T) {
-		t.Setenv("CLAWCTL_SLOW_REQUEST_MS", "100")
-
+	t.Run("Slow Request Deterministic", func(t *testing.T) {
 		buf.Reset()
+
+		var mockTime time.Time
+		nowFunc := func() time.Time {
+			ret := mockTime
+			mockTime = mockTime.Add(150 * time.Millisecond) // duration = 150ms
+			return ret
+		}
+
+		loggedMux := newLoggingMiddleware(100, nowFunc)(mux)
+
 		req := httptest.NewRequest("GET", "/slow", nil)
 		rr := httptest.NewRecorder()
-
-		// Create a new middleware instance to pick up the env var
-		loggedMux = loggingMiddleware(mux)
 		loggedMux.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
@@ -74,11 +89,95 @@ func TestLoggingMiddleware(t *testing.T) {
 		if !strings.Contains(logOutput, `"msg":"slow request"`) {
 			t.Errorf("Expected warn log message, got: %s", logOutput)
 		}
-		if !strings.Contains(logOutput, `"method":"GET"`) {
-			t.Errorf("Expected method GET in log, got: %s", logOutput)
+		if !strings.Contains(logOutput, `"level":"WARN"`) {
+			t.Errorf("Expected level WARN in log, got: %s", logOutput)
+		}
+		if !strings.Contains(logOutput, `"route":"GET /slow"`) {
+			t.Errorf("Expected route GET /slow in log, got: %s", logOutput)
 		}
 		if !strings.Contains(logOutput, `"status":200`) {
 			t.Errorf("Expected status 200 in log, got: %s", logOutput)
+		}
+		if !strings.Contains(logOutput, `"duration_ms":150`) {
+			t.Errorf("Expected duration_ms:150 in log, got: %s", logOutput)
+		}
+	})
+
+	t.Run("Unmatched Route", func(t *testing.T) {
+		buf.Reset()
+
+		var mockTime time.Time
+		nowFunc := func() time.Time {
+			ret := mockTime
+			mockTime = mockTime.Add(5 * time.Millisecond) // duration = 5ms
+			return ret
+		}
+
+		loggedMux := newLoggingMiddleware(100, nowFunc)(mux)
+
+		req := httptest.NewRequest("GET", "/does-not-exist", nil)
+		rr := httptest.NewRecorder()
+		loggedMux.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("Expected 404, got %d", rr.Code)
+		}
+
+		logOutput := buf.String()
+		if !strings.Contains(logOutput, `"route":"unmatched"`) {
+			t.Errorf("Expected route unmatched in log, got: %s", logOutput)
+		}
+		if !strings.Contains(logOutput, `"status":404`) {
+			t.Errorf("Expected status 404 in log, got: %s", logOutput)
+		}
+	})
+}
+
+func TestParseThreshold(t *testing.T) {
+	oldLogger := slog.Default()
+	defer slog.SetDefault(oldLogger)
+
+	var buf bytes.Buffer
+	handler := slog.NewJSONHandler(&buf, nil)
+	slog.SetDefault(slog.New(handler))
+
+	t.Run("Valid", func(t *testing.T) {
+		buf.Reset()
+		if v := parseThreshold("500"); v != 500 {
+			t.Errorf("expected 500, got %d", v)
+		}
+		if buf.Len() > 0 {
+			t.Errorf("expected no warning log, got %s", buf.String())
+		}
+	})
+
+	t.Run("Empty", func(t *testing.T) {
+		buf.Reset()
+		if v := parseThreshold(""); v != 1000 {
+			t.Errorf("expected 1000, got %d", v)
+		}
+		if buf.Len() > 0 {
+			t.Errorf("expected no warning log, got %s", buf.String())
+		}
+	})
+
+	t.Run("Invalid Format", func(t *testing.T) {
+		buf.Reset()
+		if v := parseThreshold("abc"); v != 1000 {
+			t.Errorf("expected 1000, got %d", v)
+		}
+		if !strings.Contains(buf.String(), "invalid CLAWCTL_SLOW_REQUEST_MS") {
+			t.Errorf("expected warning log, got %s", buf.String())
+		}
+	})
+
+	t.Run("Invalid Negative", func(t *testing.T) {
+		buf.Reset()
+		if v := parseThreshold("-50"); v != 1000 {
+			t.Errorf("expected 1000, got %d", v)
+		}
+		if !strings.Contains(buf.String(), "invalid CLAWCTL_SLOW_REQUEST_MS") {
+			t.Errorf("expected warning log, got %s", buf.String())
 		}
 	})
 }
