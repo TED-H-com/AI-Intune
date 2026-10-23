@@ -34,11 +34,11 @@ const (
 // every 派工 row in the live ledger carried `unknown_action` until it was
 // added. TestEveryDeclaredAuditActionIsReadable keeps the two in step.
 var allAuditActions = [...]AuditAction{
-	AuditConnect,
+	AuditConnect, AuditMachineExecutionPolicyPreview, AuditMachineExecutionPolicyApply, AuditSigninStart, AuditSigninCodeSubmitted, AuditSigninCancel, AuditSigninResult, AuditSigninNotifications, AuditChannelManage, AuditChannelTest, AuditSecretTest,
 	AuditRetire,
 	AuditUnretire,
 	AuditEnrollToken,
-	AuditKeyedInstaller,
+	AuditKeyedInstaller, AuditJoinApprove, AuditJoinReject,
 	AuditRevokeToken,
 	AuditEnrollmentLimit,
 	AuditDeploymentCreate,
@@ -57,6 +57,10 @@ var allAuditActions = [...]AuditAction{
 	AuditMachineLifecycle,
 	AuditMachineRename,
 	AuditMachineNotes,
+	AuditScheduleUpsertPreview, AuditScheduleUpsertApply, AuditScheduleEnabledPreview, AuditScheduleEnabledApply, AuditScheduleRun, AuditScheduleRunNow,
+	AuditScriptPreview,
+	AuditScriptApply,
+	AuditScriptComplete,
 	AuditDiagnosticNoop,
 	AuditDeviceSync,
 	AuditTailnetPeerIgnore,
@@ -75,6 +79,7 @@ var allAuditActions = [...]AuditAction{
 	AuditMaintenanceContinue,
 	AuditMaintenanceAbandon,
 	AuditOperatorDenied,
+	AuditUsagePolicyApply, AuditDiskPolicyPreview, AuditDiskPolicyApply, AuditOpsApproval,
 	AuditHubUserCreated, AuditHubUserDisabled, AuditHubUserEnabled, AuditHubUserRenamed, AuditHubUserEmailChanged,
 	AuditHubGuessing, AuditHubSetup, AuditHubLoginOK, AuditHubLoginFailed, AuditHubLockout, AuditHubLogout,
 	AuditMFAEnabled, AuditMFADisabled, AuditMFAFailed, AuditRecoveryCodeUsed, AuditRecoveryCodesRegenerated,

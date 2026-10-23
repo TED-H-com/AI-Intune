@@ -17,6 +17,7 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -27,11 +28,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/chat"
+	"github.com/teddashh/AI-Intune/internal/clientip"
 	"github.com/teddashh/AI-Intune/internal/compliance"
 	"github.com/teddashh/AI-Intune/internal/deploy"
+	"github.com/teddashh/AI-Intune/internal/diskreport"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
+	"github.com/teddashh/AI-Intune/internal/secrets"
 	"github.com/teddashh/AI-Intune/internal/sessionid"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
@@ -48,6 +53,13 @@ type TerminalLinks interface {
 }
 
 type Server struct {
+	joinClientIP              clientip.Resolver
+	buildVersion, buildCommit string
+
+	inbound           *chat.Engine
+	secretProvider    secrets.SecretProvider
+	scheduleAdmission func(http.ResponseWriter, *http.Request) bool
+	diskAlertBanner   diskAlertBannerCache
 	// drill 讀還原演練的章；nil = 不看。用 SetDrillStampReader 塞。
 	drill DrillStampReader
 	// terminalLinks 是機器有沒有連上 agent。nil = 沒有任何一台連著。
@@ -173,6 +185,9 @@ func (s *Server) SetTerminalLimits(idle, lifetime time.Duration) {
 }
 
 func (s *Server) Routes(mux *http.ServeMux) []string {
+	mux.Handle("POST /secrets/test", http.NewCrossOriginProtection().Handler(http.HandlerFunc(s.secretTest)))
+	mux.HandleFunc("GET /secrets", s.secretsPage)
+	mux.HandleFunc("GET /v1/operator/secrets", s.secretsPage)
 	patterns := []string{
 		"GET /{$}",
 		"GET /machines",
@@ -255,8 +270,11 @@ func (s *Server) Routes(mux *http.ServeMux) []string {
 	mux.HandleFunc(patterns[37], s.setNavigationLanguage)
 	mux.HandleFunc(patterns[38], s.terminalDocument)
 	mux.HandleFunc(patterns[39], s.downloadKeyedInstaller)
-	// ⚠ 寫入路徑全部在 actions.go，而且全部是 POST。理由寫在那個檔案的開頭。
-	return append(patterns, s.actionRoutes(mux)...)
+	patterns = append(patterns, s.joinRoutes(mux)...)
+	patterns = append(patterns, s.checksRoutes(mux)...)
+	// Mutation routes are POST-only and delegate to the canonical operator service.
+	patterns = append(patterns, s.offlineAlertsRoutes(mux)...)
+	return append(append(append(append(append(patterns, append(s.channelRoutes(mux), s.signinRoutes(mux)...)...), "GET /secrets", "GET /v1/operator/secrets", "POST /secrets/test"), s.actionRoutes(mux)...), s.diskOpsRoutes(mux)...), append(append(s.scheduleRoutes(mux), s.loopRoutes(mux)...), append(s.certificateRoutes(mux), append(s.readinessRoutes(mux), append(s.hostProfileRoutes(mux), append(s.diskSetupRoutes(mux), s.executionPolicyRoutes(mux)...)...)...)...)...)...)
 }
 
 type maintenancePageView struct {
@@ -340,7 +358,7 @@ func (s *Server) tailnetSettings(w http.ResponseWriter, r *http.Request) {
 
 // enrollment is the discoverable home for the already-canonical enrollment
 // preview/create flow.  The page itself is read-only; its forms still enter
-// through actions.go and the operator service, so moving the UI does not invent
+// through feature handlers and the operator service, so moving the UI does not invent
 // a second enrollment contract.
 func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
@@ -374,6 +392,33 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 // 在測試裡爆炸，而不是在畫面上安靜地變成空字串 —— 一個安靜消失的欄位，
 // 在這個產品裡跟一台安靜消失的機器是同一種 bug。
 type page struct {
+	ExecutionPolicy           *executionPolicyPage
+	OfflineAlerts             *offlineAlertsPage
+	DiskSetup                 *diskSetupPage
+	HostProfile               *hostProfilePage
+	Join                      *joinView
+	Signins                   *signinsPage
+	SigninNeeds               int
+	Readiness                 *readinessPage
+	BuildVersion, BuildCommit string
+
+	Checks                *checksPage
+	ChecksNext            *string
+	MachineChecks         []operator.ReadReport
+	Schedules             *schedulePage
+	DiskAction            *diskActionView
+	DiskQuarantine        *diskQuarantineView
+	DiskReport            *diskReportView
+	DiskGrowth            []store.DiskGrowth
+	DiskBanner            *store.DiskAlertBannerCounts
+	Loops                 *loopsPage
+	Certificates          *certificatesPage
+	DiskAlerts            *diskAlertsPage
+	DiskMachine           *diskMachinePage
+	DiskPolicies          *diskPoliciesPage
+	DiskPolicyReview      *diskPolicyReviewPage
+	DiskApprovals         *diskApprovalsPage
+	DiskApprovalReview    *diskApprovalReviewPage
 	Title                 string
 	Nav                   string
 	Now                   string
@@ -460,6 +505,8 @@ type page struct {
 	// 單機頁
 	// MachineDetail owns the typed monitor, identity, resource, history and
 	// expectation sections.
+	OOMKills      []model.OOMKill
+	BotJSON       string
 	MachineDetail *operator.MachineDetailResult
 	Machine       machinePageMachine
 	// MachineConnect is the separate typed BFF disclosure for actionable BAT
@@ -536,7 +583,10 @@ type page struct {
 	Retention retentionNote
 
 	// 動作紀錄
-	Audit *auditPageView
+	Channels  *channelsView
+	BWSStatus secrets.BackendStatus
+	Secrets   []secretStatus
+	Audit     *auditPageView
 	// Action 只在「按了但沒做成」的那一頁有值。
 	Action *actionResult
 	// EnrollPreview freezes the exact impact reviewed by the operator and the
@@ -687,6 +737,7 @@ func WithMFAEnforcementDisabled(r *http.Request) *http.Request {
 }
 
 type accessView struct {
+	SessionMFAWindow       bool
 	MFAEnforcementDisabled bool
 	LocalSession           bool
 	Known                  bool
@@ -710,6 +761,7 @@ func accessFromRequest(r *http.Request) accessView {
 	}
 	return accessView{
 		MFAEnforcementDisabled: r.Context().Value(mfaEnforcementDisabledKey{}) == true && principal.AuthMethod == operatorauth.AuthMethodLocalAccountSession,
+		SessionMFAWindow:       principal.AuthMethod == operatorauth.AuthMethodLocalAccountSession && r.Context().Value(mfaEnforcementDisabledKey{}) != true,
 		LocalSession:           principal.AuthMethod == operatorauth.AuthMethodLocalAccountSession,
 		Known:                  true, Login: principal.TailnetUserLogin, Device: principal.DeviceName,
 		Subject: principal.StableSubject(), Permissions: principal.PermissionLabel(),
@@ -1200,6 +1252,22 @@ func hubInFleet(ov store.Overview, hubHost string) string {
 // ---------------------------------------------------------------- 單機頁
 
 func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("view") == "bot" {
+		w.Header().Set("Cache-Control", "no-store")
+		result, err := s.operator.MachineSafe(r.PathValue("id"), time.Now().UTC())
+		if err != nil {
+			http.Error(w, "Machine unavailable", http.StatusNotFound)
+			return
+		}
+		raw, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			s.fail(w, "Unable to render bot view", err)
+			return
+		}
+		s.render(w, r, "machine_bot.html", page{Title: "Bot view", BotJSON: string(raw)})
+		return
+	}
+
 	now := time.Now().UTC()
 	machine, err := s.operator.MachineDetail(r.PathValue("id"), now)
 	if err != nil {
@@ -1305,14 +1373,67 @@ func (s *Server) machine(w http.ResponseWriter, r *http.Request) {
 		value := machine.Checkins.Items[count-1]
 		latestMachineCheckin = &value
 	}
+	growth, err := s.operator.DiskGrowthRead(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "disk growth", err)
+		return
+	}
+	loopItems, err := s.store.LoopEpisodes(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Unable to load loop episodes", err)
+		return
+	}
+	oomKills, err := s.operator.MachineOOMKills(machine.Item.MachineID, now)
+	if err != nil {
+		s.fail(w, "Read OOM evidence", err)
+		return
+	}
+	checklist, err := s.store.HostChecklist(machine.Item.MachineID, time.Now().UTC())
+	if err != nil {
+		s.fail(w, "Unable to load readiness", err)
+		return
+	}
+	disks, err := s.store.MachineDisks(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Unable to load disks", err)
+		return
+	}
+	owner := ""
+	if checklist.Facts != nil {
+		owner = checklist.Facts.ServiceUser
+	}
+	principal, _ = operatorauth.PrincipalFromContext(r.Context())
+	checks, err := s.operator.MachineReadReports(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Read checks", err)
+		return
+	}
+	policy, err := s.operator.MachineExecutionPolicy(machine.Item.MachineID)
+	if err != nil {
+		s.fail(w, "Read machine profile", err)
+		return
+	}
+	monitorOnly := policy.Mode != "managed"
+	actions := machineActionsViewFrom(catalogue)
+	if monitorOnly {
+		actions = nil
+		terminalOpen = nil
+	}
 	s.render(w, r, "machine.html", page{
+		MachineChecks:           checks,
+		ExecutionPolicy:         &executionPolicyPage{MachineID: machine.Item.MachineID, Mode: policy.Mode, Revision: policy.Revision, Manage: humanWebAdmin(r), MonitorOnly: monitorOnly, Pending: policy.ObservedRevision != policy.Revision},
+		DiskSetup:               &diskSetupPage{Machine: machine.Item.MachineID, Inventory: disks, Manage: principal.Has(operatorauth.Admin) && !monitorOnly, Owner: owner},
+		Readiness:               &readinessPage{Items: []store.HostChecklist{checklist}, Manage: principal.Has(operatorauth.Admin)},
+		DiskGrowth:              growth,
+		Loops:                   &loopsPage{Items: loopItems, Machine: machine.Item.MachineID},
+		OOMKills:                oomKills.Items,
 		Title:                   machine.Item.DisplayName,
 		Nav:                     "machines-detail",
 		Now:                     now.Local().Format("2006-01-02 15:04"),
 		MachineDetail:           &machine,
 		Machine:                 machineView,
 		MachineConnect:          &connect,
-		MachineActions:          machineActionsViewFrom(catalogue),
+		MachineActions:          actions,
 		TerminalOpen:            terminalOpen,
 		PendingEnrollment:       pendingEnrollment,
 		MachineEvidence:         &evidence,
@@ -1522,9 +1643,46 @@ func stripReceivedAt(received []time.Time, interval time.Duration) []Block {
 // ---------------------------------------------------------------- helpers
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data page) {
+	data.BuildVersion, data.BuildCommit = s.buildVersion, s.buildCommit
+	if groups, e := s.operator.Signins(); e == nil {
+		for _, g := range groups {
+			data.SigninNeeds += g.Needs
+		}
+	}
 	locale := navigationLocaleFromRequest(r)
 	data.Locale = navigationLocaleFor(r, data.Title)
+	if data.DiskMachine != nil {
+		t := &data.DiskMachine.Status.Thresholds
+		defaults := store.DefaultDiskPolicy().Thresholds
+		if data.DiskMachine.Canary == nil {
+			data.DiskMachine.Canary = data.DiskMachine.Status.Canary
+		}
+		if data.DiskMachine.Canary == nil {
+			data.DiskMachine.Canary = map[string]store.DiskCanary{}
+		}
+		for _, scope := range []string{"user", "root"} {
+			c := data.DiskMachine.Canary[scope]
+			if c.RequiredDays == 0 {
+				c.RequiredDays = 7
+			}
+			data.DiskMachine.Canary[scope] = c
+		}
+		if t.WarnPercent == 0 {
+			t.WarnPercent = defaults.WarnPercent
+		}
+		if t.CriticalPercent == 0 {
+			t.CriticalPercent = defaults.CriticalPercent
+		}
+		if t.DeepReportAbovePercent == 0 {
+			t.DeepReportAbovePercent = defaults.DeepReportAbovePercent
+		}
+	}
 	data.Access = accessFromRequest(r)
+	if s.operator != nil {
+		if summary, err := s.diskAlertBanner.get(time.Now(), s.operator.DiskAlertBannerCounts); err == nil && (summary.OpenCritical > 0 || summary.OpenWarn > 0) {
+			data.DiskBanner = &summary
+		}
+	}
 	localizeAccessView(&data.Access, locale)
 	if s.agentBundles != nil {
 		data.AgentBundles = append([]agentBundleView(nil), s.agentBundles.views...)
@@ -1534,6 +1692,15 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data.AgentInstallers = agentInstallerCommands(s.agentBundles, s.hubBase)
 	if len(data.SubNav.Items) == 0 {
 		data.SubNav = subNavigationFor(data)
+	}
+	if !data.Access.CanAdmin {
+		items := data.SubNav.Items[:0]
+		for _, item := range data.SubNav.Items {
+			if item.Href != "/tenant/disk-policies" {
+				items = append(items, item)
+			}
+		}
+		data.SubNav.Items = items
 	}
 	selectSubNavigationLocation(&data.SubNav, r.URL.Query().Get("section"))
 	localizeSubNavigation(&data.SubNav, locale)
@@ -1566,6 +1733,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1579,6 +1747,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1592,6 +1761,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1605,6 +1775,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1618,6 +1789,7 @@ func subNavigationFor(data page) subNavigation {
 			{Label: "所有裝置", Href: "/machines#machines"},
 			{Label: "監視", Href: "/machines#findings"},
 			{Label: "註冊裝置", Href: "/machines/enrollment"},
+			{Label: "Waiting to join", Href: "/machines/join"},
 			{Label: "組態", Href: "/machines/configuration"},
 			{Label: "合規性", Href: "/machines/compliance"},
 			{Label: "生命週期", Href: "/machines/lifecycle"},
@@ -1688,9 +1860,9 @@ func subNavigationFor(data page) subNavigation {
 		}
 		// 動作那一節只有在這個操作員真的有動作可做時才存在，所以選單也只在那時
 		// 才指得過去。這個問題由 operator 回答，單機的每一頁才會給同一份選單。
-		if operator.MachineActionsReachable(operator.MachineActionGrant{
+		if (data.ExecutionPolicy == nil || !data.ExecutionPolicy.MonitorOnly) && (operator.MachineActionsReachable(operator.MachineActionGrant{
 			Operate: data.Access.CanOperate, Admin: data.Access.CanAdmin,
-		}) || current == "動作" {
+		}) || current == "動作") {
 			items = append(items, subNavigationItem{Label: "動作", Href: base + "#actions"})
 		}
 		items = append(items, subNavigationItem{Label: "事件時間軸", Href: base + "/timeline"})
@@ -1763,6 +1935,8 @@ func subNavigationFor(data page) subNavigation {
 			subNavigationItem{Label: "Canary", Href: "/updates#channel-canary"},
 			subNavigationItem{Label: "Stable", Href: "/updates#channel-stable"},
 		)
+	case "checks":
+		return reportsSubNavigation("Checks / 檢查")
 	case "reports":
 		return reportsSubNavigation("報告總覽")
 	case "changes":
@@ -1779,6 +1953,18 @@ func subNavigationFor(data page) subNavigation {
 		return reportsSubNavigation("發佈與指派")
 	case "audit":
 		return reportsSubNavigation("稽核記錄")
+	case "tenant-certificates":
+		return tenantSubNavigation("Certificates")
+	case "tenant-schedules":
+		return tenantSubNavigation("Schedules")
+	case "tenant-disk-policies":
+		return tenantSubNavigation("Disk policies")
+	case "tenant-disk-alerts":
+		return tenantSubNavigation("Disk alerts")
+	case "tenant-approvals":
+		return tenantSubNavigation("Approvals")
+	case "tenant-offline-alerts":
+		return tenantSubNavigation("離線通知")
 	case "tenant-maintenance":
 		return tenantSubNavigation("維護")
 	case "tenant-data":
@@ -1793,6 +1979,7 @@ func subNavigationFor(data page) subNavigation {
 func reportsSubNavigation(current string) subNavigation {
 	return makeSubNavigation("報告子選單", current,
 		subNavigationItem{Label: "報告總覽", Href: "/reports"},
+		subNavigationItem{Label: "Checks / 檢查", Href: "/checks"},
 		subNavigationItem{Label: "變更", Href: "/reports/changes"},
 		subNavigationItem{Label: "票證使用量", Href: "/reports/tickets"},
 		subNavigationItem{Label: "註冊", Href: "/reports/enrollment"},
@@ -1808,6 +1995,12 @@ func reportsSubNavigation(current string) subNavigation {
 func tenantSubNavigation(current string) subNavigation {
 	return makeSubNavigation("租用戶子選單", current,
 		subNavigationItem{Label: "維護", Href: "/tenant/maintenance"},
+		subNavigationItem{Label: "離線通知", Href: "/tenant/offline-alerts"},
+		subNavigationItem{Label: "Disk policies", Href: "/tenant/disk-policies"},
+		subNavigationItem{Label: "Approvals", Href: "/tenant/approvals"},
+		subNavigationItem{Label: "Disk alerts", Href: "/tenant/disk-alerts"},
+		subNavigationItem{Label: "Schedules", Href: "/tenant/schedules"},
+		subNavigationItem{Label: "Certificates", Href: "/tenant/certificates"},
 		subNavigationItem{Label: "資料揭露", Href: "/tenant/data"},
 	)
 }
@@ -1863,7 +2056,7 @@ func label(s state.State) string {
 	case state.Online:
 		return "在線"
 	case state.Degraded:
-		return "降級"
+		return statusDisplayLabel(s)
 	case state.Unreachable:
 		return "失聯"
 	case state.NeverReported:
@@ -1875,7 +2068,103 @@ func label(s state.State) string {
 }
 
 var funcs = template.FuncMap{
-	"label":                  label,
+	"readinessBuckets": func() []string { return []string{"needs_you", "auto", "done"} },
+	"readinessBucketTitle": func(b string) string {
+		switch b {
+		case "needs_you":
+			return "Needs you"
+		case "auto":
+			return "Fixing itself"
+		default:
+			return "Done"
+		}
+	},
+	"readinessCLIs": func() []string { return []string{"claude", "codex", "grok", "agy"} },
+	"readinessHasCLI": func(p model.FleetReadinessProfile, c string) bool {
+		for _, v := range p.ExpectedCLIs {
+			if v == c {
+				return true
+			}
+		}
+		return false
+	},
+	"readinessLines":  func(v []string) string { return strings.Join(v, "\n") },
+	"signinLabel":     signinLabel,
+	"signinBulk":      func(cli string) bool { return cli == "codex" || cli == "agy" || cli == "claude" || cli == "gh" },
+	"signinTarget":    signinTarget,
+	"signinSupported": store.SigninSupported,
+	"signinNeeds":     signinNeeds,
+	"signinGroupData": func(g store.SigninGroup, manage bool) any {
+		return struct {
+			Group  store.SigninGroup
+			Manage bool
+		}{g, manage}
+	},
+	"readinessStatus": func(v string) string {
+		switch v {
+		case "pass":
+			return "Pass"
+		case "fail":
+			return "Fail"
+		default:
+			return "Unknown"
+		}
+	},
+	"unusedDisk": model.UnusedDisk,
+	"signinEligibleCount": func(g store.SigninGroup) int {
+		n := 0
+		for _, h := range g.Hosts {
+			if !h.MonitorOnly && store.SigninSupported(h.CLI, h.Slot) && (h.Status == "logged_out" || h.Status == "failing" || h.Status == "expiring") {
+				n++
+			}
+		}
+		return n
+	},
+	"diskAvailable": func(d model.BlockDevice, jobs []store.DiskSetupRecord) bool {
+		for _, j := range jobs {
+			if j.Job.Device == d.Path && (j.State == "pending" || j.State == "delivered") {
+				return false
+			}
+		}
+		return true
+	},
+	"diskSize": func(n int64) string { return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30)) },
+	"hostProfileLabel": func(name string) string {
+		for _, f := range hostProfileFields(model.HostProfile{}) {
+			if f.Name == name {
+				return f.Label
+			}
+		}
+		return "Profile validation"
+	},
+	"readinessPaths": func() []string { return []string{"tailscale", "cloudflare", "jump_host", "direct"} },
+	"diskItemIDs": func(items []diskreport.Item) string {
+		ids := []string{}
+		for _, i := range items {
+			ids = append(ids, i.ID)
+		}
+		return strings.Join(ids, ",")
+	},
+	"diskAlertTable": diskAlertTable,
+	"diskMountLabels": func(machine string, mounts []store.DiskMountUsage) map[string][]store.DiskMountUsage {
+		return map[string][]store.DiskMountUsage{machine: mounts}
+	},
+	"diskReportCategories": func() []string {
+		return []string{"app-update-backups", "installer-leftovers", "release-build-directories", "unused-docker-images", "caches-models", "orphaned-processes", "agent-session-stores", "duplicate-archives"}
+	},
+	"diskTime":           fmtDiskTime,
+	"diskExpiry":         fmtDiskExpiry,
+	"label":              label,
+	"statusDisplayLabel": statusDisplayLabel,
+	"onlineSilentPeer": func(result tailnet.Result, id string) *tailnet.Peer {
+		peer, ok := result.OnlineButSilent[id]
+		if !result.Available || !ok || !peer.Online {
+			return nil
+		}
+		return &peer
+	},
+	"attentionReasons":       attentionReasons,
+	"detailAttentionReasons": detailAttentionReasons,
 	"deploymentBlockerLabel": operator.DeploymentBlockerLabel,
 	"ruleLabel":              func(kind compliance.RuleKind) string { return compliance.RuleLabel(kind) },
 	"ruleBound":              func(rule compliance.Rule) string { return compliance.RuleBound(rule) },
@@ -2246,4 +2535,8 @@ func humanBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func (s *Server) SetBuildInfo(version, commit string) {
+	s.buildVersion, s.buildCommit = version, commit
 }

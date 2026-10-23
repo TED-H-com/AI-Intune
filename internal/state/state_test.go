@@ -1368,3 +1368,23 @@ func TestTheDurationVocabularySaysTheseExactWords(t *testing.T) {
 		})
 	}
 }
+
+func TestOldAgentGeminiIgnoredWithAgy(t *testing.T) {
+	f := healthy()
+	f.AgyPresent = true
+	expired := now.Add(-126 * 24 * time.Hour)
+	f.Credentials = []CredFact{{Provider: "gemini", Status: "expired", ExpiresAt: &expired}}
+	j := Derive(f)
+	if j.State != Online {
+		t.Fatalf("legacy degraded: %+v", j)
+	}
+	for _, finding := range j.Findings {
+		if finding.Kind == "credential" {
+			t.Fatalf("legacy finding: %+v", finding)
+		}
+	}
+	f.AgyPresent = false
+	if Derive(f).State != Degraded {
+		t.Fatal("other legacy judgement changed")
+	}
+}

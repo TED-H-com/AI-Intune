@@ -14,7 +14,9 @@ import (
 	"github.com/teddashh/AI-Intune/internal/agentadapter"
 	appcatalog "github.com/teddashh/AI-Intune/internal/catalog"
 	"github.com/teddashh/AI-Intune/internal/deploy"
+	"github.com/teddashh/AI-Intune/internal/diskreport"
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 )
 
 var (
@@ -351,6 +353,9 @@ func createManagedJobTx(tx dbTx, machineID, desiredID string, revision deploy.Re
 func createJobTxWithPolicy(tx dbTx, machineID, desiredID string, revision deploy.Revision,
 	n NewJob, now time.Time, managedAdapter bool,
 ) (string, error) {
+	if err := executionAllowedTx(tx, machineID); err != nil {
+		return "", err
+	}
 	if n.ExecutionTimeout <= 0 {
 		n.ExecutionTimeout = 900
 	}
@@ -431,6 +436,9 @@ func directManagedCatalogSpec(raw string) bool {
 	kind, _, err := model.ParseJobSpec([]byte(raw))
 	if err != nil {
 		return false
+	}
+	if kind == scriptcatalog.Kind {
+		return true
 	}
 	for _, registered := range agentadapter.ExecutorKinds() {
 		if kind == registered {
@@ -708,6 +716,9 @@ SELECT j.job_id, j.machine_id, j.desired_id, j.revision, j.state,
 }
 
 func (s *Store) NextJobForMachine(machineID string) (Job, bool, error) {
+	if err := s.MachineExecutionAllowed(machineID); err != nil {
+		return Job{}, false, err
+	}
 	// The common poll (every agent, every ~30s) only reads. BEGIN IMMEDIATE on
 	// the single writer would reserve it for a SELECT. A read-only snapshot on
 	// the reader pool answers "is there a dependency-blocked child, and what is
@@ -780,7 +791,7 @@ func selectNextRunnableJob(tx dbTx, machineID string) (Job, bool, error) {
 	// Revision only orders jobs for the same resource. Revisions from unrelated
 	// resources are independent counters, so creation rowid chooses among their
 	// runnable heads.
-	job, err := scanJob(tx.QueryRow(`
+	rows, err := tx.Query(`
 SELECT j.job_id, j.machine_id, j.desired_id, j.revision, j.state,
        j.lease_token, j.lease_expires_at, j.execution_timeout, j.artifact_digest,
        j.irreversible, j.created_at, j.terminal_at
@@ -804,16 +815,26 @@ SELECT j.job_id, j.machine_id, j.desired_id, j.revision, j.state,
           AND earlier_desired.resource_id = desired.resource_id
           AND earlier.revision < j.revision
    )
- ORDER BY j.rowid ASC
-	LIMIT 1`, machineID, deploy.NotStarted, deploy.Succeeded, deploy.Succeeded,
-		deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Job{}, false, nil
-	}
+ ORDER BY j.rowid ASC`, machineID, deploy.NotStarted, deploy.Succeeded, deploy.Succeeded,
+		deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention)
 	if err != nil {
 		return Job{}, false, fmt.Errorf("store: get next job for machine: %w", err)
 	}
-	return job, true, nil
+	defer rows.Close()
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return Job{}, false, err
+		}
+		allowed, err := jobDispatchAllowedTx(tx, job.JobID, machineID)
+		if err != nil {
+			return Job{}, false, err
+		}
+		if allowed {
+			return job, true, nil
+		}
+	}
+	return Job{}, false, rows.Err()
 }
 
 func rejectDependencyBlockedJobsTx(tx dbTx, machineID string, now time.Time) error {
@@ -883,7 +904,38 @@ func (s *Store) ClaimJob(jobID, machineID string, now time.Time, lease time.Dura
 	// 會從 1 重新開始，跟第一次執行的事件發生 replay conflict，兩次執行的
 	// 證據也無法再只靠 seq 分清。過期單由 reaper 收成 lease_expired；
 	// 要重做同一個期望狀態必須另開新 job_id。
-	res, err := s.execWrite(context.Background(), "claim_job", `
+	tx, err := s.beginWrite(context.Background(), "claim_job")
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if err := executionAllowedTx(tx, machineID); err != nil {
+		return "", err
+	}
+	var specRaw, kind string
+	err = tx.QueryRow(`SELECT d.spec,d.resource_kind FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=?`, jobID, machineID).Scan(&specRaw, &kind)
+	if err != nil {
+		return "", ErrJobNotFound
+	}
+	allowed, err := jobDispatchAllowedTx(tx, jobID, machineID)
+	if err != nil {
+		return "", err
+	}
+	if !allowed {
+		return "", ErrJobNotFound
+	}
+	if kind == scriptcatalog.Kind {
+		spec, e := scriptcatalog.Decode([]byte(specRaw))
+		if e != nil {
+			return "", e
+		}
+		if entry, ok := scriptcatalog.Lookup(spec.ScriptID); ok && scriptcatalog.IsDisk(entry.ID) {
+			if e = s.diskSafeGateTxAt(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{machineID}}, entry, now); e != nil {
+				return "", e
+			}
+		}
+	}
+	res, err := tx.Exec(`
 UPDATE jobs
    SET state = ?, lease_token = ?, lease_expires_at = ?
  WHERE job_id = ?
@@ -906,6 +958,9 @@ UPDATE jobs
 	if n != 1 {
 		// ⚠ 歸屬不符與不存在共用同一個錯誤，避免用領單結果列舉 job_id。
 		return "", ErrJobNotFound
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
 	}
 	return token, nil
 }
@@ -1065,6 +1120,38 @@ func (s *Store) RecordVerification(jobID, machineID, leaseToken, ruleID, command
 		!validJobEvidenceTime(verifiedAt) || !validJobEvidenceTime(receivedAt) {
 		return ErrInvalidJobEvidence
 	}
+	var resourceKind, resourceID string
+	if err := s.rdb.QueryRow(`SELECT d.resource_kind,d.resource_id FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=?`, jobID, machineID).Scan(&resourceKind, &resourceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if resourceKind == scriptcatalog.Kind {
+		if resourceID == "disk-deep-report-v1" && ruleID == scriptcatalog.Kind {
+			stderrExcerpt = ""
+			if stdoutExcerpt != "" {
+				receipt, safe, e := diskreport.SafeSummary([]byte(stdoutExcerpt))
+				if e != nil || receipt.ID != "report-"+jobID {
+					return ErrInvalidJobEvidence
+				}
+				var digest string
+				if e = s.rdb.QueryRow(`SELECT digest FROM disk_reports WHERE id=? AND job_id=? AND machine_id=? AND completed_at IS NOT NULL`, receipt.ID, jobID, machineID).Scan(&digest); e != nil || digest != receipt.Digest {
+					return ErrInvalidJobEvidence
+				}
+				stdoutExcerpt = safe
+			} else if passed {
+				return ErrInvalidJobEvidence
+			}
+		} else if scriptcatalog.IsReadReport(resourceID) && ruleID == scriptcatalog.Kind {
+			stdoutExcerpt = scriptcatalog.RedactReadReportJSON(resourceID, []byte(stdoutExcerpt))
+		} else if scriptcatalog.IsDiskSafe(resourceID) && ruleID == scriptcatalog.Kind {
+			stdoutExcerpt = scriptcatalog.RedactDiskJSON([]byte(stdoutExcerpt))
+		} else {
+			stdoutExcerpt = scriptcatalog.Redact(stdoutExcerpt)
+		}
+		stderrExcerpt = scriptcatalog.Redact(stderrExcerpt)
+		if len(stdoutExcerpt) > maxJobVerificationExcerptBytes || len(stderrExcerpt) > maxJobVerificationExcerptBytes {
+			return ErrInvalidJobEvidence
+		}
+	}
 	// ⚠ command 不做整理或改寫，讓人可以從證據列原樣複製後重跑。
 	res, err := s.execWrite(context.Background(), "record_verification", `
 INSERT INTO verification_results
@@ -1124,6 +1211,10 @@ SELECT command, exit_code, stdout_excerpt, stderr_excerpt, passed, verified_at
 // MarkSucceededIfVerified 只依 Hub 已保存的驗證證據判定工作單成功。
 // ⚠ 回傳的是判決後工作單真正停在的狀態；呼叫端不得假設 nil 就等於 succeeded。
 func (s *Store) MarkSucceededIfVerified(jobID string, now time.Time) (deploy.JobState, error) {
+	scriptRequired, scriptReady, scriptErr := s.scriptEvidenceReady(jobID)
+	if scriptErr != nil {
+		return "", scriptErr
+	}
 	wired, required, ready, err := s.measuredEvidenceDecision(jobID)
 	if err != nil {
 		return "", err
@@ -1139,6 +1230,9 @@ func (s *Store) MarkSucceededIfVerified(jobID string, now time.Time) (deploy.Job
 			required, ready = true, false
 		}
 	}
+	if scriptRequired {
+		required, ready = true, scriptReady
+	}
 	// ⚠⚠ EXISTS 與 NOT EXISTS 跟狀態更新在同一個 SQL 敘述中，擋的是
 	// 沒有證據便成功，以及檢查後才插入失敗證據的競態。
 	//
@@ -1153,7 +1247,7 @@ func (s *Store) MarkSucceededIfVerified(jobID string, now time.Time) (deploy.Job
 	// 而這裡是**唯一**能寫進 succeeded 的 SQL —— 如果它允許從 claimed 直接
 	// 跳過去，那組測試就只是在測一個沒有人用的函式，
 	// 而一台根本沒開始裝的機器會被判成裝好了。
-	res, err := s.execWrite(context.Background(), "mark_succeeded_if_verified", `
+	res, err := s.terminalJobWrite(context.Background(), "mark_succeeded_if_verified", jobID, `
 UPDATE jobs
    SET state = ?, terminal_at = ?, lease_token = NULL, lease_expires_at = NULL
  WHERE job_id = ?
@@ -2107,6 +2201,27 @@ func (s *Store) advanceJob(jobID, machineID, leaseToken string, requireLease boo
 		return "", fmt.Errorf("store: read job state: %w", err)
 	}
 
+	if ev == deploy.Start {
+		var kind, raw, target string
+		if err := tx.QueryRow(`SELECT d.resource_kind,d.spec,j.machine_id FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=?`, jobID).Scan(&kind, &raw, &target); err != nil {
+			return from, fmt.Errorf("store: read job desired state: %w", err)
+		}
+		if kind == scriptcatalog.Kind {
+			spec, e := scriptcatalog.Decode([]byte(raw))
+			if e != nil {
+				return from, e
+			}
+			entry, ok := scriptcatalog.Lookup(spec.ScriptID)
+			if !ok {
+				return from, scriptBad("unknown script id")
+			}
+			if scriptcatalog.IsDisk(entry.ID) {
+				if e = s.diskSafeGateTxAt(tx, ScriptRunRequest{Args: spec.Args, Targets: []string{target}}, entry, now); e != nil {
+					return from, e
+				}
+			}
+		}
+	}
 	to, err := deploy.Advance(deploy.Job{State: from, Irreversible: irreversible}, ev)
 	if err != nil {
 		return from, err
@@ -2135,6 +2250,17 @@ func (s *Store) advanceJob(jobID, machineID, leaseToken string, requireLease boo
 	} else if n != 1 {
 		return from, ErrJobNotFound
 	}
+	if deploy.IsTerminal(to) {
+		var machine, scope string
+		if e := tx.QueryRow(`SELECT j.machine_id,json_extract(d.spec,'$.args.scope') FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND d.resource_kind='script_v1' AND d.resource_id='disk-safe-clean-v2'`, jobID).Scan(&machine, &scope); e == nil {
+			if e = s.finishDiskRollbackTx(tx, machine, scope, now); e != nil {
+				return "", e
+			}
+		}
+		if err := s.recordScriptCompletionTx(tx, jobID); err != nil {
+			return "", err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("store: commit advanced job: %w", err)
 	}
@@ -2146,7 +2272,7 @@ func (s *Store) FailJob(jobID string, irreversible bool, now time.Time) error {
 	terminalState := deploy.OnFailure(irreversible)
 	// ⚠ 終態一律取自 deploy.OnFailure，而且 caller 帶來的旗標必須和開單時
 	// 保存的 irreversible 相同，擋的是 stale/錯誤 caller 把兩個失敗判決互換。
-	res, err := s.execWrite(context.Background(), "fail_job", `
+	res, err := s.terminalJobWrite(context.Background(), "fail_job", jobID, `
 UPDATE jobs
    SET state = ?, terminal_at = ?, lease_token = NULL, lease_expires_at = NULL
  WHERE job_id = ?

@@ -277,7 +277,8 @@ type EventCount struct {
 }
 
 type Facts struct {
-	Now time.Time
+	RecentOOMKills int
+	Now            time.Time
 
 	// Artifacts 是這台機器上所有宣告過的期望 + 量測。
 	// ⚠ 空的代表**沒有人宣告過**，不代表「都通過了」。
@@ -391,10 +392,12 @@ type Facts struct {
 	LastTaskEnded    time.Time
 
 	// Credentials：每個 provider 的狀態與過期時間。
+	AgyPresent  bool
 	Credentials []CredFact
 }
 
 type CredFact struct {
+	Source    string
 	Provider  string
 	Status    string
 	ExpiresAt *time.Time
@@ -770,6 +773,9 @@ func Derive(f Facts) Judgement {
 
 	// 3e. 憑證
 	for _, c := range f.Credentials {
+		if c.Provider == "gemini" && c.Source == "" && f.AgyPresent {
+			continue
+		}
 		switch c.Status {
 		case "expired":
 			// ⚠ 「過期」有兩種，而檔案本身分不出來：
@@ -839,6 +845,9 @@ func Derive(f Facts) Judgement {
 			promote(2, m)
 		case "failed":
 			m := fmt.Sprintf("%s 最近一次真實請求失敗", c.Provider)
+			if c.Source == "agy" || c.Source == "claude-automation" {
+				m = fmt.Sprintf("%s credential invalid: %s", c.Provider, c.Note)
+			}
 			add("credential", 3, false, "%s", m)
 			promote(3, m)
 		case "unknown":
@@ -848,9 +857,16 @@ func Derive(f Facts) Judgement {
 			if note == "" {
 				note = "讀不到過期時間"
 			}
-			add("credential", 2, true, "%s 的登入狀態未知：%s", c.Provider, note)
+			if c.Source == "agy" {
+				m := fmt.Sprintf("%s credential unparseable: %s", c.Provider, note)
+				add("credential", 3, false, "%s", m)
+				promote(3, m)
+			} else {
+				add("credential", 2, true, "%s 的登入狀態未知：%s", c.Provider, note)
+			}
 		case "absent", "configured":
-			// ⚠ configured 是有憑證且過期時間還沒到，absent 是沒裝這家；兩者都是事實，不長 finding。
+			// configured includes refreshable OAuth credentials whose access token
+			// refreshes on use; neither configured nor absent produces a finding.
 		case "":
 			// ⚠ Advisory 分的是有沒有影響主狀態，不是是不是已知限制。
 			// 這兩格不 promote，所以必須是 advisory；它們跟 unknown 靠句子與下一步
@@ -868,6 +884,10 @@ func Derive(f Facts) Judgement {
 			humanDur(abs(f.ClockSkew)))
 	}
 
+	if f.RecentOOMKills > 0 {
+		add("memory", 2, false, "Recent OOM kills: review machine memory evidence")
+		promote(2, "Recent OOM kills: review machine memory evidence")
+	}
 	if degraded {
 		return Judgement{State: Degraded, Reason: primary, Findings: found}
 	}

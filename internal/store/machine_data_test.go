@@ -38,6 +38,16 @@ func TestEveryMachineScopedTableIsDisclosed(t *testing.T) {
 			}
 		}
 	}
+	// Lifecycle rows inherit machine scope through their recommendation FK.
+	if cols := tableColumns(t, s, "usage_recommendation_cycles"); len(cols) == 0 {
+		t.Fatal("missing lifecycle table")
+	}
+	scoped["usage_recommendation_cycles"] = true
+	// The fleet singleton is shared desired data for each Linux machine.
+	if cols := tableColumns(t, s, "fleet_host_profile"); len(cols) == 0 {
+		t.Fatal("missing fleet profile table")
+	}
+	scoped["fleet_host_profile"] = true
 	declared := map[string]bool{}
 	for _, table := range MachineDataTables() {
 		if declared[table.Table] {

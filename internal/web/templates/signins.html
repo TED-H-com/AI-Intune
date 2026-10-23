@@ -1,0 +1,21 @@
+{{define "signins.html"}}{{template "head" .}}
+<div class="page-header"><h1>Sign-ins</h1><p>Keep your CLI accounts signed in across your machines.</p></div>
+<p class="muted">Local sign-in files show what is configured. They do not prove that a provider will accept the next request. Last success is shown only when observed.</p>
+{{if not .Signins.Manage}}<p>You have read-only access. An administrator can start a sign-in.</p>{{end}}
+{{range .Signins.Sessions}}
+<section class="card" aria-label="Sign-in progress"><h2>{{.CLI}} · {{.DisplayName}} · slot {{.Slot}}</h2><p><strong>{{signinLabel .State}}</strong> {{.Reason}}</p>
+{{if .Update.URL}}<p><a href="{{.Update.URL}}" target="_blank" rel="noopener noreferrer">Open the sign-in page</a></p>{{end}}
+{{if .Update.DeviceCode}}<p>One-time device code: <code>{{.Update.DeviceCode}}</code></p>{{end}}
+{{if and $.Signins.Manage (not .MonitorOnly) (eq .State "waiting_for_code")}}<form method="post" action="/signins/{{.ID}}/code"><label>Paste the code from the sign-in page <input name="signin_code" type="password" autocomplete="off" maxlength="4096" required></label><button>Send code once</button></form>{{end}}
+{{if and $.Signins.Manage .Active}}<form method="post" action="/signins/{{.ID}}/cancel"><button class="secondary">Cancel sign-in</button></form>{{end}}
+{{if .Active}}<p class="muted">Progress refreshes every five seconds, pausing while you enter a code. Sign-in ends after 15 minutes.</p>{{end}}</section>
+{{end}}
+{{range .Signins.Groups}}{{template "signin-group" (signinGroupData . $.Signins.Manage)}}{{else}}<section class="card"><p>No accounts need attention. Machines that have not reported sign-in status will appear after their next observation.</p></section>{{end}}
+<details><summary>Signed in ({{len .Signins.Healthy}})</summary>{{range .Signins.Healthy}}{{template "signin-group" (signinGroupData . $.Signins.Manage)}}{{end}}</details>
+{{if .Signins.Manage}}<section class="card"><h2>Notifications</h2><form method="post" action="/signins/notifications"><label>Notify me when a sign-in drops to logged out <select name="channel"><option value="">Off</option>{{range .Signins.Channels}}<option value="{{.}}" {{if eq . $.Signins.NotificationChannel}}selected{{end}}>{{.}}</option>{{end}}</select></label><button>Save notification setting</button></form><p><a href="/channels">Manage channels</a> · At most one alert per account on a machine every 12 hours.</p></section>{{end}}
+{{if .Signins.Active}}<script>{{signinRefreshScript}}</script><noscript><p>Refresh this page to check sign-in progress.</p></noscript>{{end}}
+{{template "foot" .}}{{end}}
+{{define "signin-group"}}<section class="card"><h2>{{.Group.CLI}} · {{if .Group.Account}}{{.Group.Account}}{{else}}Account slot {{.Group.Slot}}{{end}}</h2>
+<p>{{.Group.Needs}} machines need sign-in{{range .Group.Hosts}}{{if signinNeeds .Status}} · {{.DisplayName}}{{end}}{{end}}</p>
+{{if and .Manage (gt (signinEligibleCount .Group) 1) (signinBulk .Group.CLI)}}<form method="post" action="/signins/start">{{range .Group.Hosts}}{{if and (not .MonitorOnly) (signinNeeds .Status) (signinSupported .CLI .Slot)}}<input type="hidden" name="target" value="{{signinTarget .}}">{{end}}{{end}}<button>Sign in all</button></form>{{end}}
+<table><thead><tr><th>Machine</th><th>Status</th><th>Last success</th><th>Action</th></tr></thead><tbody>{{range .Group.Hosts}}<tr><td><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a></td><td><span class="chip">{{signinLabel .Status}}</span><br>{{.Reason}}</td><td>{{if .LastSuccessAt}}{{timeOrDash .LastSuccessAt}}{{else}}Not yet observed{{end}}</td><td>{{if .MonitorOnly}}<span class="st blue">只監控 / Monitor only</span><p>Sign-ins are unavailable for this profile.</p>{{else if and $.Manage (signinSupported .CLI .Slot)}}<form method="post" action="/signins/start"><input type="hidden" name="target" value="{{signinTarget .}}"><button>Sign in</button></form>{{else if not (signinSupported .CLI .Slot)}}Sign-in is not supported from the Hub{{end}}</td></tr>{{end}}</tbody></table></section>{{end}}

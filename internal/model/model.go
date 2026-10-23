@@ -26,21 +26,26 @@ const SchemaVersion = 1
 
 // EnrollRequest 是機器第一次向 Hub 報到。用一次性 token 換一個長期身分。
 type EnrollRequest struct {
-	SchemaVersion int    `json:"schema_version"`
-	EnrollToken   string `json:"enroll_token"`
-	Hostname      string `json:"hostname"`
-	MachineIDHint string `json:"machine_id_hint"` // /etc/machine-id，重灌會變，只是候選
-	UnixUser      string `json:"unix_user"`
-	OS            string `json:"os"`
-	Arch          string `json:"arch"`
-	TailscaleIP   string `json:"tailscale_ip,omitempty"`
-	AgentVersion  string `json:"agent_version"`
+	MonitorOnlySupported bool   `json:"monitor_only_supported,omitempty"`
+	ExecutionPolicyV1    bool   `json:"execution_policy_v1,omitempty"`
+	SchemaVersion        int    `json:"schema_version"`
+	EnrollToken          string `json:"enroll_token"`
+	Hostname             string `json:"hostname"`
+	MachineIDHint        string `json:"machine_id_hint"` // /etc/machine-id，重灌會變，只是候選
+	UnixUser             string `json:"unix_user"`
+	OS                   string `json:"os"`
+	Arch                 string `json:"arch"`
+	TailscaleIP          string `json:"tailscale_ip,omitempty"`
+	// LANIPv4 is optional for older agents; only bounded native interface IPv4 facts.
+	LANIPv4      []string `json:"lan_ipv4,omitempty"`
+	AgentVersion string   `json:"agent_version"`
 }
 
 type EnrollResponse struct {
-	SchemaVersion int    `json:"schema_version"`
-	MachineID     string `json:"machine_id"`
-	AgentToken    string `json:"agent_token"` // Phase 1 用 bearer token，見 docs/SPEC.md §5.1 的偏離說明
+	ExecutionPolicy *ExecutionPolicy `json:"execution_policy,omitempty"`
+	SchemaVersion   int              `json:"schema_version"`
+	MachineID       string           `json:"machine_id"`
+	AgentToken      string           `json:"agent_token"` // Phase 1 用 bearer token，見 docs/SPEC.md §5.1 的偏離說明
 	// CheckinInterval 由 Hub 指派，Agent 不自己決定 —— 這樣調整節奏不用重裝 agent。
 	CheckinIntervalSeconds     int `json:"checkin_interval_seconds"`
 	ObservationIntervalSeconds int `json:"observation_interval_seconds"`
@@ -52,13 +57,27 @@ type EnrollResponse struct {
 
 // ---------------------------------------------------------------- check-in
 
+// CallActivity is optional process-local cumulative evidence. Signatures must be
+// lowercase SHA-256 digests; never send raw tool arguments or credentials.
+// Progress increases only for a completed task/checkpoint, never for heartbeats.
+type CallActivity struct {
+	ProcessSignature string `json:"process_signature"`
+	CallSignature    string `json:"call_signature"`
+	TotalCalls       int64  `json:"total_calls"`
+	Progress         int64  `json:"progress"`
+}
+
 // Checkin 是每 2 分鐘一次的心跳。它必須很小、很快、而且跟 observation 分開 ——
 // observation 連續失敗時心跳仍要能送達，否則 Hub 分不出「機器死了」與
 // 「只是狀態檔過期」。
 type Checkin struct {
-	SchemaVersion int       `json:"schema_version"`
-	SentAt        time.Time `json:"sent_at"`
-	AgentVersion  string    `json:"agent_version"`
+	MonitorOnlySupported bool             `json:"monitor_only_supported,omitempty"`
+	ExecutionPolicyV1    bool             `json:"execution_policy_v1,omitempty"`
+	ExecutionPolicy      *ExecutionPolicy `json:"execution_policy,omitempty"`
+	CallActivity         []CallActivity   `json:"call_activity,omitempty"`
+	SchemaVersion        int              `json:"schema_version"`
+	SentAt               time.Time        `json:"sent_at"`
+	AgentVersion         string           `json:"agent_version"`
 
 	// BootID 是**機器**的開機 ID（/proc/sys/kernel/random/boot_id），
 	// 只有機器重開機才會變。
@@ -90,7 +109,11 @@ type Checkin struct {
 	// DeviceSyncV1 says this exact agent process has the fixed device-sync v1
 	// executor. Old agents omit it; the Hub must treat omission as unsupported
 	// and must not infer support from agent_version text.
-	DeviceSyncV1 bool `json:"device_sync_v1,omitempty"`
+	DeviceSyncV1  bool                   `json:"device_sync_v1,omitempty"`
+	DiskOpsV2     bool                   `json:"disk_ops_v2,omitempty"`
+	DiskTimers    []DiskTimerObservation `json:"disk_timers,omitempty"`
+	ScriptV1      bool                   `json:"script_v1,omitempty"`
+	DiskActionKey string                 `json:"disk_action_key,omitempty"`
 
 	// MaintenanceDiskCleanV1 says this process has the embedded disk-clean
 	// executor. Omission means unsupported. The Hub must not infer it from
@@ -114,6 +137,13 @@ type Checkin struct {
 }
 
 type CheckinResponse struct {
+	ExecutionPolicy      *ExecutionPolicy               `json:"execution_policy,omitempty"`
+	DiskJobs             []DiskJob                      `json:"disk_jobs,omitempty"`
+	HostProfile          *HostProfile                   `json:"host_profile,omitempty"`
+	HostProfileDigest    string                         `json:"host_profile_digest,omitempty"`
+	SigninCommands       []SigninCommand                `json:"signin_commands,omitempty"`
+	ReadinessConfig      ReadinessConfig                `json:"readiness_config"`
+	DiskTimerTransitions map[string]DiskTimerTransition `json:"disk_timer_transitions,omitempty"`
 	// ReceivedAt 回送給 Agent，讓它能自己發現時鐘漂移並記在 log 裡。
 	ReceivedAt                 time.Time `json:"received_at"`
 	CheckinIntervalSeconds     int       `json:"checkin_interval_seconds"`
@@ -143,17 +173,18 @@ type CheckinResponse struct {
 // IdentityMeasuredAt uses the agent's clock; IdentityReceivedAt uses the Hub's.
 // Both timestamps describe the same stored identity evidence.
 type AgentReadinessResponse struct {
-	MachineID              string     `json:"machine_id"`
-	LastCheckinReceivedAt  *time.Time `json:"last_checkin_received_at"`
-	AgentStartedAt         *time.Time `json:"agent_started_at"`
-	AgentVersion           string     `json:"agent_version,omitempty"`
-	JobsEnabled            *bool      `json:"jobs_enabled,omitempty"`
-	DeviceSyncV1           *bool      `json:"device_sync_v1,omitempty"`
-	MaintenanceDiskCleanV1 *bool      `json:"maintenance_disk_clean_v1,omitempty"`
-	IdentityReceivedAt     *time.Time `json:"identity_received_at"`
-	IdentityMeasuredAt     *time.Time `json:"identity_measured_at"`
-	IdentityOS             string     `json:"identity_os,omitempty"`
-	IdentityArch           string     `json:"identity_arch,omitempty"`
+	ExecutionPolicy        *ExecutionPolicy `json:"execution_policy,omitempty"`
+	MachineID              string           `json:"machine_id"`
+	LastCheckinReceivedAt  *time.Time       `json:"last_checkin_received_at"`
+	AgentStartedAt         *time.Time       `json:"agent_started_at"`
+	AgentVersion           string           `json:"agent_version,omitempty"`
+	JobsEnabled            *bool            `json:"jobs_enabled,omitempty"`
+	DeviceSyncV1           *bool            `json:"device_sync_v1,omitempty"`
+	MaintenanceDiskCleanV1 *bool            `json:"maintenance_disk_clean_v1,omitempty"`
+	IdentityReceivedAt     *time.Time       `json:"identity_received_at"`
+	IdentityMeasuredAt     *time.Time       `json:"identity_measured_at"`
+	IdentityOS             string           `json:"identity_os,omitempty"`
+	IdentityArch           string           `json:"identity_arch,omitempty"`
 }
 
 // ---------------------------------------------------------------- 工作單
@@ -451,8 +482,14 @@ type CapabilitiesResponse struct {
 // 因為「今天是綠的，星期三就死了」只有歷史答得出來，而上游的資料庫
 // 7 天 / 2000 筆就會把歷史吃掉。
 type ObservationBatch struct {
-	SchemaVersion int       `json:"schema_version"`
-	MeasuredAt    time.Time `json:"measured_at"`
+	AuthHealth       []AuthHealth     `json:"auth_health,omitempty"`
+	BlockDevices     []BlockDevice    `json:"block_devices"`
+	DiskJobResults   []DiskJobResult  `json:"disk_job_results,omitempty"`
+	HostProfileApply *HostApplyResult `json:"host_profile_apply,omitempty"`
+	Readiness        *ReadinessFacts  `json:"readiness,omitempty"`
+	OOMKills         []OOMKill        `json:"oom_kills,omitempty"`
+	SchemaVersion    int              `json:"schema_version"`
+	MeasuredAt       time.Time        `json:"measured_at"`
 
 	// WorkloadPolicyToken 是產生本批 Artifacts / Events 時實際使用的政策身分。
 	// 空值代表舊 Agent 或第一次 checkin 前的量測，Hub 必須視為 unknown，
@@ -527,6 +564,8 @@ type Identity struct {
 	MachineIDHint string `json:"machine_id_hint"`
 	BootID        string `json:"boot_id"`
 	TailscaleIP   string `json:"tailscale_ip,omitempty"`
+	// LANIPv4 is optional for older agents; only bounded native interface IPv4 facts.
+	LANIPv4 []string `json:"lan_ipv4,omitempty"`
 
 	// LingerEnabled: systemd --user unit 在使用者登出後會不會活著，只有在
 	// LingerMeasured 為 true 時才有意義。量不到的平台（macOS 沒有 systemd
@@ -947,7 +986,7 @@ type CredStatus string
 
 const (
 	CredAbsent     CredStatus = "absent"     // 沒裝這家
-	CredConfigured CredStatus = "configured" // 有憑證且過期時間還沒到
+	CredConfigured CredStatus = "configured" // 本機憑證可續期、長效或過期時間還沒到
 	CredExpired    CredStatus = "expired"    // 過期時間已過
 	CredUnknown    CredStatus = "unknown"    // 讀不到 / 沒有過期欄位 / 格式不認得
 	CredFailed     CredStatus = "failed"     // 真實請求失敗過
@@ -965,6 +1004,8 @@ const (
 // 「這個 session 被伺服器端撤銷了」。判斷交給 Hub 做跨機器比對：同一張票在
 // A 上一直在更新、在 B 上 mtime 卡住三天，那 B 大概被踢了。
 type Credential struct {
+	// Source identifies the file contract; omitted by older agents. gemini slot uses agy.
+	Source    string     `json:"source,omitempty"`
 	Provider  string     `json:"provider"` // claude / codex / grok / gemini / openclaw
 	Status    CredStatus `json:"status"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -1259,4 +1300,39 @@ type IndependentVerificationRequest struct {
 	ObservedVersion string    `json:"observed_version"`
 	Passed          bool      `json:"passed"`
 	VerifiedAt      time.Time `json:"verified_at"`
+}
+
+// DiskTimerObservation contains only fixed local maintenance unit facts.
+// Known=false is unknown, never proof that a local apply owner stopped.
+type DiskTimerObservation struct {
+	TransitionRevision    int64                     `json:"transition_revision,omitempty"`
+	TransitionNonce       string                    `json:"transition_nonce,omitempty"`
+	ReceivedAt            time.Time                 `json:"received_at,omitempty"`
+	ReceiptSequence       int64                     `json:"receipt_sequence,omitempty"`
+	Scope                 string                    `json:"scope"`
+	ObservedAt            time.Time                 `json:"observed_at"`
+	Known                 bool                      `json:"known"`
+	Installed             bool                      `json:"installed"`
+	Enabled               bool                      `json:"enabled"`
+	Active                bool                      `json:"active"`
+	ServiceActive         bool                      `json:"service_active"`
+	WeeklyTimer           *DiskLocalUnitObservation `json:"weekly_timer,omitempty"`
+	SummaryAt             time.Time                 `json:"summary_at,omitempty"`
+	SummaryCandidateBytes *int64                    `json:"summary_candidate_bytes,omitempty"`
+	SummaryLockSkipped    *bool                     `json:"summary_lock_skipped,omitempty"`
+	SummaryAgeSeconds     *int64                    `json:"summary_age_seconds,omitempty"`
+}
+
+// DiskLocalUnitObservation is a fixed read-only auxiliary timer projection.
+type DiskLocalUnitObservation struct {
+	Known     bool `json:"known"`
+	Installed bool `json:"installed"`
+	Enabled   bool `json:"enabled"`
+	Active    bool `json:"active"`
+}
+
+// DiskTimerTransition is a Hub-issued handoff challenge; it authorizes no action.
+type DiskTimerTransition struct {
+	Revision int64  `json:"revision"`
+	Nonce    string `json:"nonce"`
 }

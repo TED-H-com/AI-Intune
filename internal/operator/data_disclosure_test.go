@@ -39,7 +39,7 @@ func TestEveryMeasuredTableLandsInExactlyOneCategory(t *testing.T) {
 	placed := map[string]DataCategoryKey{}
 	for _, category := range disclosure.Categories {
 		for _, table := range category.Tables {
-			if previous, seen := placed[table]; seen {
+			if previous, seen := placed[table]; seen && table != "ops_approvals" {
 				t.Errorf("%s 同時被 %s 與 %s 講了", table, previous, category.Key)
 			}
 			placed[table] = category.Key
@@ -480,6 +480,8 @@ func TestEveryDisclosedCategoryCarriesThePinnedSentences(t *testing.T) {
 				t.Errorf("資料來源句子的實際值=%q，期望值=%q", category.SourceSentence, wantSource)
 			}
 
+			retentionHeads[DataRetentionUsagePolicy] = "Usage policy retention: daily contributions, accounts and receipts use DailyRetentionDays; windows use WindowRetentionDays; sessions, jobs, recommendations and usage approvals use SessionRetentionDays. Snoozed recommendations and their current approvals remain until SessionRetentionDays after reopen_at. File replay checkpoints remain; task labels are not stored."
+			retirementSentences[DataRetentionUsagePolicy] = "Expired usage rows continue to be pruned after retirement; file replay checkpoints remain."
 			retentionHead, knownRetention := retentionHeads[category.Retention.Kind]
 			wantRetirement, knownRetirement := retirementSentences[category.Retention.Kind]
 			if !knownRetention || !knownRetirement {
@@ -508,5 +510,68 @@ func TestEveryDisclosedCategoryCarriesThePinnedSentences(t *testing.T) {
 				t.Errorf("自由文字句子的實際值=%q，期望值=%q", category.FreeTextSentence, wantFreeText)
 			}
 		})
+	}
+}
+
+func TestDataDisclosureCategoryTextFitsClientLimit(t *testing.T) {
+	disclosure := disclosureAt(t, store.DefaultRetention())
+	for _, c := range disclosure.Categories {
+		for name, text := range map[string]string{"holds": c.Holds, "free_text": c.FreeText, "source_sentence": c.SourceSentence, "retention_sentence": c.RetentionSentence, "retirement_sentence": c.RetirementSentence, "free_text_sentence": c.FreeTextSentence} {
+			if len(text) > 512 {
+				t.Errorf("%s/%s is %d bytes; client limit is 512", c.Key, name, len(text))
+			}
+		}
+	}
+}
+
+func TestUsageLifecycleDisclosure(t *testing.T) {
+	category := categoryOf(t, disclosureAt(t, store.DefaultRetention()), DataCategoryUsageRecommendations)
+	for _, want := range []string{"usage_recommendations", "usage_recommendation_cycles"} {
+		found := false
+		for _, table := range category.Tables {
+			if table == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("recommendation category omits %s", want)
+		}
+	}
+}
+
+func TestUsageApprovalDisclosurePartitionsSharedLedger(t *testing.T) {
+	service, st, machine, now := machineActionsFixture(t, "usage-disclosure", enabledCheckin())
+	audit := store.AuditEntry{AuthSubject: "human-admin", AuthMethod: "local-account-session", AuthCapability: "admin", AuthDecision: "AUTHORIZED"}
+	p := store.DefaultUsagePolicy()
+	digest, err := store.UsagePolicyPreviewDigest("usage", 0, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := st.PublishUsagePolicy("usage", 0, p, digest, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := store.UsageRecommendation{ID: "advice", RuleID: "rule", RuleVersion: 1, MachineID: machine, Scope: "machine", EvidenceDigest: "sha256:" + strings.Repeat("a", 64), EvidenceStart: now.Add(-time.Hour), EvidenceEnd: now, Confidence: "high", Proposer: "rule"}
+	if err = st.CreateUsageRecommendation(r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.CreateOpsApproval(store.OpsApproval{ID: r.ID, MachineID: machine, Operation: "usage-recommendation-v1", PolicyID: policy.ID, PolicyRevision: policy.Revision, PolicyDigest: policy.Digest, ItemDigest: store.UsageRecommendationItemDigest(r)}, audit); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.MachineData(machine, store.DefaultRetention(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range result.Categories {
+		switch c.Category.Key {
+		case DataCategoryUsageRecommendations:
+			if c.Rows != 2 || !strings.Contains(c.Category.FreeText, "snooze") || !strings.Contains(strings.Join(c.Category.Tables, ","), "ops_approvals") {
+				t.Fatal(c)
+			}
+		case DataCategoryDiskClean:
+			if c.Rows != 0 {
+				t.Fatal("usage approval counted as disk", c)
+			}
+		}
 	}
 }

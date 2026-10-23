@@ -309,6 +309,9 @@ func (s *Store) OpenAgentSession(req OpenAgentSessionRequest) (AgentSessionResul
 		return AgentSessionResult{}, fmt.Errorf("store: begin agent session open: %w", err)
 	}
 	defer tx.Rollback()
+	if err := executionAllowedTx(tx, req.MachineID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return AgentSessionResult{}, err
+	}
 	writerNow := s.now().UTC().Truncate(time.Second)
 	audit.At = writerNow
 
@@ -428,6 +431,7 @@ func (s *Store) OpenAgentSession(req OpenAgentSessionRequest) (AgentSessionResul
 // CloseAgentSession closes an open session. A session already closed is a
 // successful no-op and retains its first close timestamp and reason.
 func (s *Store) CloseAgentSession(req CloseAgentSessionRequest) (AgentSessionResult, error) {
+
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return AgentSessionResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略")
@@ -446,7 +450,7 @@ func (s *Store) CloseAgentSession(req CloseAgentSessionRequest) (AgentSessionRes
 		req.SessionID, req.OperatorTailnetUserID, req.OperatorTailnetUserLogin,
 		req.IdempotencyKey, req.RequestDigest)
 	sessionIDValid := validAgentSessionID(req.SessionID)
-	reasonValid := validSingleLineText(req.Reason, auditMaxReason, false)
+	reasonValid := validAuditReason(req.Reason)
 	if sessionIDValid && reasonValid {
 		audit.Reason = req.Reason
 	}
@@ -455,6 +459,9 @@ func (s *Store) CloseAgentSession(req CloseAgentSessionRequest) (AgentSessionRes
 		return AgentSessionResult{}, fmt.Errorf("store: begin agent session close: %w", err)
 	}
 	defer tx.Rollback()
+	if err := executionAllowedTx(tx, req.MachineID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return AgentSessionResult{}, err
+	}
 	writerNow := s.now().UTC().Truncate(time.Second)
 	audit.At = writerNow
 

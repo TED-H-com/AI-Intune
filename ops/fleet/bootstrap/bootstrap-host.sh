@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # shellcheck source=ops/fleet/common.sh
 source "$ROOT/ops/fleet/common.sh"
-mode=plan phases=preflight,tailscale,journald,disk-clean,ai-cli,agent,linger
+mode=plan phases=preflight,tailscale,journald,disk-clean,ai-cli,agent,applier,linger
 hub='' hostname='' key='' package='' prefix='' resume=0 no_tailscale=0
 main_user=${SUDO_USER:-$(id -un)}
 user_home=$HOME
@@ -32,7 +32,7 @@ done
 [[ $state_dir == /* && ( -z $prefix || $prefix == /* ) ]] || { echo 'Use absolute state and root-prefix paths' >&2; exit 2; }
 IFS=, read -r -a selected <<< "$phases"
 for phase in "${selected[@]}"; do
-    case $phase in preflight|tailscale|journald|disk-clean|ai-cli|agent|linger) ;; *) echo 'Unknown phase' >&2; exit 2;; esac
+    case $phase in preflight|tailscale|journald|disk-clean|ai-cli|agent|applier|linger) ;; *) echo 'Unknown phase' >&2; exit 2;; esac
 done
 state=$state_dir/state.json
 record() {
@@ -130,6 +130,12 @@ PY
             fi
             systemctl is-active --quiet clawctl-agent || { echo 'clawctl-agent is not active after install' >&2; return 1; }
             echo 'Remove the staged package and transfer copies after Hub verification.';;
+        applier)
+            script=$ROOT/ops/fleet/applier/install.sh
+            if [[ -n $package && -f $package/fleet-apply/install.sh ]]; then script=$package/fleet-apply/install.sh; fi
+            printf -v command 'bash %q --agent-user %q' "$script" "$main_user"
+            if [[ -n $prefix ]]; then printf -v command '%s --root-prefix %q' "$command" "$prefix"; fi
+            root_step "$command";;
         linger)
             printf -v command 'loginctl enable-linger %q' "$main_user"
             root_step "$command";;

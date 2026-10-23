@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"strings"
 	"time"
@@ -230,6 +231,13 @@ func operatorEnrollTokenRevocationSuccessDetail(receipt operatorEnrollTokenRevoc
 // ApplyOperatorEnrollTokenRevocation commits the exact token DELETE, durable
 // receipt, idempotency decision, and original audit evidence together.
 func (s *Store) ApplyOperatorEnrollTokenRevocation(req OperatorEnrollTokenRevocationRequest) (OperatorEnrollTokenRevocationResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorEnrollTokenRevocationResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorEnrollTokenRevocationResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略且最多 200 bytes")
@@ -494,7 +502,7 @@ func validateOperatorEnrollTokenRevocationRejectionEvidence(tx dbTx,
 	 WHERE action=? AND machine_id=? AND subject=? AND COALESCE(reason,'')=?
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='failed'
 	   AND COALESCE(detail,'')=?`, string(AuditRevokeToken), req.MachineID, truncAudit(req.MachineID, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		cached.CreatedAt, cached.ErrorDetail.String).Scan(&count)
 	return count == 1, err
 }
@@ -516,7 +524,7 @@ func validateOperatorEnrollTokenRevocationSuccessEvidence(tx dbTx,
 	 WHERE action=? AND machine_id=? AND subject=? AND COALESCE(reason,'')=?
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='ok'
 	   AND COALESCE(detail,'')=?`, string(AuditRevokeToken), receipt.MachineID,
-		truncAudit(receipt.DisplayName, auditMaxReason), truncAudit(req.Reason, auditMaxReason),
+		truncAudit(receipt.DisplayName, auditMaxReason), truncReason(req.Reason),
 		req.IdempotencyKey, req.RequestDigest, fmtTime(receipt.RevokedAt),
 		operatorEnrollTokenRevocationSuccessDetail(receipt)).Scan(&auditCount)
 	return auditCount == 1, err

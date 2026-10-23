@@ -12,7 +12,7 @@ import (
 
 var userPatterns = []string{"GET /account/users", "POST /account/users/create", "POST /account/users/disable", "POST /account/users/enable", "POST /account/users/email", "POST /account/users/rename"}
 var userActions = map[string]string{"create": "created", "disable": "disabled", "enable": "enabled", "email": "email-changed", "rename": "renamed"}
-var usersForm = template.Must(template.New("users").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Admin users</title><a href="/account/security">Account security</a><h1>Admin users</h1><p role="alert">{{.Error}}</p><table><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>MFA enrolled</th><th>Created</th></tr>{{range .Users}}<tr><td>{{.Username}}</td><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if .Disabled}}disabled{{else}}active{{end}}</td><td>{{if .MFAEnrolled}}yes{{else}}no{{end}}</td><td>{{.CreatedAt}}</td></tr>{{end}}</table>{{range .Actions}}<h2>{{.}}</h2><form method="post" action="/account/users/{{.}}"><label>Username <input name="username" required maxlength="64"></label>{{if eq . "create"}}<label>Email (optional) <input name="email" maxlength="254"></label><label>Initial password <input type="password" name="initial_password" required minlength="12" maxlength="256"></label>{{end}}{{if eq . "email"}}<label>Email (empty clears) <input name="email" maxlength="254"></label>{{end}}{{if eq . "rename"}}<label>New username <input name="new_username" required maxlength="64"></label>{{end}}<label>Your current password <input type="password" name="password" required maxlength="256"></label><label>Your authenticator code <input name="code" maxlength="6" autocomplete="one-time-code"></label><button>{{.}}</button></form>{{end}}</html>`))
+var usersForm = template.Must(template.New("users").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Admin users</title><a href="/account/security">Account security</a><h1>Admin users</h1><p role="alert">{{.Error}}</p><table><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>MFA enrolled</th><th>Created</th></tr>{{range .Users}}<tr><td>{{.Username}}</td><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if .Disabled}}disabled{{else}}active{{end}}</td><td>{{if .MFAEnrolled}}yes{{else}}no{{end}}</td><td>{{.CreatedAt}}</td></tr>{{end}}</table>{{range .Actions}}<h2>{{.}}</h2><form method="post" action="/account/users/{{.}}"><label>Username <input name="username" required maxlength="64"></label>{{if eq . "create"}}<label>Email (optional) <input name="email" maxlength="254"></label><label>Initial password <input type="password" name="initial_password" required minlength="12" maxlength="256"></label>{{end}}{{if eq . "email"}}<label>Email (empty clears) <input name="email" maxlength="254"></label>{{end}}{{if eq . "rename"}}<label>New username <input name="new_username" required maxlength="64"></label>{{end}}<p>Fresh MFA is needed for this sensitive account action.</p><label>Your current password <input type="password" name="password" required maxlength="256"></label><label>Your authenticator code <input name="code" maxlength="6" autocomplete="one-time-code"></label><button>{{.}}</button></form>{{end}}</html>`))
 
 func registerUserRoutes(mux *http.ServeMux, st *store.Store, resolver clientip.Resolver, cloud ...cloudBoundaryConfig) []string {
 	limiter := newIPLimiter(10, 5)
@@ -44,7 +44,7 @@ func registerUserRoutes(mux *http.ServeMux, st *store.Store, resolver clientip.R
 			action := userActions[strings.TrimPrefix(r.URL.Path, "/account/users/")]
 			ip := resolver.Resolve(r)
 			meta := store.AuditEntry{SourceAddr: ip, UserAgent: r.UserAgent()}
-			auditFailure := func(detail string) {
+			auditFailure := func(detail string, resolvers ...clientip.Resolver) {
 				_ = st.RecordAudit(store.AuditEntry{Action: store.AuditAction("hub-user-" + action), AuthSubject: p.StableSubject(), AuthMethod: p.AuthMethod, Subject: r.PostForm.Get("username"), Detail: detail, OK: false, SourceAddr: ip, UserAgent: r.UserAgent()})
 			}
 			if !limiter.allow(ip) {
@@ -111,18 +111,28 @@ func registerUserRoutes(mux *http.ServeMux, st *store.Store, resolver clientip.R
 	return userPatterns
 }
 
-// Boundary failures never parse an untrusted mutation body. The route and actor
-// identify the rejected action without persisting credentials.
-func recordUserBoundaryFailure(st *store.Store, r *http.Request, detail string) {
+// Boundary failures record the authenticated actor and rejected action. Service
+// token targets are extracted from a bounded form and validated before auditing.
+func recordUserBoundaryFailure(st *store.Store, r *http.Request, detail string, resolvers ...clientip.Resolver) {
 	if st == nil || r.Method != http.MethodPost {
-		return
-	}
-	action, ok := userActions[strings.TrimPrefix(r.URL.Path, "/account/users/")]
-	if !ok {
 		return
 	}
 	p, ok := operatorauth.PrincipalFromContext(r.Context())
 	if !ok || p.AuthMethod != operatorauth.AuthMethodLocalAccountSession {
+		return
+	}
+	if r.URL.Path == "/account/service-tokens/create" || r.URL.Path == "/account/service-tokens/revoke" || r.URL.Path == "/account/service-tokens/routes" {
+		var resolver clientip.Resolver
+		if len(resolvers) > 0 {
+			resolver = resolvers[0]
+		}
+		entry, _ := serviceTokenManagementMetadata(nil, r, p, resolver)
+		entry.Detail = detail
+		_ = st.RecordAudit(entry)
+		return
+	}
+	action, ok := userActions[strings.TrimPrefix(r.URL.Path, "/account/users/")]
+	if !ok {
 		return
 	}
 	_ = st.RecordAudit(store.AuditEntry{Action: store.AuditAction("hub-user-" + action), AuthSubject: p.StableSubject(), AuthMethod: p.AuthMethod, Subject: r.URL.Path, Detail: detail, SourceAddr: p.SourceAddr, UserAgent: r.UserAgent(), OK: false})

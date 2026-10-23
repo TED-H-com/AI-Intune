@@ -2,6 +2,8 @@
 
 set -Eeuo pipefail
 
+ROOT_HANDOFF_TOKEN=""
+TARGET_AGENT_USER=""
 HUB=""
 HUB_EXPLICIT=0
 TOKEN_EXPLICIT=0
@@ -39,6 +41,7 @@ Keyed packages read hub-url and enroll-token beside this script when flags are a
 The embedded enroll-token is removed after successful enrollment.
 
 Options:
+  --user NAME                     root-only: install for this non-root account
   --token TOKEN                    one-time enrollment token
   --token-file FILE                0600 file containing the enrollment token
   --tailscale-auth-key-file FILE   0600 file containing a Tailscale auth key
@@ -112,15 +115,15 @@ rollback_reenroll() {
     fi
   fi
   if [[ "$OLD_LEGACY_ENABLED" == 1 ]]; then
-    systemctl --user enable clawctl-agent.service || failed=1
+    as_agent systemctl --user enable clawctl-agent.service || failed=1
   fi
   if [[ "$OLD_SYSTEM_ACTIVE" == 1 ]]; then
     sudo systemctl start clawctl-agent.service &&
       systemctl is-active --quiet clawctl-agent.service || failed=1
   fi
   if [[ "$OLD_LEGACY_ACTIVE" == 1 ]]; then
-    systemctl --user start clawctl-agent.service &&
-      systemctl --user is-active --quiet clawctl-agent.service || failed=1
+    as_agent systemctl --user start clawctl-agent.service &&
+      as_agent systemctl --user is-active --quiet clawctl-agent.service || failed=1
   fi
   if [[ "$failed" == 0 ]]; then
     if [[ "$OLD_SYSTEM_ACTIVE" == 1 || "$OLD_LEGACY_ACTIVE" == 1 ]]; then
@@ -249,6 +252,7 @@ install_proxy_dropin() {
 }
 
 cleanup() {
+  if [[ -n "$ROOT_HANDOFF_TOKEN" ]]; then as_agent shred -u -- "$ROOT_HANDOFF_TOKEN" 2>/dev/null || true; fi
   local path
   for path in "${SECRET_FILES[@]}"; do
     [[ -n "$path" ]] && rm -f -- "$path"
@@ -344,6 +348,7 @@ accept_agent_hub_url() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --user) [[ $# -ge 2 ]] || fail "--user requires a value"; TARGET_AGENT_USER="$2"; shift 2 ;;
     --hub) [[ $# -ge 2 ]] || fail "--hub requires a value"; HUB="$2"; HUB_EXPLICIT=1; shift 2 ;;
     --token) [[ $# -ge 2 ]] || fail "--token requires a value"; TOKEN="$2"; TOKEN_EXPLICIT=1; shift 2 ;;
     --token-file) [[ $# -ge 2 ]] || fail "--token-file requires a value"; TOKEN_FILE="$2"; TOKEN_EXPLICIT=1; shift 2 ;;
@@ -373,8 +378,30 @@ if [[ "${CLAWCTL_INSTALL_AGENT_CHECK_HUB:-}" == "1" ]]; then
   printf '%s\n' "$HUB"
   exit 0
 fi
-[[ $EUID -ne 0 ]] || fail "Run this installer as the account that will run clawctl-agent"
-AGENT_USER="$(id -un)"
+# Root bootstrap keeps privilege in this process; account operations explicitly
+# drop privilege. No password, sudo policy or shared timestamp is needed.
+as_agent() {
+  if [[ -n "$TARGET_AGENT_USER" ]]; then
+    command sudo -H -u "$AGENT_USER" env XDG_RUNTIME_DIR="/run/user/$AGENT_UID" "$@"
+  else
+    "$@"
+  fi
+}
+if [[ -n "$TARGET_AGENT_USER" ]]; then
+  [[ $EUID == 0 && "$TARGET_AGENT_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*\$?$ ]] || fail "--user requires root and a valid account"
+  [[ "$REENROLL" == 0 ]] || fail "Run reenrollment as the agent account"
+  AGENT_USER="$TARGET_AGENT_USER"
+  AGENT_UID="$(id -u "$AGENT_USER")"
+  [[ "$AGENT_UID" =~ ^[1-9][0-9]*$ ]] || fail "Choose a non-root agent account"
+  AGENT_HOME="$(getent passwd "$AGENT_USER" | cut -d: -f6)"
+  # Privileged installer operations stay root, including the existing sudo calls.
+  sudo() { if [[ ${1:-} == -n ]]; then shift; fi; "$@"; }
+else
+  [[ $EUID -ne 0 ]] || fail "Run as the agent account or use --user NAME as root"
+  AGENT_USER="$(id -un)"
+  AGENT_UID=$EUID
+  AGENT_HOME=$HOME
+fi
 UNAME_S="$(uname -s)"
 if [[ "$UNAME_S" != Linux ]]; then
   [[ "$UNAME_S" != Darwin ]] || fail "This installer is for Linux. On macOS run ops/install-agent-macos.sh --hub $HUB"
@@ -449,12 +476,12 @@ resolve_unit_rw_paths() {
 render_agent_unit() {
   local source=$1 destination=$2 agent_user agent_uid escaped_home
   agent_user="$AGENT_USER"
-  agent_uid="$(id -u)"
+  agent_uid="$AGENT_UID"
   [[ "$agent_user" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*\$?$ ]] || fail "Unsupported agent user name: $agent_user"
   [[ "$agent_uid" =~ ^[1-9][0-9]*$ ]] || fail "Agent must use a non-root numeric UID"
-  [[ "$HOME" =~ ^/[a-zA-Z0-9._/-]+$ && "$HOME" != *"/../"* && "$HOME" != */.. ]] ||
-    fail "Agent home contains characters that cannot be safely rendered into systemd: $HOME"
-  escaped_home=${HOME//\\/\\\\}
+  [[ "$AGENT_HOME" =~ ^/[a-zA-Z0-9._/-]+$ && "$AGENT_HOME" != *"/../"* && "$AGENT_HOME" != */.. ]] ||
+    fail "Agent home contains characters that cannot be safely rendered into systemd: $AGENT_HOME"
+  escaped_home=${AGENT_HOME//\\/\\\\}
   escaped_home=${escaped_home//&/\\&}
   sed -e "s|@@CLAWCTL_AGENT_USER@@|$agent_user|g" \
       -e "s|@@CLAWCTL_AGENT_UID@@|$agent_uid|g" \
@@ -470,11 +497,11 @@ ensure_owned_directory() {
   local path=$1 mode=$2
   if [[ -e "$path" || -L "$path" ]]; then
     [[ -d "$path" && ! -L "$path" ]] || fail "Directory path is not safe: $path"
-    [[ "$(stat -c '%u' "$path")" == "$EUID" ]] || fail "Directory owner is not $USER: $path"
+    [[ "$(stat -c '%u' "$path")" == "$AGENT_UID" ]] || fail "Directory owner is not $AGENT_USER: $path"
   else
-    mkdir "$path"
+    as_agent mkdir "$path"
   fi
-  chmod "$mode" "$path"
+  as_agent chmod "$mode" "$path"
 }
 
 # A home ancestor such as ~/.cache may be a symlink to another disk (for example
@@ -486,14 +513,14 @@ ensure_home_ancestor() {
   if [[ -L "$path" ]]; then
     target="$(readlink -f -- "$path")" || fail "Home path is not safe: $path"
     [[ -n "$target" && -d "$target" && ! -L "$target" ]] || fail "Home path is not safe: $path"
-    [[ "$(stat -c '%u' "$target")" == "$EUID" ]] || fail "Home path owner is not $USER: $path -> $target"
+    [[ "$(stat -c '%u' "$target")" == "$AGENT_UID" ]] || fail "Home path owner is not $AGENT_USER: $path -> $target"
     mode="$(stat -c '%a' "$target")"
     (( (8#$mode & 8#022) == 0 )) || fail "Home path target is group- or world-writable: $path -> $target"
   elif [[ -e "$path" ]]; then
     [[ -d "$path" ]] || fail "Home path is not safe: $path"
-    [[ "$(stat -c '%u' "$path")" == "$EUID" ]] || fail "Home path owner is not $USER: $path"
+    [[ "$(stat -c '%u' "$path")" == "$AGENT_UID" ]] || fail "Home path owner is not $AGENT_USER: $path"
   else
-    mkdir "$path"
+    as_agent mkdir "$path"
   fi
 }
 
@@ -539,7 +566,7 @@ install_container_runtime() {
 }
 
 ensure_subordinate_ids() {
-  sudo env TARGET_USER="$USER" bash -c '
+  sudo env TARGET_USER="$AGENT_USER" bash -c '
     set -Eeuo pipefail
     exec 9>/run/lock/clawctl-subids.lock
     flock 9
@@ -630,16 +657,16 @@ else
   echo "Tailscale connected: $TAILSCALE_IP"
 fi
 
-BIN_DIR="$HOME/.local/bin"
-CONFIG_HOME="$HOME/.config"
+BIN_DIR="$AGENT_HOME/.local/bin"
+CONFIG_HOME="$AGENT_HOME/.config"
 CONFIG_DIR="$CONFIG_HOME/clawctl"
 UNIT_PARENT="$CONFIG_HOME/systemd"
 UNIT_DIR="$UNIT_PARENT/user"
 SYSTEM_UNIT_DIR="${CLAWCTL_SYSTEM_UNIT_DIR:-/etc/systemd/system}"
-LOCAL_HOME="$HOME/.local"
+LOCAL_HOME="$AGENT_HOME/.local"
 SHARE_DIR="$LOCAL_HOME/share"
 RUNTIME_DIR="$SHARE_DIR/clawctl"
-CACHE_HOME="$HOME/.cache"
+CACHE_HOME="$AGENT_HOME/.cache"
 CACHE_DIR="$CACHE_HOME/clawctl"
 CONTAINER_CONFIG_DIR="$CONFIG_HOME/containers"
 CONTAINER_STORAGE_DIR="$SHARE_DIR/containers"
@@ -647,7 +674,7 @@ HERMES_DIR="$RUNTIME_DIR/hermes"
 HERMES_DATA_DIR="$HERMES_DIR/data"
 OPENCLAW_DIR="$RUNTIME_DIR/openclaw"
 OPENCLAW_DROPIN_DIR="$UNIT_DIR/openclaw-gateway.service.d"
-OPENCLAW_STATE_DIR="$HOME/.openclaw"
+OPENCLAW_STATE_DIR="$AGENT_HOME/.openclaw"
 CONFIG_FILE="$CONFIG_DIR/agent.json"
 LEGACY_UNIT_FILE="$UNIT_DIR/clawctl-agent.service"
 SYSTEM_UNIT_FILE="$SYSTEM_UNIT_DIR/clawctl-agent.service"
@@ -698,12 +725,12 @@ fi
 RENDERED_AGENT_UNIT="$(mktemp)"
 SECRET_FILES+=("$RENDERED_AGENT_UNIT")
 render_agent_unit "$SCRIPT_DIR/clawctl-agent.service" "$RENDERED_AGENT_UNIT"
-install -m 0644 "$SCRIPT_DIR/clawctl-hermes.service" "$HERMES_UNIT_FILE.new"
-mv -f "$HERMES_UNIT_FILE.new" "$HERMES_UNIT_FILE"
+as_agent install -m 0644 /dev/stdin "$HERMES_UNIT_FILE.new" <"$SCRIPT_DIR/clawctl-hermes.service"
+as_agent mv -f "$HERMES_UNIT_FILE.new" "$HERMES_UNIT_FILE"
 if [[ ! -e "$OPENCLAW_UNIT_FILE" && ! -L "$OPENCLAW_UNIT_FILE" ]] ||
    grep -Fqx '# AI-Intune managed OpenClaw unit v1' "$OPENCLAW_UNIT_FILE" 2>/dev/null; then
-  install -m 0644 "$SCRIPT_DIR/openclaw-gateway.service" "$OPENCLAW_UNIT_FILE.new"
-  mv -f "$OPENCLAW_UNIT_FILE.new" "$OPENCLAW_UNIT_FILE"
+  as_agent install -m 0644 /dev/stdin "$OPENCLAW_UNIT_FILE.new" <"$SCRIPT_DIR/openclaw-gateway.service"
+  as_agent mv -f "$OPENCLAW_UNIT_FILE.new" "$OPENCLAW_UNIT_FILE"
 fi
 echo "Agent installed: $AGENT_VERSION"
 
@@ -713,12 +740,12 @@ echo "Agent installed: $AGENT_VERSION"
 STEP="user manager persistence"
 sudo loginctl enable-linger "$AGENT_USER"
 [[ "$(loginctl show-user "$AGENT_USER" --property=Linger --value)" == "yes" ]] || fail "linger is not enabled for $AGENT_USER"
-sudo systemctl start "user@$EUID.service"
-export XDG_RUNTIME_DIR="/run/user/$EUID"
+sudo systemctl start "user@$AGENT_UID.service"
+export XDG_RUNTIME_DIR="/run/user/$AGENT_UID"
 
 STEP="container runtime readiness"
 if [[ "$NO_CONTAINER_RUNTIME" == 0 ]]; then
-  PODMAN_ROOTLESS="$(systemd-run --user --wait --pipe --quiet --collect --service-type=exec \
+  PODMAN_ROOTLESS="$(as_agent systemd-run --user --wait --pipe --quiet --collect --service-type=exec \
   --unit=clawctl-podman-readiness -- /usr/bin/podman info --format '{{.Host.Security.Rootless}}')"
   [[ "$PODMAN_ROOTLESS" == "true" ]] || fail "rootless podman is not ready"
 fi
@@ -738,6 +765,12 @@ if [[ -f "$CONFIG_FILE" && "$REENROLL" == "0" ]]; then
 elif [[ ! -f "$CONFIG_FILE" || "$REENROLL" == "1" ]]; then
   if [[ -n "$TOKEN_FILE" ]]; then
     private_secret_file "$TOKEN_FILE"
+    if [[ -n "$TARGET_AGENT_USER" ]]; then
+      ROOT_TOKEN_FILE="$TOKEN_FILE"
+      TOKEN_FILE="$(as_agent mktemp)"
+      ROOT_HANDOFF_TOKEN="$TOKEN_FILE"
+      as_agent tee "$TOKEN_FILE" <"$ROOT_TOKEN_FILE" >/dev/null
+    fi
   elif [[ -n "$TOKEN" ]]; then
     new_secret_file "$TOKEN" TOKEN_FILE
     unset TOKEN
@@ -754,7 +787,7 @@ elif [[ ! -f "$CONFIG_FILE" || "$REENROLL" == "1" ]]; then
   if [[ -f "$CONFIG_FILE" && "$REENROLL" == 1 ]]; then
     STAGING_CONFIG="$CONFIG_DIR/agent.json.reenroll-new"
     [[ ! -e "$STAGING_CONFIG" && ! -L "$STAGING_CONFIG" ]] || fail "Staging config already exists: $STAGING_CONFIG"
-    if ! CLAWCTL_CONFIG="$STAGING_CONFIG" "$BIN_FILE" enroll --hub "$HUB" --token-file "$TOKEN_FILE"; then
+    if ! CLAWCTL_CONFIG="$STAGING_CONFIG" as_agent "$BIN_FILE" enroll --hub "$HUB" --token-file "$TOKEN_FILE"; then
       rm -f -- "$STAGING_CONFIG"
       if [[ -n "$BACKUP_BINARY" ]]; then
         sudo install -m 0755 -o root -g root "$BACKUP_BINARY" "$BIN_FILE.new"
@@ -785,14 +818,14 @@ elif [[ ! -f "$CONFIG_FILE" || "$REENROLL" == "1" ]]; then
     fi
     if [[ -e "$LEGACY_UNIT_FILE" || -L "$LEGACY_UNIT_FILE" ]]; then
       [[ -f "$LEGACY_UNIT_FILE" && ! -L "$LEGACY_UNIT_FILE" ]] || fail "Unsafe legacy unit"
-      systemctl --user is-active --quiet clawctl-agent.service && OLD_LEGACY_ACTIVE=1
-      systemctl --user is-enabled --quiet clawctl-agent.service && OLD_LEGACY_ENABLED=1
+      as_agent systemctl --user is-active --quiet clawctl-agent.service && OLD_LEGACY_ACTIVE=1
+      as_agent systemctl --user is-enabled --quiet clawctl-agent.service && OLD_LEGACY_ENABLED=1
     fi
     REENROLL_PHASE=1
     if [[ "$OLD_SYSTEM_UNIT" == 1 ]]; then sudo systemctl stop clawctl-agent.service; fi
-    if [[ -f "$LEGACY_UNIT_FILE" ]]; then systemctl --user stop clawctl-agent.service; fi
+    if [[ -f "$LEGACY_UNIT_FILE" ]]; then as_agent systemctl --user stop clawctl-agent.service; fi
     mv -f "$STAGING_CONFIG" "$CONFIG_FILE"
-  elif ! "$BIN_FILE" enroll --hub "$HUB" --token-file "$TOKEN_FILE"; then
+  elif ! as_agent "$BIN_FILE" enroll --hub "$HUB" --token-file "$TOKEN_FILE"; then
     fail "Enrollment failed"
   fi
   if [[ "$EMBEDDED_TOKEN" == "1" || "$TOKEN_FILE" == "$SCRIPT_DIR/enroll-token" ]]; then
@@ -816,9 +849,9 @@ sudo systemctl enable clawctl-agent.service
 if [[ "$REENROLL_PHASE" == 0 ]]; then
   if [[ -e "$LEGACY_UNIT_FILE" || -L "$LEGACY_UNIT_FILE" ]]; then
     [[ -f "$LEGACY_UNIT_FILE" && ! -L "$LEGACY_UNIT_FILE" ]] || fail "Legacy agent unit path is not safe: $LEGACY_UNIT_FILE"
-    systemctl --user disable --now clawctl-agent.service
-    rm -f -- "$LEGACY_UNIT_FILE"
-    systemctl --user daemon-reload
+    as_agent systemctl --user disable --now clawctl-agent.service
+    as_agent rm -f -- "$LEGACY_UNIT_FILE"
+    as_agent systemctl --user daemon-reload
   fi
 fi
 sudo systemctl reset-failed clawctl-agent.service 2>/dev/null || true
@@ -827,15 +860,15 @@ sudo systemctl restart clawctl-agent.service
 systemctl is-active --quiet clawctl-agent.service
 
 STEP="Hub readiness"
-"$BIN_FILE" verify --hub "$HUB" --since "$SERVICE_STARTED_AT" --timeout 2m
+as_agent "$BIN_FILE" verify --hub "$HUB" --since "$SERVICE_STARTED_AT" --timeout 2m
 RESTARTS_AFTER="$(systemctl show clawctl-agent.service --property=NRestarts --value)"
 [[ "$RESTARTS_AFTER" == "0" ]] || fail "clawctl-agent restarted during installation"
 MAIN_PID="$(systemctl show clawctl-agent.service --property=MainPID --value)"
 [[ "$MAIN_PID" =~ ^[1-9][0-9]*$ ]] || fail "clawctl-agent has no MainPID"
 [[ "$(ps -o comm= -p "$MAIN_PID" | xargs)" == "clawctl-agent" ]] || fail "clawctl-agent MainPID identity mismatch"
-[[ "$(ps -o uid= -p "$MAIN_PID" | xargs)" == "$EUID" ]] || fail "clawctl-agent process owner mismatch"
+[[ "$(ps -o uid= -p "$MAIN_PID" | xargs)" == "$AGENT_UID" ]] || fail "clawctl-agent process owner mismatch"
 [[ "$(systemctl show clawctl-agent.service --property=FragmentPath --value)" == "$SYSTEM_UNIT_FILE" ]] || fail "clawctl-agent is not loaded as the managed system unit"
-[[ "$(systemctl show clawctl-agent.service --property=User --value)" == "$(id -un)" ]] || fail "clawctl-agent systemd User contract mismatch"
+[[ "$(systemctl show clawctl-agent.service --property=User --value)" == "$AGENT_USER" ]] || fail "clawctl-agent systemd User contract mismatch"
 [[ "$(systemctl show clawctl-agent.service --property=ProtectSystem --value)" == "strict" ]] || fail "clawctl-agent ProtectSystem sandbox is not loaded"
 [[ "$(systemctl show clawctl-agent.service --property=ProtectHome --value)" == "read-only" ]] || fail "clawctl-agent ProtectHome sandbox is not loaded"
 AGENT_COUNT="$(ps -eo comm= | awk '$1=="clawctl-agent" { n++ } END { print n+0 }')"
@@ -844,11 +877,11 @@ AGENT_COUNT="$(ps -eo comm= | awk '$1=="clawctl-agent" { n++ } END { print n+0 }
 REENROLL_PHASE=0
 if [[ -e "$LEGACY_UNIT_FILE" || -L "$LEGACY_UNIT_FILE" ]]; then
   [[ -f "$LEGACY_UNIT_FILE" && ! -L "$LEGACY_UNIT_FILE" ]] || fail "Legacy agent unit path is not safe: $LEGACY_UNIT_FILE"
-  systemctl --user disable --now clawctl-agent.service
-  rm -f -- "$LEGACY_UNIT_FILE"
-  systemctl --user daemon-reload
+  as_agent systemctl --user disable --now clawctl-agent.service
+  as_agent rm -f -- "$LEGACY_UNIT_FILE"
+  as_agent systemctl --user daemon-reload
 fi
-echo "Managed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active jobs=enabled"
+echo "Installed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active; execution follows the enrollment profile."
 if [[ -n "${BACKUP_CONFIG:-}" ]]; then
   echo ""
   echo "Re-enrollment successful. The old configuration was backed up to:"

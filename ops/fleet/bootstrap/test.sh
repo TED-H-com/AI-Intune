@@ -256,5 +256,20 @@ TEST_UID=1000 run bash "$NET/ntp-check.sh" --apply --root-prefix "$TMP/root"
 expect 'non-root NTP apply prints a single-line root step' 0 valid_hints
 TEST_UID=1000 run bash "$NET/ntp-check.sh" --apply --json --root-prefix "$TMP/root"
 expect 'NTP JSON remains valid on non-root apply' 0 python3 -c 'import json,sys; json.loads(sys.argv[1])' "$output"
+mkdir -p "$TMP/package/fleet-apply"
+cat > "$TMP/package/fleet-apply/install.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/applier-calls"
+exit "${FAIL_APPLIER:-0}"
+STUB
+run bash "$BOOT" --phases applier --package-dir "$TMP/package" --state-dir "$TMP/applier-state"
+expect 'applier plan uses exact staged installer path' 0 has 'fleet-apply/install.sh'
+expect 'applier plan does not execute installer' 0 test ! -f "$TMP/applier-calls"
+FAIL_APPLIER=1 run bash "$BOOT" --apply --phases applier --package-dir "$TMP/package" --state-dir "$TMP/applier-state"
+expect 'applier failed install remains retryable' 1 has 'failed: applier'
+run bash "$BOOT" --apply --resume --phases applier --package-dir "$TMP/package" --state-dir "$TMP/applier-state"
+expect 'applier resume retries failed install' 0 has 'apply: applier'
+run bash "$BOOT" --apply --resume --phases applier --package-dir "$TMP/package" --state-dir "$TMP/applier-state"
+expect 'applier resume skips completed install' 0 has 'resume: applier done'
 printf '\npassed: %s, failed: %s\n' "$passed" "$failed"
 [[ $failed == 0 ]]

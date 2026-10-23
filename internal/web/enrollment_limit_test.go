@@ -158,7 +158,6 @@ func TestTheLimitRefusesWhatItCannotApply(t *testing.T) {
 	s, _ := enrollmentLimitWebFixture(t, 1)
 	for name, form := range map[string]url.Values{
 		"沒有理由":     {"max_machines": {"4"}},
-		"理由前後有空白":  {"max_machines": {"4"}, "reason": {" acceptance "}},
 		"台數是負數":    {"max_machines": {"-1"}, "reason": {"acceptance"}},
 		"台數不是數字":   {"max_machines": {"四"}, "reason": {"acceptance"}},
 		"台數大到沒有意義": {"max_machines": {"10001"}, "reason": {"acceptance"}},

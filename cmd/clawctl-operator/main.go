@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/teddashh/AI-Intune/internal/operatoragent"
 	"github.com/teddashh/AI-Intune/internal/operatorclient"
@@ -38,7 +39,12 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		fmt.Fprintln(out, version)
 		return nil
 	}
-	hubURL, rest, err := hubURLFromArgs(args)
+	tokenFile, args, err := tokenFileFromArgs(args)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return err
+	}
+	hubURL, rest, err := hubURLFromArgsMode(args, tokenFile != "")
 	if err != nil {
 		fmt.Fprintln(errOut, err.Error())
 		return err
@@ -47,13 +53,54 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		fmt.Fprint(errOut, usageText)
 		return errUsage
 	}
-	client, err := operatorclient.New(hubURL)
+	var client *operatorclient.Client
+	if tokenFile != "" {
+		client, err = operatorclient.NewWithTokenFile(hubURL, tokenFile)
+	} else {
+		client, err = operatorclient.New(hubURL)
+	}
 	if err != nil {
 		fmt.Fprintln(errOut, err.Error())
 		return err
 	}
 	svc := &operatoragent.Service{Hub: client, Version: version}
 	switch rest[0] {
+	case "token":
+		if len(rest) < 2 || rest[1] != "rotate" || tokenFile == "" {
+			fmt.Fprintln(errOut, "Usage: clawctl-operator --hub-url https://HUB token rotate --token-file PATH [--min-remaining 14d] [--force]")
+			return errUsage
+		}
+		threshold := 14 * 24 * time.Hour
+		force := false
+		for i := 2; i < len(rest); i++ {
+			switch rest[i] {
+			case "--force":
+				force = true
+			case "--min-remaining":
+				if i+1 >= len(rest) {
+					return errUsage
+				}
+				i++
+				threshold, err = operatorclient.ParseRotationDuration(rest[i])
+				if err != nil {
+					fmt.Fprintln(errOut, err)
+					return errUsage
+				}
+			default:
+				return errUsage
+			}
+		}
+		rotated, rotateErr := client.RotateTokenFile(context.Background(), tokenFile, threshold, force)
+		if rotateErr != nil {
+			fmt.Fprintln(errOut, rotateErr)
+			return rotateErr
+		}
+		if rotated {
+			fmt.Fprintln(out, "Service token rotated.")
+		} else {
+			fmt.Fprintln(out, "Service token rotation not due.")
+		}
+		return nil
 	case "mcp":
 		if len(rest) != 1 {
 			fmt.Fprintln(errOut, "mcp does not take arguments")
@@ -107,7 +154,9 @@ func callErrorPayload(err error) any {
 	return map[string]string{"code": "hub_error", "message": err.Error()}
 }
 
-func hubURLFromArgs(args []string) (string, []string, error) {
+func hubURLFromArgs(args []string) (string, []string, error) { return hubURLFromArgsMode(args, false) }
+
+func hubURLFromArgsMode(args []string, service bool) (string, []string, error) {
 	selected := ""
 	explicit := false
 	i := 0
@@ -142,6 +191,10 @@ done:
 	if selected == "" || strings.TrimSpace(selected) != selected {
 		return "", nil, errors.New("--hub-url is empty or padded")
 	}
+	if service {
+		base, err := operatorclient.ServiceOrigin(selected)
+		return base, args[i:], err
+	}
 	endpoint, err := operatorendpoint.ParseBaseURL(selected)
 	if err != nil {
 		return "", nil, fmt.Errorf("operator Hub URL: %w", err)
@@ -153,11 +206,45 @@ const usageText = `clawctl-operator — call the Hub operator JSON API from a ta
 
   clawctl-operator [--hub-url http://100.x.y.z:8787] mcp
   clawctl-operator [--hub-url URL] call <tool> [json]
+  clawctl-operator --hub-url HTTPS_ORIGIN token rotate --token-file PATH [--min-remaining 14d] [--force]
   clawctl-operator [--hub-url URL] tools
   clawctl-operator version
 
 Identity is the Tailscale node this process runs on. Hub WhoIs the TCP source.
-This command sends no Authorization header and does not open the Hub database.
+Use --token-file PATH with --hub-url https://hub.example.com for service auth.
+The token file must be regular, not a symlink, and mode 0600.
+Rotation exits 0 when rotated or not due, 1 on failure, 2 for invalid usage.
 CLAWCTL_HUB_URL is the same origin when --hub-url is omitted.
 Write tools need preview_digest from a previous preview call.
 `
+
+func tokenFileFromArgs(args []string) (string, []string, error) {
+	var path string
+	var out []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "call" || args[i] == "mcp" || args[i] == "tools" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if args[i] == "--token-file" {
+			if path != "" || i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return "", nil, errors.New("--token-file requires one path")
+			}
+			i++
+			path = args[i]
+			continue
+		}
+		if strings.HasPrefix(args[i], "--token-file=") {
+			if path != "" {
+				return "", nil, errors.New("duplicate --token-file")
+			}
+			path = strings.TrimPrefix(args[i], "--token-file=")
+			if path == "" {
+				return "", nil, errors.New("--token-file requires a path")
+			}
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return path, out, nil
+}

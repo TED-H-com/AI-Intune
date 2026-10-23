@@ -1,0 +1,9 @@
+{{define "schedule_preview.html"}}{{template "head" .}}{{$v := .Schedules}}
+<div class="page-heading"><div><h1>{{if $v.RunNow}}Run now · 確認立即執行{{else}}Review schedule · 確認排程{{end}}</h1><p>{{if $v.RunNow}}執行 {{$v.Edit.Name}}。確認時重新檢查 catalog、安全條件與權限。{{else}}檢查完整正規化定義與 digest，再確認套用。{{end}}</p></div></div>
+<div class="panel">{{if not $v.RunNow}}<h2>Normalized definition</h2><pre class="copy">{{$v.Canonical}}</pre><p class="mono small" style="overflow-wrap:anywhere">{{$v.Digest}}</p><h2>Next 3 runs · 時區 / UTC</h2><ul>{{range $v.Times}}<li>{{.}}</li>{{end}}</ul><p>Reason：{{$v.Edit.Reason}}</p>{{end}}
+<form class="disk-form" method="post" action="{{if $v.RunNow}}/tenant/schedules/{{$v.Edit.ID}}/run-now{{else}}/tenant/schedules/apply{{end}}">
+<input type="hidden" name="idempotency_key" value="{{$v.Key}}"><input type="hidden" name="confirm" value="yes">
+{{if not $v.RunNow}}<input type="hidden" name="request" value="{{$v.Body}}"><input type="hidden" name="operation" value="{{$v.Operation}}"><input type="hidden" name="preview_digest" value="{{$v.Digest}}"><input type="hidden" name="expected_revision" value="{{$v.Edit.ExpectedRevision}}">{{end}}
+{{if $v.Admin}}{{template "disk_reauthentication" .}}{{end}}
+<div class="command-bar"><button type="submit">Confirm · {{if $v.RunNow}}立即執行{{else}}套用{{end}}</button><a class="button secondary" href="/tenant/schedules">取消</a></div></form></div>
+{{template "foot" .}}{{end}}

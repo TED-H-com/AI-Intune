@@ -5,7 +5,8 @@
 <div class="panel">
   <p style="margin-top:0"><b>建立前預覽</b></p>
   <dl class="facts">
-    <dt>名冊名稱</dt><dd>{{.Name}}</dd>
+    <dt>管理方式</dt><dd>{{if .MonitorOnly}}Monitor only / 只監控。僅接收心跳與觀測，阻止工作單、腳本、登入與終端。{{else}}Managed / 允許執行核准的作業{{end}}</dd>
+ <dt>名冊名稱</dt><dd>{{.Name}}</dd>
     <dt>有效時間</dt><dd>{{.TTL}}（現在確認的話約在 {{.ExpiresAt}} 過期）</dd>
     <dt>理由</dt><dd>{{if .Reason}}{{.Reason}}{{else}}<span class="dim">沒有填</span>{{end}}</dd>
   </dl>
@@ -26,7 +27,8 @@
   <p class="small dim">撤銷影響：ticket 失效；名冊、分母與 credential 不變。移出分母：退役機器。</p>
   {{end}}
   {{if .CreatesExpectedMachine}}<form method="post" action="/enrollments">
-    <input type="hidden" name="name" value="{{.Name}}">
+    <input type="hidden" name="monitor_only" value="{{.MonitorOnly}}">
+ <input type="hidden" name="name" value="{{.Name}}">
     <input type="hidden" name="reason" value="{{.Reason}}">
     <input type="hidden" name="preview_digest" value="{{.PreviewDigest}}">
     <input type="hidden" name="idempotency_key" value="{{.IdempotencyKey}}">

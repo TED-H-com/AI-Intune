@@ -24,6 +24,20 @@ for arch in amd64 arm64; do
     install -m 0644 "$ROOT/ops/clawctl-hermes.service" "$stage/clawctl-hermes.service"
     install -m 0644 "$ROOT/ops/openclaw-gateway.service" "$stage/openclaw-gateway.service"
     files=(VERSION clawctl-agent clawctl-agent.service clawctl-hermes.service install-agent.sh openclaw-gateway.service)
+    applier_files=(clawctl-fleet-apply clawctl-fleet-apply.path clawctl-fleet-apply.service clawctl-fleet-apply.timer install.sh installer.py uninstall.sh)
+    maintenance_files=(conf/root.conf.example disk-clean install-timers.sh journald/50-disk-clean.conf systemd/system/disk-clean-root.service systemd/system/disk-clean-root.timer tmpfiles/00-disk-clean.conf)
+    for asset in "${applier_files[@]}"; do
+      mode=0644
+      case "$asset" in clawctl-fleet-apply|*.sh) mode=0755;; esac
+      install -D -m "$mode" "$ROOT/ops/fleet/applier/$asset" "$stage/fleet-apply/$asset"
+      files+=("fleet-apply/$asset")
+    done
+    for asset in "${maintenance_files[@]}"; do
+      mode=0644
+      case "$asset" in disk-clean|*.sh) mode=0755;; esac
+      install -D -m "$mode" "$ROOT/ops/maintenance/$asset" "$stage/fleet-apply/maintenance/$asset"
+      files+=("fleet-apply/maintenance/$asset")
+    done
   elif [[ "$TARGET_OS" == darwin ]]; then
     install -m 0755 "$binary" "$stage/clawctl-agent"
     install -m 0755 "$ROOT/ops/install-agent-macos.sh" "$stage/install-agent-macos.sh"

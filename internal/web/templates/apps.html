@@ -53,7 +53,7 @@
   <td>{{range .Manifest.Platforms}}<span class="mono">{{.OS}}/{{.Arch}}</span> {{end}}</td>
   <td class="mono">{{short .Manifest.Artifact.SHA256 12}}</td>
 </tr>{{end}}</tbody></table>
-{{else}}<p class="empty">Store 還沒有 package。</p>{{end}}
+{{else}}<p class="empty">Store 還沒有 package。先<a href="/apps?view=fetch">取得支援的 artifact</a>，再回到本頁發布 package。</p>{{end}}
 </div>
 {{if $.Access.CanAdmin}}
 <div class="panel">
@@ -66,7 +66,7 @@
     <label><span class="field-label">發布理由</span><input name="reason" maxlength="500" autocomplete="off" required></label>
     <button type="submit">Review package</button>
   </div></form>
-  {{else}}<p class="empty">沒有可選的 OpenClaw、Hermes Agent 或 Node.js artifact。</p>{{end}}
+  {{else}}<p class="empty">沒有可選的 OpenClaw、Hermes Agent 或 Node.js artifact。<a href="/apps?view=fetch">取得支援的 artifact</a>。</p>{{end}}
   {{else}}<p class="empty">Artifact catalog 不可用。</p>{{end}}
 </div>
 {{end}}
@@ -74,7 +74,7 @@
 
 {{else if eq $a.View "profiles"}}
 <div class="page-heading">
-  <div><h1>Profiles</h1><p>選取直接套件；相依套件依固定版本自動加入。每一版再說出它現在穿在幾台身上。</p></div>
+  <div><h1>Profiles</h1><p>選取直接套件；相依套件依固定版本自動加入。在本頁發布 Profile，再到 <a href="/apps?view=assignments">Assignments 指派到機器</a>；<a href="/reports/profile">報告</a>用來核對發佈、指派與觀測。</p></div>
   <div class="command-bar" aria-label="Profiles 命令列">
     <a class="button secondary" href="/reports/profile">發佈與指派對照</a>
   </div>
@@ -117,7 +117,7 @@
 <td class="small">{{if eq .State "unassigned"}}<span class="st amber">{{.Title}}</span>{{else}}{{.Title}}{{end}}
   {{if .NextStep}}<div class="sub">{{.NextStep}}</div>{{end}}</td>
 <td class="small mono">{{.PublishedAt.Local.Format "2006-01-02 15:04"}}</td></tr>{{end}}</tbody></table>
-{{else}}<p class="empty">還沒有 Profile。</p>{{end}}
+{{else}}<p class="empty">還沒有 Profile。先<a href="/apps?view=store">在 Store 發布 package</a>，再回到本頁發布 Profile。</p>{{end}}
 </div>
 {{if $.Access.CanAdmin}}
 <div class="panel"><h2 style="margin-top:0">Publish profile</h2>
@@ -131,7 +131,7 @@
     <button type="submit">Review profile</button>
   </div>
 </form>
-{{else}}<p class="empty">先在 Store 發布 package。</p>{{end}}
+{{else}}<p class="empty">先<a href="/apps?view=store">在 Store 發布 package</a>。</p>{{end}}
 </div>
 {{end}}
 {{end}}
@@ -154,7 +154,7 @@
   <label><span class="field-label">指派理由</span><input name="reason" maxlength="500" autocomplete="off" required></label>
   <button type="submit">Review assignment</button>
 </div></form>
-{{else}}<p class="empty">需要至少一台 active 機器與一個 Profile。</p>{{end}}
+{{else}}<p class="empty">需要至少一台 active 機器與一個 Profile。<a href="/machines">查看機器名冊</a>，並<a href="/apps?view=profiles">發布 Profile</a> 後回來指派。</p>{{end}}
 </div>
 {{end}}
 <div class="panel" style="padding:4px 6px;overflow-x:auto">
@@ -196,7 +196,7 @@
 </tr>
 {{end}}</tbody>
 </table>
-{{else}}<p class="empty">Artifact catalog 是空的。</p>{{end}}
+{{else}}<p class="empty">Artifact catalog 是空的。<a href="/apps?view=fetch">取得支援的 artifact</a>。</p>{{end}}
 </div>
 {{if .NextCursor}}<p class="small dim">此 catalog 超過 Web 單頁上限；完整 keyset 可由 operator API 或 CLI 繼續讀取。</p>{{end}}
 {{end}}
@@ -235,7 +235,7 @@
 </tr>
 {{end}}</tbody>
 </table>
-{{else}}<p class="empty">還沒有 artifact fetch operation。</p>{{end}}
+{{else}}<p class="empty">還沒有 artifact fetch operation。<a href="/apps?view=fetch">預覽 artifact 下載</a>。</p>{{end}}
 </div>
 {{end}}
 {{end}}

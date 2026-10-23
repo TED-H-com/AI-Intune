@@ -1,5 +1,9 @@
 #!/bin/bash
 # Deploy the public HTTPS pack without changing the checked-in config.
+# Auto: Depot -> classic remote builder (clean up new builders) -> local Docker.
+# On restricted-egress hosts (only TCP 443 via an egress gateway), Depot gRPC
+# handshake fails with EOF; the classic stream drops and h2c upgrade returns 500.
+# Local build only needs registry.fly.io over 443 for the Fly image push.
 set -euo pipefail
 org=${FLY_ORG:-}
 app=${FLY_APP:-}
@@ -8,23 +12,56 @@ url=${FLY_PUBLIC_URL:-}
 public_url_given=0
 [[ -z "$url" ]] || public_url_given=1
 secrets_file=${FLY_SECRETS_FILE:-}
+builder=${FLY_BUILDER:-auto}
+skip_snapshot=${FLY_SKIP_SNAPSHOT:-0}
+snapshot_timeout=${FLY_SNAPSHOT_TIMEOUT:-180}
+verify_attempts=${FLY_VERIFY_ATTEMPTS:-6}
+verify_timeout=${FLY_VERIFY_TIMEOUT:-10}
+vm_size=${FLY_VM_SIZE:-}
+vm_memory=${FLY_VM_MEMORY:-}
 dry_run=0
 destroy=0
 fail() { echo "deploy: $*" >&2; exit 1; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --org|--app|--region|--secrets-file|--public-url)
+    --vm-size|--vm-memory|--org|--app|--region|--secrets-file|--public-url|--builder|--verify-attempts|--verify-timeout)
       [[ $# -ge 2 ]] || fail "missing flag value"
       case "$1" in
+        --verify-attempts) verify_attempts=$2 ;;
+        --verify-timeout) verify_timeout=$2 ;;
+        --builder) builder=$2 ;;
+        --vm-size) [[ -n "$2" ]] || fail "VM size must not be empty"; vm_size=$2 ;;
+        --vm-memory) [[ -n "$2" ]] || fail "VM memory must not be empty"; vm_memory=$2 ;;
         --org) org=$2 ;; --app) app=$2 ;; --region) region=$2 ;; --secrets-file) secrets_file=$2 ;;
         --public-url) url=$2; public_url_given=1 ;;
       esac
       shift 2 ;;
+    --skip-snapshot) skip_snapshot=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     --destroy) destroy=1; shift ;;
     *) fail "unknown flag" ;;
   esac
 done
+[[ "$skip_snapshot" == 0 || "$skip_snapshot" == 1 ]] || fail "FLY_SKIP_SNAPSHOT must be 0 or 1"
+[[ "$snapshot_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || fail "FLY_SNAPSHOT_TIMEOUT must be 1..9999 seconds"
+[[ "$verify_attempts" =~ ^[1-9][0-9]?$ ]] || fail "verification attempts must be 1..99"
+[[ "$verify_timeout" =~ ^[1-9][0-9]{0,2}$ ]] || fail "verification timeout must be 1..999 seconds"
+# Validate overrides before any Fly calls, including dry-run. Never echo raw input.
+if [[ -n "$vm_size" ]]; then
+  [[ "$vm_size" =~ ^(shared-cpu|performance)-([1-9][0-9]?)x$ ]] || fail "VM size must be shared-cpu-Nx or performance-Nx (N=1..64)"
+  (( BASH_REMATCH[2] <= 64 )) || fail "VM CPU count must be 1..64"
+fi
+if [[ -n "$vm_memory" ]]; then
+  [[ "$vm_memory" =~ ^([1-9][0-9]{0,5})(mb|gb)$ ]] || fail "VM memory must be an integer followed by mb or gb"
+  memory_mb=${BASH_REMATCH[1]}
+  [[ "${BASH_REMATCH[2]}" != gb ]] || memory_mb=$((memory_mb * 1024))
+  (( memory_mb >= 256 && memory_mb <= 131072 )) || fail "VM memory must be 256..131072mb"
+  vm_memory="${memory_mb}mb"
+fi
+if [[ "$destroy" == 0 && "$skip_snapshot" == 1 ]]; then
+  echo "WARNING: SNAPSHOT SAFETY GATE DISABLED; deploying without a verified recovery snapshot!" >&2
+fi
+case "$builder" in auto|depot|remote|local) ;; *) fail "builder must be auto, depot, remote, or local" ;; esac
 [[ "$app" =~ ^[a-z0-9-]{1,63}$ ]] || fail "invalid or empty app name"
 [[ "$region" =~ ^[a-z0-9]+$ ]] || fail "invalid or empty region"
 if [[ "$destroy" == 0 ]]; then
@@ -39,6 +76,7 @@ else
 fi
 fly=$(command -v fly || command -v flyctl) || fail "fly or flyctl not found on PATH"
 command -v python3 >/dev/null || fail "python3 not found on PATH"
+command -v timeout >/dev/null || fail "timeout not found on PATH (GNU coreutils required)"
 if [[ -n "$secrets_file" ]]; then
   [[ -f "$secrets_file" ]] || fail "secrets file must be a regular file"
   mode=$(python3 - "$secrets_file" <<'PY'
@@ -55,19 +93,6 @@ PY2
 fi
 plan() { printf '%q ' "$fly" "$@"; printf '\n'; }
 
-# Print a captured Fly log without ever writing the API token.
-show_log() {
-  python3 - "$1" <<'PY'
-import os, sys
-token = os.environ.get("FLY_API_TOKEN", "")
-with open(sys.argv[1], errors="replace") as handle:
-    for line in handle:
-        if token and token in line:
-            print("[redacted]")
-        else:
-            sys.stdout.write(line)
-PY
-}
 if [[ "$dry_run" == 1 ]]; then
   if [[ "$destroy" == 1 ]]; then
     echo "Plan: require typed app name, destroy its clawctl_data volumes and app (including machines)."
@@ -77,14 +102,37 @@ if [[ "$dry_run" == 1 ]]; then
     plan volumes destroy '<clawctl_data-volume-id>' -a "$app" --yes
     plan apps destroy "$app" --yes
   else
-    echo "Plan: create only missing resources; one 1024mb machine and a 3GB volume. Config copied outside the repo."
+    echo "Plan: create only missing resources; one machine and a 3GB volume. Config copied outside the repo."
+    if [[ -n "$vm_size$vm_memory" ]]; then
+      echo "VM sizing source: override (CPU: ${vm_size:-preserved, or fly.toml default on first deploy}; memory: ${vm_memory:-preserved, or fly.toml default on first deploy})."
+    else
+      echo "VM sizing source: preserved if machines exist; fly.toml default on first deploy (resolved during deployment)."
+    fi
+    plan machines list -a "$app" --json
     plan apps create "$app" --org "$org"
     plan volumes create clawctl_data --region "$region" --size 3 -a "$app" --yes
     if [[ -n "$secrets_file" ]]; then plan secrets import --stage -a "$app"; echo "Read secrets from the supplied file via stdin."; fi
-    plan deploy . --config '<temporary-config>' --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg 'CLAWCTL_VERSION=<git-short-HEAD>' --ha=false --yes
-    echo "On Depot/handshake/list workers failure: retry once with --depot=false; remove only newly created fly-builder-* apps."
+    if [[ "$skip_snapshot" == 0 ]]; then
+      plan volumes snapshots list '<data-volume-id>' -a "$app" --json
+      plan volumes snapshots create '<data-volume-id>' -a "$app"
+      echo "Poll snapshots list for each clawctl_data volume: new ID, status created, recent timestamp; timeout ${snapshot_timeout}s. Abort unless verified."
+    fi
+    builder_args=()
+    case "$builder" in
+      auto|depot) builder_args=(--depot=true) ;;
+      remote) builder_args=(--depot=false) ;;
+      local) builder_args=(--local-only) ;;
+    esac
+    plan deploy . --config '<temporary-config>' --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg 'CLAWCTL_VERSION=<git-short-HEAD>' --ha=false --yes "${builder_args[@]}"
+    if [[ "$builder" == auto ]]; then
+      echo "Fallback chain: Depot -> remote -> --local-only if docker info succeeds; each builder gets three transient attempts with 2s/4s backoff."
+      echo "Remove only newly created fly-builder-* apps before local fallback. Non-transient errors fail fast."
+    else
+      echo "Builder: $builder; no fallback. Remote mode removes only newly created fly-builder-* apps."
+    fi
     plan scale count 1 -a "$app" --yes
-    echo "Wait for $url/healthz; check /setup before reading a first-run code."
+    echo "Wait for $url/healthz; verify /version commit and /setup before reading a first-run code."
+    echo "Verification: $verify_attempts attempts/check, ${verify_timeout}s/request, 1s exponential backoff capped at 8s; exhausted checks exit 2."
   fi
   exit 0
 fi
@@ -147,26 +195,144 @@ json_items "$work/apps" apps > "$work/names"
 if ! grep -Fxq "$app" "$work/names"; then
   "$fly" apps create "$app" --org "$org" >/dev/null 2>&1 || fail "app creation failed"
 fi
+# Resolve sizing before provisioning volumes or taking snapshots.
+"$fly" machines list -a "$app" --json > "$work/machines" 2> "$work/machine-log" || fail "cannot inventory machine sizing"
+python3 - "$work/machines" "$work/fly.toml" "$vm_size" "$vm_memory" <<'PY_VM'
+import json, re, sys
+from pathlib import Path
+
+def fail(message):
+    sys.exit('deploy: ' + message)
+
+try:
+    machines = json.loads(Path(sys.argv[1]).read_text())
+    if not isinstance(machines, list):
+        raise ValueError()
+    guests = []
+    for machine in machines:
+        guest = machine['config']['guest']
+        kind, cpus, memory = (guest[k] for k in ('cpu_kind', 'cpus', 'memory_mb'))
+        if (kind not in ('shared', 'performance') or type(cpus) is not int
+                or not 1 <= cpus <= 64 or type(memory) is not int
+                or not 256 <= memory <= 131072):
+            raise ValueError()
+        guests.append((kind, cpus, memory))
+except (ValueError, KeyError, TypeError):
+    fail('invalid machine guest sizing inventory')
+
+size, memory = sys.argv[3:5]
+# These defaults match the generic checked-in [[vm]]; read them rather than
+# duplicating the values. No tomllib dependency (older Python 3 is supported).
+path = Path(sys.argv[2])
+text = path.read_text()
+pattern = r'(?ms)^\[\[vm\]\]\s*\n.*?(?=^\[|\Z)'
+blocks = list(re.finditer(pattern, text))
+if len(blocks) != 1:
+    fail('expected exactly one default [[vm]] block')
+block = blocks[0].group()
+if not guests and not size and not memory:
+    print('VM sizing source: fly.toml default')
+    sys.exit(0)
+if not size:
+    cpu_choices = {g[:2] for g in guests}
+    if len(cpu_choices) > 1:
+        fail('machines disagree on CPU sizing; supply --vm-size')
+    if cpu_choices:
+        kind, cpus = cpu_choices.pop()
+    else:
+        default_size = re.search(r'^\s*size = "([^"]+)"', block, re.M).group(1)
+        kind = 'shared' if default_size.startswith('shared-cpu-') else 'performance'
+        cpus = int(default_size.rsplit('-', 1)[1][:-1])
+else:
+    kind = 'shared' if size.startswith('shared-cpu-') else 'performance'
+    cpus = int(size.rsplit('-', 1)[1][:-1])
+if not memory:
+    memory_choices = {g[2] for g in guests}
+    if len(memory_choices) > 1:
+        fail('machines disagree on memory sizing; supply --vm-memory')
+    memory = (str(memory_choices.pop()) + 'mb' if memory_choices else
+              re.search(r'^\s*memory = "([^"]+)"', block, re.M).group(1))
+replacement = '[[vm]]\n  cpu_kind = "{}"\n  cpus = {}\n  memory = "{}"\n\n'.format(kind, cpus, memory)
+path.write_text(text[:blocks[0].start()] + replacement + text[blocks[0].end():])
+source = 'override' if size or sys.argv[4] else 'preserved'
+print('VM sizing source: {} ({} CPU, {} CPUs, {}).'.format(source, kind, cpus, memory))
+PY_VM
 "$fly" volumes list -a "$app" --json > "$work/volumes"
 json_items "$work/volumes" volumes > "$work/ids"
 if [[ ! -s "$work/ids" ]]; then
   "$fly" volumes create clawctl_data --region "$region" --size 3 -a "$app" --yes >/dev/null 2>&1 || fail "volume creation failed"
 fi
+# Re-inventory after creating a volume; never deploy with an empty inventory.
+"$fly" volumes list -a "$app" --json > "$work/volumes"
+json_items "$work/volumes" volumes > "$work/ids"
+[[ -s "$work/ids" ]] || fail "no data volumes found after provisioning"
+if [[ "$skip_snapshot" == 0 ]]; then
+  while IFS= read -r id; do
+    [[ "$id" =~ ^vol_[a-zA-Z0-9_-]+$ ]] || fail "invalid data volume ID"
+    timeout 15 "$fly" volumes snapshots list "$id" -a "$app" --json > "$work/snap-before" 2> "$work/snapshot-log" || fail "cannot inventory snapshots"
+    started=$(date +%s)
+    timeout 15 "$fly" volumes snapshots create "$id" -a "$app" > "$work/snapshot-log" 2>&1 || fail "snapshot creation failed"
+    deadline=$((SECONDS + snapshot_timeout))
+    while :; do
+      if timeout 15 "$fly" volumes snapshots list "$id" -a "$app" --json > "$work/snap-after" 2> "$work/snapshot-log"; then
+        snapshot=$(python3 - "$work/snap-before" "$work/snap-after" "$started" <<'PY_SNAPSHOT'
+import datetime, json, re, sys, time
+try:
+    before, after = (json.load(open(p)) for p in sys.argv[1:3])
+    assert isinstance(before, list) and isinstance(after, list)
+    old = {s['id'] for s in before}
+    for s in after:
+        sid = s['id']
+        created = datetime.datetime.fromisoformat(s['created_at'].replace('Z', '+00:00')).timestamp()
+        now = time.time()
+        if (sid not in old and re.fullmatch(r'vs_[a-zA-Z0-9_-]+', sid)
+                and s['status'] == 'created' and int(sys.argv[3]) <= created <= now
+                and now - created <= 300):
+            print(sid)
+            break
+except (ValueError, KeyError, TypeError, AssertionError):
+    pass
+PY_SNAPSHOT
+)
+        if [[ -n "$snapshot" ]]; then
+          echo "Verified snapshot $snapshot for volume $id (created after request; age <=300s)."
+          break
+        fi
+      fi
+      (( SECONDS < deadline )) || fail "snapshot verification timed out for volume $id; deployment blocked"
+      sleep 2
+    done
+  done < "$work/ids"
+fi
 if [[ -n "$secrets_file" ]]; then
   "$fly" secrets import --stage -a "$app" < "$secrets_file" > "$work/import" 2>&1 || fail "secrets import failed"
 fi
-args=(deploy . --config "$work/fly.toml" --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg "CLAWCTL_VERSION=$(git rev-parse --short HEAD)" --ha=false --yes)
-if ! "$fly" "${args[@]}" > "$work/deploy" 2>&1; then
-  show_log "$work/deploy" >&2
-  grep -Eiq 'depot|handshake|list workers' "$work/deploy" || fail "deploy failed"
-  echo "Depot failed; retrying with the classic builder."
-  "$fly" apps list --json > "$work/before"
+expected_commit=$(git rev-parse HEAD)
+args=(deploy . --config "$work/fly.toml" --dockerfile ops/docker/Dockerfile --build-target hub-fly --build-arg "CLAWCTL_VERSION=$(git rev-parse --short HEAD)" --build-arg "CLAWCTL_COMMIT=$expected_commit" --build-arg "CLAWCTL_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --ha=false --yes)
+# Return failure on exhaustion or a permanent error; callers preserve cleanup.
+transient() {
+  grep -Eiq 'unexpected EOF|(^|[^a-z])EOF([^a-z]|$)|context deadline|handshake|list[ -]workers|h2c|failed to dial gRPC|failed to get status|Unavailable|remote builder.*(500|502|503)|HTTP[^0-9]*(500|502|503)' "$1"
+}
+attempt_builder() {
+  local stage=$1 attempt
+  shift
+  for attempt in 1 2 3; do
+    if "$fly" "${args[@]}" "$@" > "$work/build-log" 2>&1; then return 0; fi
+    # Raw builder output can contain build secrets; report only the classification.
+    if ! transient "$work/build-log"; then
+      build_permanent=1
+      return 1
+    fi
+    echo "$stage transient failure (attempt $attempt/3)." >&2
+    if [[ "$attempt" != 3 ]]; then sleep "$((attempt * 2))"; fi
+  done
+  return 1
+}
+remote_deploy() {
+  "$fly" apps list --json > "$work/before" || fail "cannot inventory classic builders before deployment"
   json_items "$work/before" apps > "$work/before-names"
-  retry_failed=0
-  if ! "$fly" "${args[@]}" --depot=false > "$work/retry" 2>&1; then
-    show_log "$work/retry" >&2
-    retry_failed=1
-  fi
+  build_failed=0
+  attempt_builder remote --depot=false || build_failed=1
   "$fly" apps list --json > "$work/after" || fail "cannot inventory classic builders; check for leftover fly-builder apps"
   json_items "$work/after" apps > "$work/after-names"
   cleanup_failed=0
@@ -179,27 +345,93 @@ if ! "$fly" "${args[@]}" > "$work/deploy" 2>&1; then
     fi
   done < "$work/after-names"
   [[ "$cleanup_failed" == 0 ]] || fail "builder teardown incomplete"
-  [[ "$retry_failed" == 0 ]] || fail "classic builder deploy failed (output withheld to protect secrets)"
-fi
+  [[ "$build_permanent" == 0 ]] || fail "remote build failed (non-transient)"
+  [[ "$build_failed" == 0 ]]
+}
+build_permanent=0
+case "$builder" in
+  local) attempt_builder local --local-only || fail "local build deploy failed" ;;
+  remote) remote_deploy || fail "remote builder deploy failed" ;;
+  auto|depot)
+    if ! attempt_builder Depot --depot=true; then
+      [[ "$build_permanent" == 0 ]] || fail "Depot build failed (non-transient)"
+      [[ "$builder" == auto ]] || fail "Depot retries exhausted"
+      echo "Depot retries exhausted; falling back to remote."
+      if ! remote_deploy; then
+        if ! command -v docker >/dev/null || ! docker info > "$work/docker" 2>&1; then
+          fail "local Docker unavailable; start Docker and use --builder local (--local-only)"
+        fi
+        echo "Remote retries exhausted; falling back to --local-only."
+        attempt_builder local --depot=false --local-only || fail "local build deploy failed"
+      fi
+    fi ;;
+esac
 "$fly" scale count 1 -a "$app" --yes >/dev/null 2>&1 || fail "scale failed"
-deadline=$((SECONDS + 180))
-while :; do
-  status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$url/healthz") || status=000
-  [[ "$status" == 200 ]] && break
-  (( SECONDS < deadline )) || fail "health check timed out"
-  sleep 3
-done
+verification_failed() { echo "deploy succeeded, verification failed: $*" >&2; exit 2; }
+# Keep response bodies and curl diagnostics private (setup HTML may contain secrets).
+# Retry every failed observation: even a commit mismatch can be an old Machine
+# briefly serving traffic during rollout. Never accept it after exhaustion.
+verify() {
+  local path=$1 attempt rc reason delay=1
+  for ((attempt=1; attempt<=verify_attempts; attempt++)); do
+    rc=0
+    status=$(curl --silent --output "$work/verify-body" --write-out '%{http_code}' \
+      --connect-timeout "$verify_timeout" --max-time "$verify_timeout" "$url$path" 2> "$work/verify-error") || rc=$?
+    reason="HTTP $status"
+    if (( rc != 0 )); then
+      case "$rc" in
+        6|7|28|52|56) reason="transient network error (curl $rc)" ;;
+        *) reason="curl error $rc" ;;
+      esac
+    else
+      case "$status" in
+        502|503|504) reason="transient HTTP $status" ;;
+        421) reason="HTTP 421: public origin must match CLAWCTL_PUBLIC_URL" ;;
+      esac
+      if [[ "$path" == /healthz && "$status" == 200 ]] ||
+         [[ "$path" == /setup && ( "$status" == 200 || "$status" == 404 || ( "$status" == 421 && "$public_url_given" == 0 ) ) ]]; then
+        echo "Verify $path attempt $attempt/$verify_attempts: HTTP $status OK."
+        return 0
+      fi
+      if [[ "$path" == /version && "$status" == 200 ]]; then
+        if python3 - "$work/verify-body" "$expected_commit" <<'PY_VERSION'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    if not isinstance(data, dict) or data.get('commit') != sys.argv[2]:
+        sys.exit(1)
+except (ValueError, OSError):
+    sys.exit(1)
+PY_VERSION
+        then
+          echo "Verify $path attempt $attempt/$verify_attempts: commit matches deployed HEAD."
+          return 0
+        fi
+        reason="invalid version response or commit mismatch"
+      fi
+    fi
+    echo "Verify $path attempt $attempt/$verify_attempts: $reason." >&2
+    if (( attempt < verify_attempts )); then
+      echo "Retry $path in ${delay}s." >&2
+      sleep "$delay"
+      (( delay >= 8 )) || delay=$((delay * 2))
+    fi
+  done
+  verification_failed "$path exhausted $verify_attempts attempts; check the public origin and deployed build before retrying deployment"
+}
+verify /healthz
+verify /version
 echo "$url"
-status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$url/setup") || fail "setup check failed"
+verify /setup
 case "$status" in
   200)
-    "$fly" logs -a "$app" --no-tail > "$work/logs" 2>&1 || fail "cannot read setup logs"
+    "$fly" logs -a "$app" --no-tail > "$work/logs" 2>&1 || verification_failed "cannot read setup logs"
     code=$(sed -n 's|.*first-run setup: open https://[^[:space:]]*/setup and enter setup code \([^[:space:]]*\).*|\1|p' "$work/logs" | tail -n 1)
     if [[ -n "$code" ]]; then printf 'Setup code: %s\n' "$code"; else echo "No generated setup code found; use your configured code."; fi ;;
   404) echo "Setup is already closed; use /login." ;;
   421)
     if [[ "$public_url_given" == 1 ]]; then
-      fail "setup HTTP 421: --public-url / FLY_PUBLIC_URL must match the configured CLAWCTL_PUBLIC_URL"
+      verification_failed "setup HTTP 421: --public-url / FLY_PUBLIC_URL must match the configured CLAWCTL_PUBLIC_URL"
     fi
     echo "fly.dev refuses operator routes (HTTP 421): CLAWCTL_PUBLIC_URL is a custom domain. Check https://<your-domain>/setup or rerun the checks with --public-url."
     exit 0 ;;

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"log"
 	"net/http"
 	"strings"
@@ -29,9 +30,9 @@ func (s *Server) previewVerifierAssignment(w http.ResponseWriter, r *http.Reques
 			"沒有建立派工預覽", "請選一個 verifier。", back)
 		return
 	}
-	if reason == "" || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, jobID,
-			"沒有建立派工預覽", "理由不可為空，最多 500 bytes。", back)
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	preview, err := s.operator.PreviewVerificationAssignment(operator.VerificationAssignmentPreviewRequest{

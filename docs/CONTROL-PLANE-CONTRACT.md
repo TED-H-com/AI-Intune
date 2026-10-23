@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-234（18 non-operator＋216 operator；107 operator JSON＋109 HTML/BFF/CSV/download），exact auth tally 是
-`view=83`／`operate=24`／`admin=109`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+355（30 non-operator＋325 operator；159 operator JSON＋166 HTML/BFF/CSV/download），exact auth tally 是
+`view=128`／`operate=34`／`admin=163`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -517,8 +517,8 @@ Changes read 由 `/reports/changes`、`GET /v1/operator/changes` 與
 receipt/transition time；agent `measured_at` 是分開顯示的不受信任座標。Cursor 綁 exact filters、
 window、evaluation instant 與所有 append-source/retention ceilings；retention 若讓 traversal 移位就
 以 `410` fail closed。Store 先下推 exact filters，篩選後 traversal 的 `total`／`matched_total` 必須
-相等，kind counts 也只計該集合。每次最多檢查 250,000 筆 observation window rows、每個 selected
-source 250,000 筆 timestamp metadata、10,000 endpoint keys、10,000 transitions、32 MiB candidate
+相等，kind counts 也只計該集合。每次最多檢查 253,000 筆 observation window rows、每個 selected
+source 253,000 筆 timestamp metadata、10,000 endpoint keys、10,000 transitions、32 MiB candidate
 metadata 與 32 MiB endpoint payload；超限 `422`、兩個 read slot 已滿 `429`、10 秒
 逾時 `503`。Typed safe DTO 不直接序列化 Store payload，也不輸出 hostname/account/path/PID/argv 或
 free-form note/error/reason；非公開 credential／CLI／systemd subject 一律固定遮罩且不能查詢。
@@ -537,7 +537,7 @@ append-only transition event ledger；升級會回填 surviving spans，但對�
 Ticket usage read 由 `/reports/tickets`、`/reports/tickets.csv`、`GET /v1/operator/tickets` 與
 `clawctl-hub tickets` 共用 `operator.Service.ListTicketsContext`。查詢採 Hub `received_at` 的固定
 `[from,to]` 交易快照，預設 7 天、最多 30 天，可用 SHA-256 opaque provider reference 精確下鑽。
-Store 在 materialize 前固定 250,000 candidate rows 與 32 MiB evidence bytes 上限；operator DTO 再固定
+Store 在 materialize 前固定 253,000 candidate rows 與 32 MiB evidence bytes 上限；operator DTO 再固定
 100 providers、每 provider 50 machines、50 agents、5 error variants，以及 256-byte identity／2048-byte
 error text。所有文字使用共用 scrub/truncation metadata，完成回合與驗證成功分開，報到率低於 80%
 時調度資格為 false。Web、JSON、terminal 與 spreadsheet-safe CSV 都只讀這個 typed projection。
@@ -960,3 +960,337 @@ Flock 是合法 writer 之間的協作協定：state directory 必須保持 priv
 5. 將所有 operator capability 放進 Intune-like UI，逐項做 API/UI/CLI parity 測試。
 
 在這五步完成前，不以「又多一個按鈕」宣稱控制面完成。
+
+
+## Phase 2 disk foundation (P2-01)
+
+`ops_policies` stores immutable canonical disk policy revisions and SHA-256
+identities. `GET /v1/operator/disk-ops/policies` returns up to 500 revision rows;
+`GET /v1/operator/disk-ops/policies/{id}` returns the latest revision. Both
+require human view and remain token-ineligible because policies include additive
+protect paths. Built-in credentials/backups, generated images, active models,
+user data and all repository roots are always protected.
+
+Human admin `POST /v1/operator/disk-ops/policies/preview` accepts `id`, typed
+`body`, `expected_revision` (0 for create), and `reason`. It returns normalized
+policy, preview digest, revision, 30-minute `expires_at`, and warnings.
+`POST /v1/operator/disk-ops/policies` requires the same request plus the preview's
+`preview_digest`, `expires_at`, and `Idempotency-Key`. Fresh/replay responses
+are 201/200. Authorization precedes replay. Revision replacement, revocation of
+pending/approved ledger entries and rejection of queued consumed jobs, receipt
+and audit commit atomically. Audit stores
+digests, never policy paths. `--disk-ops-v2-writes` (`disk_ops_v2_writes`) defaults
+off and gates policy apply and approval writes; preview remains available.
+
+MCP tools: `disk_policy_list`, `disk_policy_get`, `disk_policy_upsert_preview`,
+`disk_policy_upsert_apply`; they share the operator service and strict HTTP client.
+`GET /v1/operator/disk-ops/approvals` is the minimal view read (up to 500 rows),
+with no paths/secrets; exact view-token allowlists may admit it. `approvals_summary`
+adds `disk_ops` counts by state and oldest pending age across the complete ledger.
+Expired pending/approved entries are projected as expired without authorizing work.
+
+Approvals bind human actor, machine, operation, immutable policy revision/digest,
+item/manifest digest and a 30-minute deadline. Trusted store entry points require
+verified human admin authority; service tokens and optional agents cannot approve. A private
+transaction helper consumes once together with job creation, receipt and audit;
+retries return the same job receipt after authorization. Approval decisions have human-admin preview/apply pages and JSON routes.
+Disk execution adapters are delivered separately. Future adapters must validate fresh
+filesystem facts and dispatch admission; generic script routes grant no new writes.
+
+Policy v1 defaults: user tmp 10 days, /var/tmp 14 days, Docker dangling/build cache
+168 hours, journald 500 MiB, cargo 30 days, uv lock-aware native prune, npm verify
+only, native holder-aware cache GC; thresholds warn 85%, critical 93%, deep report
+strictly >80%; fixed quarantine TTL 7 days; scan maxima 500 items/200,000 entries/600s.
+Unknown fields and unsafe bounds are rejected. Protection overrides approval.
+Linux non-root agents advertise `disk_ops_v2` foundation support at check-in;
+Hub reads only the exact latest receipt, never infers support from `script_v1`.
+This capability alone does not provide a root helper or executable disk adapter.
+
+Execution enablement requires reviewed adapters and a deployment-configured
+canary. Deep operations must respect deployment-configured freeze windows;
+planners and dispatch grants belong to later disk milestones.
+Existing cleaner bytes, timers and fleet-disk-clean/v1 summaries are unchanged.
+
+
+### Human-first disk administration
+
+The Hub UI is complete without MCP, AI agents or chat notifications. Tenant
+navigation includes **Disk policies** and **Approvals**. Human admin
+`GET /tenant/disk-policies` and `GET /tenant/disk-policies/{id}` show immutable
+revision history, canonical JSON/digest, safe-default creation and typed editing.
+`?revision=N` selects a historical revision for inspection. Historical revisions
+are read-only; changes start from the latest revision.
+
+`POST /tenant/disk-policies/preview` displays a before/after diff and expiring
+binding. `POST /tenant/disk-policies/apply` uses the same `DiskPolicyUpsert`
+service as JSON/MCP. Local-account applies require the current password and an
+enrolled authenticator code (unless MFA enforcement is explicitly disabled in
+configuration). Tailscale applies reauthorize the human admin at the request
+boundary and require typed ID confirmation; Tailscale provides no fresh MFA.
+Credentials are never included in preview fields, receipts, audit details or errors.
+
+Human view `GET /tenant/approvals` filters by `state`, `machine_id`, and `operation`
+with pending/approved/rejected/expired/consumed states. Only admins see decision
+buttons. `POST /tenant/approvals/preview` binds approve/reject to the current
+pending record, original deadline, policy revision/digest, item digest, actor and
+reason. `POST /tenant/approvals/apply` requires that binding, typed approval ID,
+reauthentication and idempotency. A decision creates no execution job.
+The canonical `DiskOpsApprovalDecision` service also backs human-admin JSON
+`POST /v1/operator/disk-ops/approvals/{id}/decision/preview` and
+`POST /v1/operator/disk-ops/approvals/{id}/decision`, plus optional MCP tools
+`disk_approval_decision_preview` and `disk_approval_decision_apply`.
+`disk_approval_list` and the JSON ledger read support the same filters.
+All new mutations remain service-token-ineligible; disk writes default off.
+
+Server-rendered forms use the existing operator CrossOriginProtection, pinned
+Host and locked CSP. No new inline scripts are introduced. Public defaults are
+generic; canaries, freeze windows and integration destinations come from deployment
+configuration. Fixture screenshots and HTML are generated with
+`ops/screenshots/phase2-disk.sh` into `docs/screenshots/phase2/p2-01/`.
+
+
+Disk JSON policy and approval-decision applies accept only freshly boundary-verified
+human Tailscale admins. Local-account sessions have no action-bound JSON reauthentication
+proof and are rejected before idempotency lookup, including retries; use the Hub UI
+password/TOTP apply flow. Previews remain available to authorized human admins.
+
+A policy preview explicitly lists `removed_protect_paths`. Removing configured
+protections requires the exact `acknowledge_removed_paths` array on apply, included
+in the preview digest and checked against the current revision inside the write
+transaction. The UI requires a separate **Remove protection** checkbox for each
+path. Built-in protections remain unconditional. Success audits record only the
+removed-path count and SHA-256 digest of the sorted removal set, never the paths.
+
+MCP policy list/get and upsert receipts expose protected-path counts and per-path
+SHA-256 digests instead of path strings, including previous policy bodies and
+removed protections. Full policy bodies remain on the human UI/API. Approval
+decision reasons are limited to 500 bytes, stripped of control characters before
+digest binding, stored in `ops_approvals.decision_reason`, and included in the
+success audit. Upgrades add this column without replacing existing ledger rows.
+
+## Safe disk operations (P2-02)
+
+The machine **Disk** page (`/machines/{id}/disk`) provides usage bars, policy
+warning/critical thresholds (defaults 85/93), last safe-tier summary and skips,
+an observation Preview, reviewed safe cleanup, and daily schedule creation/edit,
+enable/disable, run-now review and recent job history. Forms use the existing
+cross-origin/CSRF boundary and server-rendered templates without scripts. Apply
+reauthenticates local human admins. Agents and notifiers are optional.
+
+`disk-safe-preview-v2` (read) and `disk-safe-clean-v2` (write) have closed args:
+`scope:user|root`, `policy_id`, `policy_digest`. The current canonical policy is
+resolved inside the job transaction and pinned in the spec. The agent validates
+that same closed contract and digest before executing its fixed adapter; arbitrary
+configuration, commands, environment and executable paths are never job arguments.
+Generic script preview/apply and schedule services supply digest binding,
+idempotency and audit. Cleanup enqueue and claim require both the default-off
+`disk_ops_v2_writes` flag and the exact latest `disk_ops_v2` capability. Disabled
+flags, absent capabilities and revoked policy digests refuse execution. Scheduled
+skips retain their reason in audit; manual admission returns the rejection.
+
+Preview performs stat/no-atime observation only: no GC commands, locks, logs or
+summary files. Directory traversal requires `O_NOATIME`; unavailable observation
+or incomplete `/proc` descriptor visibility is a skip. Temporary-file cleanup is
+owner-only, age-bound and descriptor-relative, with fresh inode/link/owner,
+repository and holder checks immediately before unlink. Symlinks and non-regular
+files are retained. User temp covers `/tmp`, `~/.cache/tmp`, `~/.local/tmp`; inaccessible
+system temp is skipped rather than changing atime. All repository roots, credentials,
+generated images, active models, lock files and additive protect paths override GC.
+
+uv uses native prune, holder counts and a 60-second timeout (timeout is skipped,
+never forced). npm uses native verify only with its locally fixed cache. Cargo is
+explicitly unsupported until a tested native age-aware GC adapter exists. Docker
+requires a verified local context/storage root and protection/holder visibility;
+its only prune commands are `docker image prune -f --filter until=168h` and
+`docker builder prune -f --filter until=168h`. Stronger Docker age policies are
+skipped until a reviewed adapter supports them. Volumes, containers and system
+prune are never permitted. Root scope returns category skips with the typed reason
+`root_helper_missing`; this PR installs no helper, executes no journald vacuum,
+and leaves root timers local-owned. The fixed future journald operation is vacuum
+to 500 MiB only, without a restart.
+
+Write runs share the existing user timer's scope lock. `last.json` retains only
+`fleet-disk-clean/v1` fields; job output is `{summary, operation}` with separate
+policy/ownership/protection/mount metadata. Cache estimates are upper bounds,
+not promised GC savings. Reported freed bytes use observed file/cache shrinkage.
+
+`GET /v1/operator/disk-ops/status/{machine_id}` and MCP `disk_ops_status` return
+bounded mount usage, current policy thresholds, last safe-tier evidence, observation
+preview, skips and ownership. Additional mounts come from adapter observations;
+per-mount measurement times distinguish their age from the latest root check-in.
+The read is human-view and service-token ineligible because mount paths are included.
+MCP status uses mount/protection digests, fixed categories and note digests; private paths remain on the human API/UI. JSON script and schedule applies by admins require fresh LocalAPI authorization before decoding or replay; local sessions use reauthenticated UI applies.
+No new token-eligible writes or delegated cleanup approvals are implemented.
+
+Daily templates use UTC, `catch_up=false`, one machine per schedule and explicit
+operator hour/minute offsets; public defaults contain no fleet names or dates.
+Root templates cannot be enabled without reviewed helper readiness (unavailable
+in this PR). Safe-tier schedules are unaffected by deployment freeze windows;
+canary selection and fleet enablement remain human deployment choices.
+
+Safety fixtures: `bash ops/test-disk-safe-v2.sh`. UI fixture export/render:
+`bash ops/screenshots/phase2-safe-disk.sh`; output is under
+`docs/screenshots/phase2/p2-02/`. If the sandbox prevents headless Chromium, the
+same script retains fixture HTML for rendering outside the sandbox.
+
+Safe-tier observations and unlinks stop before exceeding the policy `max_items`
+budget; incomplete results retain bounded counts and freed-byte evidence. Descriptor
+protection uses device/inode identity, including held-directory descendants, and is
+rechecked immediately before unlink. uv/npm inherit an anchored, no-follow cache
+directory descriptor; cache replacement causes a deferred result. Disk-v2 job
+evidence is human-only even for read scripts because output and pinned policy specs
+contain private paths. MCP status remains a path-safe digest/category projection.
+Docker keeps only the two fixed §4.1 age-filtered commands, including confirmation `-f`.
+
+P2-03 deep disk analysis shares canonical operator services across server-rendered
+UI, JSON and MCP. Read scans require disk_ops_v2 and pinned immutable policy;
+manual enqueue is human-admin preview/apply with idempotency and audit. Report
+chunks authenticate the active assigned machine job and bind sequence, chunk
+hash, final canonical digest and item count. Private paths never enter audit or
+ordinary projections; only human-admin HTML can reveal them. Partial/truncated
+inventory never means clean. Pressure evaluates active non-retired machines with fresh check-ins and >80%
+(default policy) usage, sharing six-hour coalescing with weekly/manual scans.
+Only enqueue and bounded coalesce decisions persist minute slots and audit rows;
+routine below-threshold/unavailable checks leave no durable trigger evidence.
+P2-04 enables exact human-admin cleanup decisions; no delegated approvals.
+
+Deep-report chunk and completion uploads share process-local admission: at most
+2 concurrent requests per authenticated machine and 16 globally, with a 64-request
+per-minute machine token bucket (burst 64). Throttling returns HTTP 429 with
+`Retry-After`; neither client IP nor job ID resets the machine allowance. The
+limiter retains at most 4096 machine buckets, evicting only idle fully refilled
+entries. Job ownership, running state, lease and pinned read-script identity are
+checked through the query-only pool before acquiring the SQLite writer, then
+rechecked inside the writer transaction. Item IDs allow only ASCII letters,
+digits, underscores and hyphens (1–128 bytes); `last_used` is empty or canonical
+RFC3339Nano, and evidence sources are a fixed allowlist (atime, all-container
+references, process start ticks, unknown or empty). Displayed free text uses the
+shared bounded-text scrubber; raw private paths remain identity bindings.
+
+
+### P2-04 human quarantine contract
+
+Exact manifests and consumed human approvals bind pinned quarantine/delete/restore
+jobs. Human mutations require admin and fresh reauth; they are not token eligible.
+MCP uses redacted projections; delegation remains deferred. Daily expiry
+(`10 6 * * *` UTC) selects only due items from consumed original quarantine approvals
+under the current policy. The assigned machine alone uploads private action receipts
+and fetches signed grants. See [disk maintenance](MAINTENANCE-DISK-CLEAN.md#p2-04-human-decisions-quarantine-and-restore)
+for routes, human UI, recovery, readiness and metrics.
+P2-05 adds ten operator operations: ownership and alert reads, bound human-admin
+handoff/rollback/ack reviews and applies, and the fleet alerts UI. See
+[API surface](API-SURFACE.md#timer-handoff-and-disk-alerts-p2-05). Ownership defaults
+local-owned, and enqueue/claim/start enforce hub-owned. Handoff requires machine-authenticated disabled timer/service evidence with a
+Hub receipt after the transition and an exact echoed Hub revision/nonce. Timer
+evidence is ordered by Hub receipt sequence, rate limited and retained in bounded
+history. Rollback atomically disables schedules and enters rollback-pending;
+local ownership and its re-enable command return only after all matching jobs
+are terminal. Replays are audited. Stable notification key cooldowns and persisted
+per-machine/global delivery budgets prevent flapping from bypassing throttles. Root
+helper absence fails closed. Canary comparison uses daily policy-bound read previews;
+alerts use persisted episodes and the existing notifications ledger. P2-04 retains
+its exact human quarantine/restore operations; P2-05 adds no privileged agent actions.
+
+Inbound chat is an opt-in provider-authenticated front end over the same operator service; see [CHANNELS.md](CHANNELS.md).
+
+### Host profile data handoff
+
+`GET /machines/host-profile` is the human View surface; only human Admin can
+`POST /machines/host-profile`. The audited fleet profile is optional and Linux
+only. `GET /v1/operator/host-profile` and read-only MCP `host_profile_get` return
+the same profile and per-host status. The check-in adds `host_profile` and
+`host_profile_digest`; the agent validates the digest and atomically saves data.
+A separate root service applies the fixed vocabulary and embedded templates;
+observations relay `host_profile_apply`. This is not an arbitrary job executor,
+and does not relax the observer's privilege boundary or enable root Hub jobs.
+See [HOST-PROFILE](HOST-PROFILE.md) for ownership, validation and evidence limits.
+
+## One-command Linux and Windows join
+
+Windows `amd64` and `arm64` endpoints can run `irm https://hub.example.com/join.ps1 | iex`
+in an elevated PowerShell session under the intended agent account. The public
+`GET /join.ps1` script templates the same HTTPS Hub URL and prints the join code,
+approval page and expiry. Download it first to pass `-Hub`, `-LogFile` (default
+`%ProgramData%\clawctl\join.log`) or `-JobsEnabled`. Windows defaults to
+monitor-only (`jobs_enabled=false`) and installs a user logon scheduled task.
+It uses the approval's one-time enrollment token, verifies the approved SHA-256,
+rejects archive traversal/links, and deletes temporary secrets. Windows joins
+use public HTTPS without configuring Tailscale; Linux-only jobs remain blocked
+at server dispatch and claim even when jobs are enabled. See the Windows
+commands in [README](../README.md#4-enroll-an-endpoint).
+
+
+Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
+non-root agent account, then match its code at `/machines/join`. The public
+`GET /join.sh` script uses the validated HTTPS `CLAWCTL_PUBLIC_URL`; `--hub`
+and `--user` are explicit alternatives. Viewers can read waiting requests;
+`POST /machines/join/decide` requires a human Admin and the enrollment MFA
+window. Approve all uses the displayed suggested names. Names capitalise the
+first letter of each dash-separated word, preserving the rest (`host-b` → `Host-B`).
+`GET /v1/operator/joins` and read-only MCP `join_requests_list` return metadata,
+never credentials. There is no MCP join write tool.
+
+Machine routes are `POST /v1/join/start`, `POST /v1/join/poll`, and
+`GET /v1/join/bundle/{arch}`. Start accepts bounded strict JSON, permits five
+requests per client IP per minute, and fails closed at 20 waiting/approved
+requests globally. IPs use the existing trusted-proxy resolver. Join codes and
+256-bit device secrets expire after 15 minutes; poll delivers approval once,
+atomically marking the request redeemed. All join responses use no-store.
+The script downloads the bundle while pending, then checks its SHA-256 from
+the approved payload before extraction. Bundle access requires the matching
+pending/approved, unexpired device secret, OS and architecture; redemption ends
+that authority. Secrets stay out of URLs, argv, logs and operator reads.
+Windows bundle keys are `windows-amd64` and `windows-arm64`; `linux-amd64`
+and `linux-arm64` select Linux, as do the legacy `amd64` and `arm64` keys.
+Approval selects the digest by OS and architecture; cross-OS downloads fail.
+
+Enrollment tickets use the canonical operator service, are single-use and
+last 600 seconds. Optional Hub-issued Tailscale keys for Linux joins are single-use,
+non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
+OAuth client configuration is optional; without it the machine joins without
+Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,
+`CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`, and `CLAWCTL_TAILSCALE_JOIN_TAG`.
+`CLAWCTL_TAILSCALE_API_BASE` is accepted only in test binaries; production
+always uses the official API. The CLI reads its key using `--auth-key=file:...`.
+
+SQLite stores only device-secret hashes and request metadata. Minted credentials
+are held in process memory for at most ten minutes and deleted on redemption.
+Restart or delivery expiry shows “Approval expired”; a human can approve again
+while the request is still valid. An already minted enrollment ticket expires
+naturally and cannot be reconstructed. Join decisions and their secret-free
+`join_approve` / `join_reject` audit rows commit together. Rows older than seven
+days past expiry are pruned lazily on start/list, without changing ledger retention.
+
+## New disk provisioning contract
+
+The machine Disks panel is the human approval surface. Two Admin + fresh-MFA
+HTML POSTs (`/machines/{id}/disks/approve`, `/machines/{id}/disks/cancel`) and one
+View JSON GET (`/v1/operator/machines/{id}/disks`) are additive, human-only routes.
+MCP `machine_disks` is read-only and calls the strict operator client. Readiness
+links to eligible disks; existing disks are facts only. There is no wipe, force,
+overwrite or reuse control.
+
+`disk_setup_jobs` binds one single-use ID to machine, device, serial/WWN, model,
+exact byte size and approved mount/filesystem/label/owner. Active disk identities
+are unique. Pending approvals expire after 24 hours or may be cancelled;
+delivery is retryable and final results are idempotent. Atomic audit actions are
+`disk_setup_approve`, `disk_setup_cancel`, `disk_setup_result`. Linux agent files
+are unprivileged data; the root applier independently checks identity and empty
+state immediately before acting, reserves the ID durably, stops on failure and
+retains receipts forever for replay protection. Agent-relayed results are host
+facts, not independent verification. See [HOST-PROFILE](HOST-PROFILE.md#new-disk-setup)
+for the checks and compromised-account limitation.
+
+## Fleet Sign-ins
+
+The server-rendered `/signins` page groups metadata-only auth_health observations
+across hosts. Start, paste-back, cancellation and optional notification settings
+are human Admin forms with fresh local MFA and CSRF checks. Sessions are bound to
+one machine/CLI/slot, single active, and expire in 15 minutes. URL/device-code
+projections and once-delivered pasted codes are volatile, never SQL or audit
+payloads. Agent delivery uses the existing link or the check-in response. Linux
+login PTYs run as user-manager services outside the agent home sandbox; each
+service has a hard runtime limit and control-group cleanup. The read-only
+`GET /v1/operator/signins` and MCP `signins_list` expose status without URLs or
+codes. No MCP write tools are added. Notification settings default off and reuse
+Channels with a 12-hour per-item deduplication window.

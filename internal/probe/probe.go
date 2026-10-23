@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/user"
@@ -108,26 +109,8 @@ var watchedUnits = []string{
 	"hermes-gateway.service",
 }
 
-// provider 是「一家 AI 服務」在這台機器上的兩個面：一支 CLI、一份本機憑證。
-//
-// ⚠⚠ 這張表存在的理由是**兩張手寫的清單對不起來**，而沒有任何東西在比它們。
-//
-// 原本 watchedTools 是 {claude, codex, grok, agy, openclaw}，
-// credentials() 讀的是 {claude, codex, grok, gemini, openclaw} ——
-// 兩張清單各改各的，結果實測（samplehub1，2026-09-03）：
-//
-//   - **gemini**：`~/.gemini` 真的存在，憑證每兩分鐘被讀一次並回報，
-//     但那支 CLI 從來沒有被檢查過。裝上 `@google/gemini-cli` 之後，
-//     畫面會顯示它的登入狀態，卻永遠說不出它裝了沒有、版號多少、在不在跑。
-//   - **agy**：CLI 被監看（全機隊 present=false，npm 上也沒有），
-//     但它的憑證從來沒有被讀過。
-//
-// 兩個方向都漏，而且漏的方式完全看不出來 —— 一個沒有被檢查的東西
-// 不會亮紅燈，它根本不會有那一列。這是 §5.0：bug 住在零件中間。
-//
-// ⚠ 修法不是「把兩張清單改成一樣」。CLI 與憑證本來就可以只有一邊 ——
-// 重點是那個不對稱必須是**寫出來的決定**，不是兩張清單各自漂移的結果。
-// 所以每一個不對稱都要在 Reason 裡講清楚為什麼。
+// provider keeps CLI inventory and credential slots in one roster.
+// The historical gemini credential slot now represents agy.
 type provider struct {
 	Name string
 	// HasCLI：有一支同名的指令要檢查（LookPath + --version + 在不在跑）。
@@ -154,12 +137,8 @@ var providers = []provider{
 		Cred: func(home string, _ time.Time) model.Credential { return openclawCred(home) },
 	},
 	{
-		// ⚠ agy 全機隊 present=false，npm 上也找不到它。留著它是刻意的：
-		// 一個「我有在找、但它不在」的答案，跟「我從來沒找過」是兩件事，
-		// 而前者才是這個產品要給的答案（名冊是分母，對工具也一樣）。
 		Name: "agy", HasCLI: true, Cred: nil,
-		Reason: "沒有已知的本機憑證檔位置。全機隊都沒有裝，" +
-			"該位置尚未觀測。",
+		Reason: "agy credentials are reported in the historical gemini slot.",
 	},
 }
 
@@ -215,6 +194,7 @@ func Collect(ctx context.Context) (model.ObservationBatch, error) {
 	units := systemdUnits(ctx, watchedUnits)
 
 	batch := model.ObservationBatch{
+		OOMKills:      collectOOM(ctx),
 		SchemaVersion: model.SchemaVersion,
 		MeasuredAt:    now,
 		Identity:      identity(ctx),
@@ -223,6 +203,7 @@ func Collect(ctx context.Context) (model.ObservationBatch, error) {
 		Journals:      unitJournals(ctx, units),
 		OpenClaw:      openClaw(ctx, home, tools),
 		Credentials:   credentials(home, now),
+		AuthHealth:    AuthHealth(ctx, home, now),
 		CLITools:      tools,
 		BAT:           bat,
 	}
@@ -310,6 +291,7 @@ func identity(ctx context.Context) model.Identity {
 		id.Hostname = h
 	}
 	id.Kernel, id.Arch = kernelAndArch()
+	id.LANIPv4 = lanIPv4()
 	// tailscale 不在也無所謂，拿不到就是空字串（欄位是 omitempty）。
 	if out, _, err := run(ctx, quickTimeout, "tailscale", "ip", "-4"); err == nil {
 		if lines := strings.Fields(out); len(lines) > 0 {
@@ -490,7 +472,7 @@ func openClaw(ctx context.Context, home string, tools []model.CLITool) model.Ope
 	// directory is that placeholder, not an OpenClaw install: counting it as
 	// present turns every host without OpenClaw into a Degraded workload.
 	if entries, err := os.ReadDir(root); err == nil && len(entries) == 0 {
-		oc.Reason = "empty ~/.openclaw (installer placeholder; OpenClaw not installed)"
+		oc.Reason = "OpenClaw not installed (empty ~/.openclaw)"
 		return oc
 	}
 	oc.Present = true
@@ -1120,7 +1102,8 @@ func credentials(home string, now time.Time) []model.Credential {
 		if p.Cred == nil {
 			continue
 		}
-		out = append(out, p.Cred(home, now))
+		c := p.Cred(home, now)
+		out = append(out, c)
 	}
 	// ⚠ 一次蓋在整批上，因為這一整批的來源只有一個：讀本機上的檔案。
 	// 這一行是在畫面上寫下「我沒有真的拿這張票去打過任何請求」——
@@ -1176,6 +1159,27 @@ func newCred(provider, path string, expiresAt *time.Time, note string, now time.
 	}
 }
 
+// grokRefreshMaxAge bounds refresh evidence: grok refreshes on every use, so
+// an access token expired more than 30 days ago indicates a stopped refresh chain.
+const grokRefreshMaxAge = 30 * 24 * time.Hour
+
+// refreshableCred omits expired grok access-token expiry when recent refresh
+// capability is present. Token presence is file evidence, not a live check.
+func refreshableCred(c model.Credential, hasRefreshToken bool, now time.Time) model.Credential {
+	if hasRefreshToken && c.Status == model.CredExpired && c.ExpiresAt != nil && now.Sub(*c.ExpiresAt) <= grokRefreshMaxAge {
+		c.Status = model.CredConfigured
+		c.ExpiresAt = nil
+		c.Note = "refreshable; access token refreshed on use"
+	}
+	return c
+}
+
+// hasRefreshToken inspects only presence; token contents never enter facts.
+func hasRefreshToken(raw json.RawMessage) bool {
+	var token string
+	return json.Unmarshal(raw, &token) == nil && strings.TrimSpace(token) != ""
+}
+
 // credUnreadable：檔案不在 = absent（沒裝這家），讀不動 = unknown + 原因。
 // ⚠ 兩者必須分開。把「讀不到」講成「沒裝」會讓一台權限壞掉的機器看起來很乾淨。
 func credUnreadable(provider string, err error) model.Credential {
@@ -1204,7 +1208,89 @@ func credUnparseable(provider, path string, err error) model.Credential {
 	}
 }
 
+// privateCredential reads only regular, user-owned private files. Reasons never contain contents.
+func privateCredential(provider, source, path string, exactMode bool) ([]byte, model.Credential, bool) {
+	return privateCredentialWithOpener(provider, source, path, exactMode, openPrivateCredential)
+}
+
+// The opener argument allows deterministic replacement-race regression tests.
+func privateCredentialWithOpener(provider, source, path string, exactMode bool, opener func(string) (*os.File, error)) ([]byte, model.Credential, bool) {
+	c := model.Credential{Provider: provider, Source: source, Status: model.CredFailed}
+	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, c, false
+	}
+	fail := func(reason string) ([]byte, model.Credential, bool) { c.Note = reason; return nil, c, true }
+	if err != nil {
+		return fail("cannot inspect credential file")
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fail("credential file is a symlink")
+	}
+	if !fi.Mode().IsRegular() {
+		return fail("credential file is not a regular file")
+	}
+	if !credentialOwnedByUser(fi) {
+		return fail("credential file is not owned by current user")
+	}
+	if fi.Mode().Perm()&0077 != 0 || (exactMode && fi.Mode().Perm() != 0600) {
+		return fail(fmt.Sprintf("mode %04o, want 0600", fi.Mode().Perm()))
+	}
+	f, err := opener(path)
+	if err != nil {
+		return fail("cannot read credential file")
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil {
+		return fail("cannot inspect opened credential file")
+	}
+	if !opened.Mode().IsRegular() {
+		return fail("credential file is not a regular file")
+	}
+	if !credentialOwnedByUser(opened) {
+		return fail("credential file is not owned by current user")
+	}
+	if opened.Mode().Perm()&0077 != 0 || (exactMode && opened.Mode().Perm() != 0600) {
+		return fail(fmt.Sprintf("mode %04o, want 0600", opened.Mode().Perm()))
+	}
+	if opened.Size() > 64*1024 {
+		return fail("credential file too large; limit 64 KiB")
+	}
+	if !os.SameFile(fi, opened) {
+		return fail("credential file changed during inspection")
+	}
+	if err := credentialBlockingRead(f); err != nil {
+		return fail("cannot prepare credential file for reading")
+	}
+
+	b, err := io.ReadAll(io.LimitReader(f, 64*1024+1))
+	if err != nil || len(b) > 64*1024 {
+		return fail("cannot read credential file or file too large")
+	}
+	mt := opened.ModTime().UTC()
+	c.FileMTime = &mt
+	return b, c, true
+}
+
+var automationTokenShape = regexp.MustCompile(`^sk-ant-oat[0-9A-Za-z_-]{20,400}$`)
+
 func claudeCred(home string, now time.Time) model.Credential {
+	automationPath := filepath.Join(home, ".config", "claude-automation", "oauth-token")
+	if b, c, present := privateCredential("claude", "claude-automation", automationPath, true); present {
+		if b == nil {
+			return c
+		}
+		value := strings.TrimSuffix(string(b), "\n")
+		if !automationTokenShape.MatchString(value) {
+			c.Note = "invalid claude-automation token shape; want a single setup-token line"
+			return c
+		}
+		c.Status = model.CredConfigured
+		c.Note = "long-lived claude-automation token; expiry not encoded"
+		return c
+	}
+
 	path := filepath.Join(home, ".claude", ".credentials.json")
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -1287,7 +1373,7 @@ func grokCred(home string, now time.Time) model.Credential {
 	if err != nil {
 		return credUnreadable("grok", err)
 	}
-	exp, err := grokExpiry(b)
+	exp, refresh, err := grokAuthFacts(b)
 	if err != nil {
 		return credUnparseable("grok", path, err)
 	}
@@ -1295,7 +1381,7 @@ func grokCred(home string, now time.Time) model.Credential {
 	if exp == nil {
 		note = "no expires_at under any " + grokKeyPrefix + "::* key"
 	}
-	return newCred("grok", path, exp, note, now)
+	return refreshableCred(newCred("grok", path, exp, note, now), refresh, now)
 }
 
 // grokExpiry 掃出最晚的一個 expires_at。
@@ -1307,9 +1393,14 @@ func grokCred(home string, now time.Time) model.Credential {
 // 但別家（gemini）用 epoch 數字，所以兩種都吃。Python 原型只吃數字，
 // 因此 samplehub1 的 grok 一直被誤報成 unknown。
 func grokExpiry(raw []byte) (*time.Time, error) {
+	exp, _, err := grokAuthFacts(raw)
+	return exp, err
+}
+
+func grokAuthFacts(raw []byte) (*time.Time, bool, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// key 排序後再掃，讓多個 session 存在時的結果是可重現的。
 	keys := make([]string, 0, len(top))
@@ -1319,6 +1410,7 @@ func grokExpiry(raw []byte) (*time.Time, error) {
 	sort.Strings(keys)
 
 	var best *time.Time
+	var refresh bool
 	for _, k := range keys {
 		if !strings.HasPrefix(k, grokKeyPrefix) {
 			continue
@@ -1333,38 +1425,44 @@ func grokExpiry(raw []byte) (*time.Time, error) {
 			items = []map[string]json.RawMessage{one}
 		}
 		for _, item := range items {
+			refresh = refresh || hasRefreshToken(item["refresh_token"])
 			if t := flexTime(item["expires_at"]); t != nil && (best == nil || t.After(*best)) {
 				best = t
 			}
 		}
 	}
-	return best, nil
+	return best, refresh, nil
 }
 
 func geminiCred(home string, now time.Time) model.Credential {
-	path := filepath.Join(home, ".gemini", "oauth_creds.json")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return credUnreadable("gemini", err)
+	path := filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")
+	b, c, present := privateCredential("gemini", "agy", path, false)
+	if !present {
+		return model.Credential{Provider: "gemini", Status: model.CredAbsent}
+	}
+	if b == nil {
+		return c
 	}
 	var doc struct {
 		Token struct {
-			Expiry json.RawMessage `json:"expiry"`
+			RefreshToken string          `json:"refresh_token"`
+			Expiry       json.RawMessage `json:"expiry"`
 		} `json:"token"`
-		ExpiryDate json.RawMessage `json:"expiry_date"`
 	}
-	if err := json.Unmarshal(b, &doc); err != nil {
-		return credUnparseable("gemini", path, err)
+	if json.Unmarshal(b, &doc) != nil {
+		c.Status = model.CredUnknown
+		c.Note = "bad_json: unparseable agy credential"
+		return c
 	}
-	exp := flexTime(doc.Token.Expiry)
-	if exp == nil {
-		exp = flexTime(doc.ExpiryDate) // 舊版 gemini CLI 用頂層 expiry_date（毫秒）
+	if strings.TrimSpace(doc.Token.RefreshToken) != "" {
+		c.Status = model.CredConfigured
+		c.Note = "refreshable; access token refreshed on use"
+		return c
 	}
-	note := ""
-	if exp == nil {
-		note = "no token.expiry nor expiry_date in oauth_creds.json"
-	}
-	return newCred("gemini", path, exp, note, now)
+	c.ExpiresAt = flexTime(doc.Token.Expiry)
+	c.Status = classifyCred(now, c.ExpiresAt)
+	c.Note = "missing token.refresh_token"
+	return c
 }
 
 // openclawCred：⚠ 實測 openclaw 的設定裡沒有任何過期欄位。誠實回報 unknown，

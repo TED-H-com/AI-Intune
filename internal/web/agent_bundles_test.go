@@ -765,3 +765,42 @@ func TestWindowsAgentBundleDelivery(t *testing.T) {
 	t.Run("SetAgentBundlesRejectsInvalidWindowsRelease", checkSetAgentBundlesRejectsInvalidWindowsRelease)
 	t.Run("TokenPageShowsWindowsInstallerWhenWindowsBundlesArePublished", checkTokenPageShowsWindowsInstallerWhenWindowsBundlesArePublished)
 }
+
+func TestFleetApplierBundleExtension(t *testing.T) {
+	dir := t.TempDir()
+	entries := []struct {
+		name string
+		mode int64
+		body []byte
+	}{
+		{"VERSION", 0644, []byte("release-123\n")}, {"clawctl-agent", 0755, linuxAgentBinary("amd64")},
+		{"clawctl-agent.service", 0644, []byte("unit")}, {"clawctl-hermes.service", 0644, []byte("unit")},
+		{"install-agent.sh", 0755, []byte("installer")}, {"openclaw-gateway.service", 0644, []byte("unit")},
+	}
+	for _, e := range fleetApplyArchiveEntries {
+		entries = append(entries, struct {
+			name string
+			mode int64
+			body []byte
+		}{e.name, e.mode, []byte("reviewed release asset")})
+	}
+	for _, test := range []struct {
+		name  string
+		size  int
+		valid bool
+	}{{"complete", len(entries), true}, {"partial", len(entries) - 1, false}} {
+		t.Run(test.name, func(t *testing.T) {
+			filename := "fixture.tar.gz"
+			writeAgentBundleArchive(t, dir, filename, entries[:test.size])
+			f, err := os.Open(filepath.Join(dir, filename))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			err = validateAgentBundleArchive(f, agentBundleSpec{OS: "linux", Arch: "amd64"}, "release-123")
+			if (err == nil) != test.valid {
+				t.Fatal(err)
+			}
+		})
+	}
+}

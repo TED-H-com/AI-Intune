@@ -95,7 +95,7 @@ func TestServeInstallsTerminalSessionCloser(t *testing.T) {
 }
 
 func TestTerminalOpenRouteRejectsCrossOriginBeforeTheHandler(t *testing.T) {
-	want := operatorRoutePolicy{operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked}
+	want := operatorRoutePolicy{operatorauth.Operate, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}
 	if got := operatorRoutePolicies["POST /machines/{id}/terminals"]; got != want {
 		t.Fatalf("policy=%+v, want %+v", got, want)
 	}

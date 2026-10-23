@@ -12,9 +12,17 @@ ops/fly/deploy.sh --org <your-org> --app <your-app-name> --region iad
 # Optional: add --secrets-file ~/clawctl-fly/secrets.env (regular file, mode 0600).
 ```
 
-The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one 1024mb Machine, and waits up to about three minutes for HTTPS `/healthz`. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
+The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one Machine, and verifies HTTPS `/healthz`, `/version`, and `/setup` with bounded retries. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
 
-flyctl 0.4.115 defaults to Depot. If deployment fails with Depot, handshake (such as `authentication handshake failed: EOF`), or `list workers` output, the script retries once with `--depot=false --yes`. Classic builds can create a running `fly-builder-*` app. The script compares app inventories before and after that retry and destroys only new builder apps, preserving pre-existing builders. Failed teardown warns with the builder name and exits non-zero; inspect and remove that specific builder after confirming its identity.
+Before every deploy, the wrapper creates a Fly snapshot for **each `clawctl_data` volume**, including newly provisioned volumes. It polls `flyctl volumes snapshots list --json` until a new ID (absent from the pre-request inventory) has status `created`, a creation time after the request, and age at most 300 seconds. It prints the verified ID and volume. Creation, inventory, or verification failure blocks deployment. Polling defaults to 180 seconds per volume (`FLY_SNAPSHOT_TIMEOUT=1..9999`); each snapshot CLI call also has a 15-second timeout. GNU coreutils `timeout` is required. Dry-run prints the gate without calling Fly.
+
+Emergency opt-out: `--skip-snapshot` or `FLY_SKIP_SNAPSHOT=1` emits a loud warning. Use only with a separately reviewed recovery plan. Snapshot IDs belong in private change evidence. Volume snapshots cover volume contents, not external objects or proof of SQLite application consistency; retain Litestream backups and rehearse restoration using a new volume created with `--snapshot-id`. This gate does not automatically roll back a release.
+
+Choose `--builder auto|depot|remote|local` or `FLY_BUILDER` (default `auto`). Each builder gets up to three attempts with 2s/4s backoff for transient EOF, unexpected EOF, context deadline, handshake/list-workers, gRPC/h2c/Unavailable transport errors, and HTTP 500/502/503 responses. Other errors fail immediately. Auto falls back Depot → remote → local only after transient attempts are exhausted; local requires working `docker info`. Explicit builder modes retry but do not fall back. Raw build output is kept private and removed on exit; terminal output reports stage and classification. Dry-run prints the plan without probing Docker.
+
+`depot` uses Depot without fallback; `remote` uses only `--depot=false`; `local` goes straight to `--local-only`. Classic builds can create a running `fly-builder-*` app. Both auto and remote modes compare app inventories before and after the classic build and destroy only new builder apps, even after a failed build, preserving pre-existing builders. Cleanup finishes before any local retry. Failed teardown warns with the builder name and exits non-zero; inspect and remove that specific builder after confirming its identity.
+
+On restricted-egress hosts that allow only TCP 443 via an egress gateway, Depot's gRPC handshake can fail with EOF, and the classic builder stream can drop before an h2c upgrade returns 500. Local builds avoid those builder transports; the Fly image push only needs `registry.fly.io` over 443. Local Docker must still be able to obtain the Dockerfile's base images and build dependencies.
 
 When `/setup` returns 200, the script prints a generated first-run setup code once on your terminal. Protect terminal and log access. Once an admin exists, `/setup` returns 404 and the script never prints an old code. Finish setup in the browser or use the non-browser helper:
 
@@ -142,6 +150,20 @@ Hub pins the operator Host to `CLAWCTL_PUBLIC_URL`. `/` and `/login` return 421 
 
 ### 6. Enroll your first machine
 
+Fastest path: run `curl -fsSL https://hub.example.com/join.sh | sudo bash`
+on the new Linux machine, then match and approve its code at `/machines/join`.
+Set `CLAWCTL_PUBLIC_URL` to the public HTTPS origin and publish agent bundles.
+Optional Fly secret names for Hub-issued Tailscale keys:
+
+- `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`
+- `CLAWCTL_TAILSCALE_OAUTH_CLIENT_SECRET`
+- `CLAWCTL_TAILSCALE_JOIN_TAG`
+
+Use an OAuth client allowed to create auth keys for the chosen tag. Without
+these credentials, join works without Tailscale. See the [new host runbook](runbooks/NEW-HOST.md).
+
+The keyed installer remains available:
+
 In the Hub Web console, register a machine and download its **keyed Linux installer** for amd64 or arm64 from the token result page; the download page offers both architectures. The package contains a one-time enrollment token and the public Hub URL; transfer it privately. If lost, revoke the pending ticket and issue a new one.
 
 On the endpoint, as the non-root account that will run the agent, with sudo available:
@@ -160,6 +182,10 @@ Use the arm64 archive for ARM. HTTPS enrollment skips Tailscale automatically. T
 Check `https://<your-app-name>.fly.dev/healthz` (or your custom domain), then follow [verification, Telegram, and restore drill](#verification-telegram-and-restore-drill). The restore drill requires R2 replication variables; it does not work without R2. Run it after R2 is configured and monthly thereafter. It restores to a temporary directory and never touches the live database. Follow [upgrades](#upgrades) to deploy each new commit with a unique version while keeping the same volume and one Machine.
 
 Public mode defaults to `CLAWCTL_TRUSTED_PROXIES=172.16.0.0/12` (fly-proxy egress) and `CLAWCTL_CLIENT_IP_HEADER=Fly-Client-IP`. On Fly the rightmost X-Forwarded-For entry is the app's edge IP. 6PN uses IPv6 `fdaa::/16` and is not trusted. Explicit proxy/header settings, including empty trust, are respected; see [client IP configuration](AUTOPILOT.md#client-ip-and-reverse-proxies).
+
+### Cloudflare Tunnel alternative
+
+The allowed `CLAWCTL_CLIENT_IP_HEADER` values are `X-Forwarded-For` (default), `Fly-Client-IP`, and `CF-Connecting-IP`, case-insensitively. For `cloudflared` on the host with Hub in Docker bridge networking, the peer is the bridge gateway (for example, `172.17.0.1`). Set `CLAWCTL_CLIENT_IP_HEADER=CF-Connecting-IP` and `CLAWCTL_TRUSTED_PROXIES=<gateway>/32` using the actual gateway. Never trust broad ranges; see [Cloudflare Tunnel configuration](AUTOPILOT.md#cloudflare-tunnel).
 
 ## Advanced: Tailscale-only Hub on Fly
 
@@ -270,7 +296,7 @@ Check `http://<that-ip>:<CLAWCTL_PORT>/healthz` and follow the shared verificati
 
 ## Cost note
 
-This shape uses one `shared-cpu-1x` machine with 1 GB (`1024mb`) of RAM and a 3 GB volume. This is roughly $7/month at the time of writing; check the [Fly pricing page](https://fly.io/docs/about/pricing/) for exact current numbers. Cloudflare R2's free tier usually covers the storage and operations needed at the default 10 s sync interval.
+This shape uses one `shared-cpu-2x` machine with 1 GB (`1024mb`) of RAM and a 3 GB volume. This is roughly $8/month (about $0.70/month more than `shared-cpu-1x`, whose 6.25% CPU baseline was too small: after a redeploy resets the Fly burst balance, litestream compaction plus Hub work got the machine quota-throttled) at the time of writing; check the [Fly pricing page](https://fly.io/docs/about/pricing/) for exact current numbers. Cloudflare R2's free tier usually covers the storage and operations needed at the default 10 s sync interval.
 
 ## Cloudflare R2 setup (optional)
 
@@ -313,9 +339,25 @@ You can tune replication parameters by setting these Fly secrets (using the `sec
 
 | Variable | Default | Description | Tradeoff |
 |---|---|---|---|
-| `LITESTREAM_SYNC_INTERVAL` | `10s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
+| `LITESTREAM_SYNC_INTERVAL` | `60s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
 | `LITESTREAM_SNAPSHOT_INTERVAL` | `24h` | How often a full database snapshot is written. | Lower = faster restore time, but uses more R2 storage and PUTs. |
 | `LITESTREAM_RETENTION` | `168h` | How long snapshots and WAL files are kept. | Higher = longer recovery window, but uses more R2 storage. Must be >= snapshot interval. |
+| `LITESTREAM_L0_RETENTION_CHECK_INTERVAL` | `5m` | How often Litestream checks for expired, already-compacted L0 files. | Longer intervals reduce R2 LIST requests but leave eligible L0 files in local and remote storage longer. |
+
+Litestream 0.5.17's L0 cleanup scans the retained L1 file history on every pass.
+Its upstream `15s` default repeats that scan 5,760 times per day, with more LIST
+pages as history grows. This image uses `5m` (288 passes per day). This changes
+cleanup scheduling only: the `60s` sync interval, compaction intervals, `24h`
+snapshot interval, and `168h` snapshot retention remain unchanged. Expired L0
+files can remain until the next cleanup pass; they are still removed only after
+compaction and the L0 retention period. Set the new variable to `15s` to restore
+the previous cadence. Changing the sync interval alone does not change cleanup
+polling. Total request savings depend on the backup history and other operations.
+
+After an upgrade, verify the `starting L0 retention monitor` log reports
+`interval=5m0s`, run the restore drill above, and compare the bucket's hourly
+`ListObjects` counts. The setting requires this version of the image; setting
+the environment variable alone on an older image does not change its config.
 
 ## Volume layout and Litestream
 
@@ -358,7 +400,7 @@ The init step seeds that version only when its directory is absent. Reusing a ve
 
 | Symptom | What to check |
 |---|---|
-| Depot handshake / `failed to list workers` | `deploy.sh` retries once with `--depot=false --yes` and removes only builders created during that retry. If teardown fails, inspect the named builder; do not remove pre-existing builders. |
+| Depot handshake / `failed to list workers` | `deploy.sh` in auto mode retries with `--depot=false`, cleans up new builders, then tries `--local-only` if the classic builder has a transport error and local Docker is usable. If teardown fails, inspect the named builder; do not remove pre-existing builders. |
 | MFA says `Pending login expired` | Pending login is bound to the full client IP. Use one keep-alive HTTPS connection when egress changes per TCP connection; `setup-admin.sh` does this for setup and TOTP confirmation. |
 | Public UI returns `421` (wrong host) | `CLAWCTL_PUBLIC_URL` must match the browser's HTTPS origin. After a domain switch, use the new domain; the old Host is refused. |
 | Public health check failing | Check `fly logs` for startup/config/volume errors; `CLAWCTL_PORT` and `http_service.internal_port` must both be 8787. Probe is GET `/healthz`; it needs no admin session. |
@@ -385,3 +427,42 @@ Build the image locally when Docker is available:
 ```
 
 That builds the `hub-fly` target, checks `tailscaled`, `tailscale`, `litestream`, `clawctl-hub`, and the bundle files, and checks that Tailscale mode fails clearly with no `TS_AUTHKEY`. It also parses both Fly config files. For local-only static validation, run `CLAWCTL_SMOKE_STATIC_ONLY=1 bash ops/docker/smoke-build.sh`; `bash ops/test-fly.sh` uses only local stubs.
+
+### Post-deploy verification retries
+
+A rollout can succeed while an edge connection drops during verification. Each
+check gets six attempts by default, with a 10-second total curl timeout per
+attempt and 1/2/4/8/8-second backoff (8 seconds maximum). Configure
+`--verify-attempts` / `FLY_VERIFY_ATTEMPTS` (1–99) and
+`--verify-timeout` / `FLY_VERIFY_TIMEOUT` (1–999 seconds per attempt).
+Each check is bounded by attempts × timeout plus the intervening backoffs.
+Flags override environment values; dry-run makes no requests.
+
+Every failed observation is retried through that budget, including curl
+6/7/28/52/56 (DNS, refused/reset/dropped connection, timeout), HTTP 502/503/504,
+and stale or malformed version responses. Logs name the endpoint, attempt,
+status/classification, and delay without printing response bodies or curl errors.
+`/healthz` must return 200; `/version` must return 200 with a JSON `commit`
+matching the full Git HEAD passed to the image build. `/setup` accepts 200
+(first run) or 404 (already configured). The existing implicit fly.dev 421
+custom-domain guidance remains; an explicit public-origin 421 fails verification.
+
+Exit 2 means **deploy succeeded, verification failed**; exit 1 covers earlier
+configuration/provision/build failures. Inspect the deployed app and public
+origin, and recheck health and commit before deciding whether another deploy is
+needed. Setup logs are read only after all endpoint checks pass.
+
+`deploy.sh` preserves existing machine CPU and memory sizing in its temporary config.
+The checked-in `[[vm]]` is a first-deploy default only. Override CPU with
+`--vm-size shared-cpu-Nx|performance-Nx` (1..64 CPUs) and memory with
+`--vm-memory MEM` (integer `mb` or `gb`, 256..131072mb). Environment alternatives
+are `FLY_VM_SIZE` and `FLY_VM_MEMORY`; flags win, and each override replaces only
+its corresponding field. Machines that disagree require overrides for the differing
+fields. Invalid guest inventory blocks deployment. Dry-run reports the sizing
+policy without contacting Fly; existing sizing is resolved on the real run.
+
+## GCP alternative
+
+Fly remains the cheaper default. If you have GCP free credits, see
+[Deploy on a GCE VM](DEPLOY-GCP.md) for IAP-only SSH, Cloudflare Tunnel,
+R2 replication, and the migration and rollback runbook.

@@ -26,6 +26,12 @@ func retentionClientPreview(now time.Time) operator.RetentionPrunePreview {
 		},
 		TotalDeleted: 8, KeptNewest: 3, Confirmation: "DELETE 8 ROWS",
 	}
+	for _, spec := range []struct {
+		table string
+		days  int
+	}{{"usage_daily", 400}, {"usage_window", 30}, {"usage_sessions", 90}, {"usage_jobs", 90}, {"usage_accounts", 400}, {"usage_upload_receipts", 400}, {"usage_recommendations", 90}, {"ops_approvals", 90}} {
+		result.Counts = append(result.Counts, store.PruneCount{Table: spec.table, Older: now.Add(-time.Duration(spec.days) * 24 * time.Hour)})
+	}
 	copy := result
 	copy.PreviewDigest = ""
 	raw, _ := json.Marshal(copy)
@@ -347,5 +353,29 @@ func TestRetentionClientTreatsAnOmittedEvaluationDifferentlyFromAZeroOne(t *test
 	}
 	if hits.Load() != 1 {
 		t.Errorf("明確零值 evaluated_at 呼叫了 Hub；hits=%d, want 1", hits.Load())
+	}
+}
+
+func TestRetentionUsageCountsContractWithoutSockets(t *testing.T) {
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	preview := retentionClientPreview(now)
+	if err := validateRetentionCounts(preview.Counts, now, preview.Policy, preview.TotalDeleted, preview.KeptNewest); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func([]store.PruneCount){
+		func(rows []store.PruneCount) { rows[5].Table = "usage_window" },
+		func(rows []store.PruneCount) { rows[6].Older = now },
+		func(rows []store.PruneCount) { rows[7].Older = now.Add(-25 * time.Hour) },
+		func(rows []store.PruneCount) { rows[8].Deleted++ },
+		func(rows []store.PruneCount) { rows[9].Kept = -1 },
+	} {
+		rows := append([]store.PruneCount(nil), preview.Counts...)
+		mutate(rows)
+		if err := validateRetentionCounts(rows, now, preview.Policy, preview.TotalDeleted, preview.KeptNewest); err == nil {
+			t.Fatal("accepted inconsistent usage counts", rows)
+		}
+	}
+	if err := validateRetentionCounts(preview.Counts[:5], now, preview.Policy, preview.TotalDeleted, preview.KeptNewest); err == nil {
+		t.Fatal("accepted missing usage counts")
 	}
 }

@@ -1,6 +1,11 @@
 package operatorclient
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,5 +219,83 @@ func TestTheMachineDataClientRefusesAResultThatContradictsItself(t *testing.T) {
 		if _, err := client.MachineData(t.Context(), "m1"); err == nil {
 			t.Errorf("%s：自相矛盾的單機揭露面被接受了", name)
 		}
+	}
+}
+
+func TestHubDisclosureCategoryTextFitsStrictClientContract(t *testing.T) {
+	now := time.Now().UTC()
+	disclosure := dataClientDisclosure(t, now)
+	if err := validateDataDisclosure(disclosure); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateMachineData(dataClientMachine(t, now), "m1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, category := range disclosure.Categories {
+		if err := validateDataCategory(category); err != nil {
+			t.Fatalf("Hub category %s: %v", category.Key, err)
+		}
+		for _, bad := range []string{strings.Repeat("x", 513), " text", "text ", "text\u202e", "text\xff"} {
+			invalid := category
+			invalid.Holds = bad
+			if err := validateDataCategory(invalid); err == nil {
+				t.Fatalf("category %s accepted unsafe holds", category.Key)
+			}
+		}
+	}
+}
+
+func TestDataAndMachineDisclosureContractsWithoutSockets(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	base, _ := url.Parse("http://hub.example.test")
+	c := &Client{base: base, http: &http.Client{Transport: assignedUserTransport(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		if strings.HasSuffix(r.URL.Path, "/m1/data") {
+			_ = json.NewEncoder(w).Encode(dataClientMachine(t, now))
+		} else {
+			_ = json.NewEncoder(w).Encode(dataClientDisclosure(t, now))
+		}
+		return w.Result(), nil
+	})}}
+	disclosure, e := c.DataDisclosure(t.Context())
+	if e != nil || disclosure.Tables != len(store.MachineDataTables()) {
+		t.Fatal(disclosure, e)
+	}
+	machine, e := c.MachineData(t.Context(), "m1")
+	if e != nil || len(machine.Categories) != len(operator.DataCategoryKeys()) {
+		t.Fatal(machine, e)
+	}
+	for _, category := range disclosure.Categories {
+		if len(category.Holds) > 512 {
+			t.Fatal("description exceeds public client limit")
+		}
+	}
+}
+
+func TestUsageDisclosureRetentionContract(t *testing.T) {
+	disclosure := dataClientDisclosure(t, time.Now().UTC())
+	for _, category := range disclosure.Categories {
+		if category.Retention.Kind != operator.DataRetentionUsagePolicy {
+			continue
+		}
+		for _, mutate := range []func(*operator.DataCategory){
+			func(c *operator.DataCategory) { c.Key = operator.DataCategoryRegistry },
+			func(c *operator.DataCategory) { c.Retention.Days = 30 },
+			func(c *operator.DataCategory) { c.Retention.Class = "usage" },
+			func(c *operator.DataCategory) { c.Retention.RingRows = 1 },
+		} {
+			invalid := category
+			mutate(&invalid)
+			if err := validateDataCategory(invalid); err == nil {
+				t.Fatal("accepted inconsistent usage retention", invalid)
+			}
+		}
+	}
+	// Only the operation-scoped approvals overlap is valid.
+	disclosure.Categories[1].Tables = append(disclosure.Categories[1].Tables, disclosure.Categories[0].Tables[0])
+	if err := validateDataDisclosure(disclosure); err == nil {
+		t.Fatal("accepted unrelated duplicate table")
 	}
 }

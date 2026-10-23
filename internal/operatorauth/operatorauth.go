@@ -29,7 +29,9 @@ import (
 
 const (
 	defaultResolveTimeout         = 3 * time.Second
+	AuthMethodServiceToken        = "service-token"
 	AuthMethodLocalAccountSession = "local-account-session"
+	AuthMethodChatAllowlist       = "chat-allowlist"
 	AuthMethodLocalAPI            = "tailscale-localapi-app-cap"
 	minimumDaemonVersion          = "1.100.0"
 )
@@ -214,6 +216,9 @@ func (d Decision) Cause() error { return d.cause }
 // tailnet user owning/logged into that node. It is not a fresh assertion about
 // the person currently at the keyboard.
 type Principal struct {
+	MFAVerifiedAt        time.Time
+	ActionMFAAuthorized  bool
+	ServiceScope         string
 	SourceAddr           string
 	NodeStableID         string
 	DeviceName           string
@@ -226,10 +231,13 @@ type Principal struct {
 }
 
 func (p Principal) StableSubject() string {
+	if p.AuthMethod == AuthMethodServiceToken && p.TailnetUserID != "" {
+		return "service:" + p.TailnetUserID
+	}
 	if p.TailnetUserID == "" {
 		return ""
 	}
-	if p.AuthMethod == AuthMethodLocalAccountSession {
+	if p.AuthMethod == AuthMethodLocalAccountSession || p.AuthMethod == AuthMethodChatAllowlist {
 		return "local-user:" + strings.TrimPrefix(p.TailnetUserID, "local:")
 	}
 	return "tailscale-user:" + p.TailnetUserID

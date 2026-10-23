@@ -22,6 +22,21 @@ func TestAgentUnitMakesManagedRuntimeStateWritable(t *testing.T) {
 	}
 }
 
+func TestAgentUnitMakesScriptCacheWritable(t *testing.T) {
+	raw := unitDirectives(t, "../../ops/clawctl-agent.service")
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		if !bytes.HasPrefix(line, []byte("ReadWritePaths=")) {
+			continue
+		}
+		for _, path := range bytes.Fields(bytes.TrimPrefix(line, []byte("ReadWritePaths="))) {
+			if string(path) == "@@CLAWCTL_AGENT_HOME@@/.cache/clawctl" {
+				return
+			}
+		}
+	}
+	t.Fatal("agent unit must allow writing HOME/.cache/clawctl for private script directories")
+}
+
 func TestAgentUnitIsRenderedAsAnUnprivilegedSystemService(t *testing.T) {
 	raw, err := os.ReadFile("../../ops/clawctl-agent.service")
 	if err != nil {

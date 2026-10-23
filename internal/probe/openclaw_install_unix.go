@@ -51,3 +51,8 @@ func diskFreeAvailable(path string) (int64, error) {
 func diskFreeError(target string, err error) string {
 	return "statfs " + target + "：" + err.Error()
 }
+
+func credentialOwnedByUser(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Geteuid()
+}

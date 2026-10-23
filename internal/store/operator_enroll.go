@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"strings"
 	"time"
@@ -53,6 +54,7 @@ const (
 // policy field from changing the human-visible promise without invalidating
 // old previews.
 type operatorEnrollTokenPolicyIdentity struct {
+	MonitorOnly                bool   `json:"monitor_only,omitempty"`
 	MinTTLSeconds              int64  `json:"min_ttl_seconds"`
 	MaxTTLSeconds              int64  `json:"max_ttl_seconds"`
 	CreatesExpectedMachine     bool   `json:"creates_expected_machine"`
@@ -77,6 +79,7 @@ func currentOperatorEnrollTokenPolicy() operatorEnrollTokenPolicyIdentity {
 // authoritative expiry is calculated from the transaction's writer-reserved
 // clock when Create commits.
 type OperatorEnrollTokenPreviewResult struct {
+	MonitorOnly                bool      `json:"monitor_only,omitempty"`
 	DisplayName                string    `json:"display_name"`
 	TTLSeconds                 int64     `json:"ttl_seconds"`
 	PreviewedAt                time.Time `json:"previewed_at"`
@@ -97,6 +100,7 @@ type OperatorEnrollTokenPreviewResult struct {
 }
 
 type OperatorEnrollTokenCreateRequest struct {
+	MonitorOnly    bool `json:"monitor_only,omitempty"`
 	DisplayName    string
 	TTLSeconds     int64
 	PreviewDigest  string
@@ -112,6 +116,7 @@ type OperatorEnrollTokenCreateRequest struct {
 // revoke and reissue; persisting or reconstructing the secret would defeat the
 // enrollment-token boundary.
 type OperatorEnrollTokenCreateResult struct {
+	MonitorOnly   bool      `json:"monitor_only,omitempty"`
 	MachineID     string    `json:"machine_id"`
 	DisplayName   string    `json:"display_name"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -132,6 +137,7 @@ type OperatorEnrollTokenCreateResult struct {
 // operator_idempotency.response_json. Keep delivery-state and token fields out
 // of this type so a future refactor cannot accidentally cache the first body.
 type operatorEnrollTokenReceipt struct {
+	MonitorOnly   bool      `json:"monitor_only,omitempty"`
 	MachineID     string    `json:"machine_id"`
 	DisplayName   string    `json:"display_name"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -143,12 +149,18 @@ type operatorEnrollTokenReceipt struct {
 // PreviewOperatorEnrollToken validates the same canonical intent used by the
 // create transaction. It performs no write and does not consume an
 // idempotency key.
-func (s *Store) PreviewOperatorEnrollToken(displayName string, ttlSeconds int64) (OperatorEnrollTokenPreviewResult, error) {
+func (s *Store) PreviewOperatorEnrollToken(displayName string, ttlSeconds int64, monitorOnly ...bool) (OperatorEnrollTokenPreviewResult, error) {
 	if err := validateOperatorEnrollTokenIntent(displayName, ttlSeconds); err != nil {
 		return OperatorEnrollTokenPreviewResult{}, err
 	}
 	now := s.now().UTC()
 	preview := operatorEnrollTokenPreview(displayName, ttlSeconds, now)
+	if len(monitorOnly) > 0 && monitorOnly[0] {
+		preview.MonitorOnly = true
+		policy := currentOperatorEnrollTokenPolicy()
+		policy.MonitorOnly = true
+		preview.PreviewDigest = operatorEnrollTokenPreviewDigestForPolicy(displayName, ttlSeconds, policy)
+	}
 	// 註冊上限只是講出來給人看，不進 digest。分母每分鐘都在變，把它釘進預覽等於
 	// 每一份預覽在按下送出之前就過期了——而把上限「調高」也會作廢一份本來成立的
 	// 預覽，那是完全相反的方向。真正擋人的那一次數，發生在開票的同一筆交易裡。
@@ -274,6 +286,13 @@ func operatorEnrollTokenStoredRejectionMatchesCode(raw, code string) bool {
 // canonical operator token issuance. The registry row, token hash, redacted
 // replay receipt, and audit evidence either commit together or not at all.
 func (s *Store) ApplyOperatorEnrollToken(req OperatorEnrollTokenCreateRequest) (OperatorEnrollTokenCreateResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorEnrollTokenCreateResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return OperatorEnrollTokenCreateResult{}, operatorError(
 			OperatorCodeIdempotencyKeyRequired, "Idempotency-Key 不可省略")
@@ -357,7 +376,9 @@ func (s *Store) ApplyOperatorEnrollToken(req OperatorEnrollTokenCreateRequest) (
 	if strings.TrimSpace(req.PreviewDigest) == "" {
 		return reject(OperatorCodePreviewRequired, "")
 	}
-	expectedPreviewDigest := operatorEnrollTokenPreviewDigest(req.DisplayName, req.TTLSeconds)
+	policy := currentOperatorEnrollTokenPolicy()
+	policy.MonitorOnly = req.MonitorOnly
+	expectedPreviewDigest := operatorEnrollTokenPreviewDigestForPolicy(req.DisplayName, req.TTLSeconds, policy)
 	if req.PreviewDigest != expectedPreviewDigest {
 		return reject(OperatorCodePreviewStale, "")
 	}
@@ -389,8 +410,8 @@ func (s *Store) ApplyOperatorEnrollToken(req OperatorEnrollTokenCreateRequest) (
 	machineID := newID()
 	expiresAt := now.Add(time.Duration(req.TTLSeconds) * time.Second)
 	if _, err := tx.Exec(`INSERT INTO machine_registry
-	 (machine_id,display_name,expected,created_at) VALUES (?,?,1,?)`,
-		machineID, req.DisplayName, fmtTime(now)); err != nil {
+	 (machine_id,display_name,expected,created_at,execution_policy) VALUES (?,?,1,?,?)`,
+		machineID, req.DisplayName, fmtTime(now), enrollmentExecutionMode(req.MonitorOnly)); err != nil {
 		return OperatorEnrollTokenCreateResult{}, fmt.Errorf("store: pre-register operator enrollment machine: %w", err)
 	}
 	if _, err := tx.Exec(`INSERT INTO enrollment_tokens
@@ -398,7 +419,7 @@ func (s *Store) ApplyOperatorEnrollToken(req OperatorEnrollTokenCreateRequest) (
 		hashToken(token), req.DisplayName, fmtTime(now), fmtTime(expiresAt), machineID); err != nil {
 		return OperatorEnrollTokenCreateResult{}, fmt.Errorf("store: create operator enroll token: %w", err)
 	}
-	receipt := operatorEnrollTokenReceipt{
+	receipt := operatorEnrollTokenReceipt{MonitorOnly: req.MonitorOnly,
 		MachineID: machineID, DisplayName: req.DisplayName, CreatedAt: now,
 		ExpiresAt: expiresAt, TTLSeconds: req.TTLSeconds, PreviewDigest: req.PreviewDigest,
 	}
@@ -538,7 +559,7 @@ func validateOperatorEnrollTokenRejectionEvidence(tx dbTx, cached operatorCached
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='failed'
 	   AND COALESCE(detail,'')=?`,
 		string(AuditEnrollToken), truncAudit(req.DisplayName, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		cached.CreatedAt, cached.ErrorDetail.String).Scan(&originalRejectionAudits)
 	if err != nil {
 		return false, err
@@ -568,7 +589,7 @@ func validateOperatorEnrollTokenSuccessEvidence(tx dbTx, receipt operatorEnrollT
 	   AND idempotency_key=? AND request_digest=? AND at=? AND outcome='ok'
 	   AND COALESCE(detail,'')=?`,
 		string(AuditEnrollToken), receipt.MachineID, truncAudit(receipt.DisplayName, auditMaxReason),
-		truncAudit(req.Reason, auditMaxReason), req.IdempotencyKey, req.RequestDigest,
+		truncReason(req.Reason), req.IdempotencyKey, req.RequestDigest,
 		fmtTime(receipt.CreatedAt), operatorEnrollTokenSuccessDetail(receipt)).Scan(&originalSuccessAudits)
 	if err != nil {
 		return false, err
@@ -602,6 +623,8 @@ func decodeOperatorEnrollTokenReceipt(raw string) (operatorEnrollTokenReceipt, e
 		seen[name] = true
 		var dst any
 		switch name {
+		case "monitor_only":
+			dst = &receipt.MonitorOnly
 		case "machine_id":
 			dst = &receipt.MachineID
 		case "display_name":
@@ -654,7 +677,7 @@ func decodeOperatorEnrollTokenReceipt(raw string) (operatorEnrollTokenReceipt, e
 func validateOperatorEnrollTokenReceipt(receipt operatorEnrollTokenReceipt, req OperatorEnrollTokenCreateRequest,
 	cachedCreatedAt string,
 ) error {
-	if receipt.MachineID == "" || receipt.DisplayName != req.DisplayName ||
+	if receipt.MonitorOnly != req.MonitorOnly || receipt.MachineID == "" || receipt.DisplayName != req.DisplayName ||
 		receipt.TTLSeconds != req.TTLSeconds || receipt.PreviewDigest != req.PreviewDigest ||
 		!canonicalOperatorTime(receipt.CreatedAt) ||
 		!canonicalOperatorTime(receipt.ExpiresAt) ||
@@ -666,12 +689,16 @@ func validateOperatorEnrollTokenReceipt(receipt operatorEnrollTokenReceipt, req 
 }
 
 func operatorEnrollTokenSuccessDetail(receipt operatorEnrollTokenReceipt) string {
-	return fmt.Sprintf("machine_id=%s，ttl=%ds，expires_at=%s",
+	prefix := ""
+	if receipt.MonitorOnly {
+		prefix = "monitor_only=true; "
+	}
+	return prefix + fmt.Sprintf("machine_id=%s，ttl=%ds，expires_at=%s",
 		receipt.MachineID, receipt.TTLSeconds, fmtTime(receipt.ExpiresAt))
 }
 
 func freshOperatorEnrollTokenResult(receipt operatorEnrollTokenReceipt, token string) OperatorEnrollTokenCreateResult {
-	return OperatorEnrollTokenCreateResult{
+	return OperatorEnrollTokenCreateResult{MonitorOnly: receipt.MonitorOnly,
 		MachineID: receipt.MachineID, DisplayName: receipt.DisplayName,
 		CreatedAt: receipt.CreatedAt, ExpiresAt: receipt.ExpiresAt, TTLSeconds: receipt.TTLSeconds,
 		PreviewDigest:   receipt.PreviewDigest,
@@ -680,11 +707,18 @@ func freshOperatorEnrollTokenResult(receipt operatorEnrollTokenReceipt, token st
 }
 
 func redactedOperatorEnrollTokenResult(receipt operatorEnrollTokenReceipt) OperatorEnrollTokenCreateResult {
-	return OperatorEnrollTokenCreateResult{
+	return OperatorEnrollTokenCreateResult{MonitorOnly: receipt.MonitorOnly,
 		MachineID: receipt.MachineID, DisplayName: receipt.DisplayName,
 		CreatedAt: receipt.CreatedAt, ExpiresAt: receipt.ExpiresAt, TTLSeconds: receipt.TTLSeconds,
 		PreviewDigest: receipt.PreviewDigest,
 		Replayed:      true, RecoveryRequired: true,
 		RecoveryAction: OperatorEnrollTokenRecoveryRevokeAndReissue,
 	}
+}
+
+func enrollmentExecutionMode(monitor bool) string {
+	if monitor {
+		return "monitor_only"
+	}
+	return "managed"
 }

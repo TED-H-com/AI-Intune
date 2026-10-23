@@ -174,7 +174,10 @@ rm "$TMP/first/claude" "$TMP/bin/claude" "$TMP/bin/codex" "$TMP/bin/node"
 mkdir -p "$HOME/.grok/bin"
 cp "$TMP/bin/cli" "$HOME/.grok/bin/grok"
 command() {
-    if [ "${1:-}" = -v ] && [ "${2:-}" = node ]; then return 1; fi
+    # These tools are deliberately absent in this fixture, regardless of host CLIs.
+    if [ "${1:-}" = -v ]; then
+        case "${2:-}" in node|claude|codex) return 1 ;; esac
+    fi
     builtin command "$@"
 }
 export -f command

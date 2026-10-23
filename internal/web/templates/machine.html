@@ -1,4 +1,6 @@
 {{define "machine.html"}}{{template "head" .}}
+{{if not .ExecutionPolicy.MonitorOnly}}<p><a href="/signins">Manage CLI sign-ins</a></p>{{end}}
+{{template "execution-policy-panel" .ExecutionPolicy}}
 {{$md := .MachineDetail}}{{$m := .Machine}}{{$c := .MachineConnect}}{{$mon := $md.Monitor}}
 
 <div class="page-heading section-anchor" id="machine-overview" tabindex="-1"><div>
@@ -6,12 +8,26 @@
   <h1>{{$m.DisplayName}} —— 已退役</h1>
   <p>{{$m.RetiredAt.Local.Format "2006-01-02 15:04"}} 退出管理分母；退役前觀測已保留。</p>
   {{else}}
-  <h1><span class="dot {{color $md.Judgement.State}}" aria-hidden="true"></span>{{$m.DisplayName}} —— {{label $md.Judgement.State}}</h1>
+  <h1><span class="dot {{color $md.Judgement.State}}" aria-hidden="true"></span>{{$m.DisplayName}} —— {{label $md.Judgement.State}}{{with detailAttentionReasons $md.Judgement $.MachineEvidence}} <span class="small attention-reasons">— {{.}}</span>{{end}}</h1>
   <p>指派使用者：{{.AssignedUser.UserLogin}} · {{$md.Judgement.Reason.Text}} · channel：{{if $m.Channel}}{{$m.Channel}}{{else}}未指派{{end}}</p>
   {{end}}
   {{if $md.Checkins.Truncated}}<p class="small dim">{{$.CheckinWindowText}}內超過 {{$md.Disclosure.CheckinLimit}} 筆心跳。已取回最近 {{$md.Disclosure.CheckinLimit}} 筆，狀態條畫出其中最近 {{len $.Strip}} 筆。</p>{{end}}
   {{if $md.Checkins.Invalid}}<p class="small dim">已取回的心跳裡有 {{$md.Checkins.Invalid}} 筆無效，沒有畫進狀態條。</p>{{end}}
 </div></div>
+{{template "readiness-panel" .Readiness}}
+{{template "disk-setup-panel" .DiskSetup}}
+<p><a href="/readiness">Fleet readiness</a></p>
+<p><a href="?view=bot">Bot view</a></p>
+<p><a href="#oom-kills">Recent OOM kills</a></p>
+
+{{if eq $md.Judgement.State "Degraded"}}
+<div class="panel" id="attention-next-action"><h2>Next steps</h2>
+<p>Review the findings below and their observation times before acting. Check the affected service logs for agent or workload findings; use Disk usage and safe cleanup for disk findings. For login findings, ask the assigned service user to sign in through the provider's normal flow. After repair, wait for a fresh observation and confirm the reason clears.</p>
+<p><a href="#oom-kills">Review recent OOM kills and memory pressure</a>.</p>
+<p>State reflects the latest workload reports. Review the affected workload and the impact of each action before approving changes.</p></div>
+{{end}}
+
+{{template "loop_episodes" .}}
 
 {{if $md.Judgement.Findings.Total}}
 <h2>{{if $m.RetiredAt}}保留觀測的診斷{{else}}發現{{end}}</h2>
@@ -32,6 +48,8 @@
 </div>
 {{end}}
 
+{{template "disk_growth_panel" .DiskGrowth}}
+<p><a href="/machines/{{$m.MachineID}}/disk">Disk usage and safe cleanup →</a></p>
 <h2 id="monitor" class="section-anchor" tabindex="-1">心跳</h2>
 <div class="panel">
   {{if .Strip}}
@@ -154,10 +172,36 @@
     </td></tr>
     <tr><th>作業系統</th><td class="mono">{{.OS.Text}} {{.Arch.Text}} · {{.Kernel.Text}}</td></tr>
     <tr><th>執行身分</th><td class="mono">{{.UnixUser.Text}}</td></tr>
+    <tr><th>LAN 位址</th><td class="mono">{{range .LANIPv4.Items}}<div>{{.}}</div>{{else}}未回報{{end}}{{if .LANIPv4.Invalid}}<span class="small dim">（{{.LANIPv4.Invalid}} 筆無效或重複）</span>{{end}}{{if .LANIPv4.Truncated}}<span class="small dim">（已截斷）</span>{{end}}</td></tr>
     <tr><th>Tailscale</th><td class="mono">{{with .TailscaleIP}}{{.Text}}{{else}}—{{end}}</td></tr>
   </tbody>
   </table>
   {{end}}
+  {{end}}
+</div>
+
+<h2 id="oom-kills">Recent OOM kills</h2>
+<div class="panel">
+  <p>Last hour, up to 64 events. Review service memory limits and workload demand before restarting affected services. Missing attribution is unavailable.</p>
+  {{if .OOMKills}}
+  <table>
+    <thead><tr><th>Time (UTC)</th><th>Source</th><th>Unit / container</th><th>Process</th><th>Memory pressure avg10</th><th>Counter delta</th></tr></thead>
+    <tbody>
+    {{range .OOMKills}}
+      <tr>
+        <td>{{.Time.UTC.Format "2006-01-02 15:04:05"}}</td>
+        <td>{{.Source}}</td>
+        <td>{{if .Unit}}{{.Unit}}{{else}}Unknown{{end}}</td>
+        <td>{{if .Process}}{{.Process}}{{else}}Unknown{{end}}</td>
+        <td>{{if .PressureAvg10}}{{.PressureAvg10}}%{{else}}Unavailable{{end}}</td>
+        <td>{{if .Count}}{{.Count}}{{else}}—{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  <p class="small dim">memcg rows show counter deltas at observation time, not exact kill times. They can overlap kernel evidence; do not sum rows. oomd kills a cgroup and does not establish an individual process.</p>
+  {{else}}
+  <p>No recent OOM kills reported. <a href="/updates">Review agent version</a> and check access to the system journal and cgroup counters.</p>
   {{end}}
 </div>
 
@@ -555,6 +599,7 @@
 {{end}}
 </div>
 
+{{template "machine_checks" .}}
 <h2 id="jobs" class="section-anchor" tabindex="-1">工作單</h2>
 <div class="panel" style="padding:4px 6px">
 {{if .Jobs}}
@@ -673,6 +718,7 @@
 {{if $md.StateHistory.Invalid}}<p class="small dim">{{$md.StateHistory.Invalid}} 段狀態歷史無效。</p>{{end}}
 </div>
 
+{{if not .ExecutionPolicy.MonitorOnly}}
 {{with .MachineActions}}
 <h2 id="actions" class="section-anchor" tabindex="-1">動作</h2>
 <div class="panel" style="padding:4px 6px;overflow-x:auto">
@@ -889,4 +935,5 @@
   </p>
 </div>
 
+{{end}}
 {{template "foot" .}}{{end}}

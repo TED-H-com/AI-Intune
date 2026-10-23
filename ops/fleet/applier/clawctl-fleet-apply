@@ -1,0 +1,701 @@
+#!/usr/bin/env python3
+"""Root-only fixed host vocabulary. Never execute profile text or source config."""
+import argparse
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
+import time
+
+HEADER = '# Managed by clawctl-fleet-apply v1\n'
+FIELDS = ('lid_ignore', 'disable_sleep', 'power_profile', 'wifi_power_save_off',
+          'journald_max_mb', 'unattended_upgrades', 'scoped_sudoers', 'linger',
+          'root_disk_clean_timer')
+TARGETS = ('sleep.target', 'suspend.target', 'hibernate.target', 'hybrid-sleep.target')
+
+
+def strict(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError('duplicate field')
+        out[k] = v
+    return out
+
+
+def parse(raw):
+    p = json.loads(raw, object_pairs_hook=strict)
+    if type(p) is not dict or set(p) - set(FIELDS):
+        raise ValueError('invalid fields')
+    for k, v in p.items():
+        if v is None:
+            continue
+        if k == 'power_profile':
+            if type(v) is not str or v not in ('performance', 'balanced', 'power-saver'):
+                raise ValueError('invalid power mode')
+        elif k == 'journald_max_mb':
+            if type(v) is not int or not 100 <= v <= 4096:
+                raise ValueError('invalid journal size')
+        elif type(v) is not bool:
+            raise ValueError('invalid boolean')
+    return {k: p[k] for k in FIELDS if p.get(k) is not None}
+
+
+class Applier:
+    def __init__(self, args):
+        self.args = args
+        self.prefix = args.root_prefix.rstrip('/')
+        self.changed = False
+        self.system_uid = os.geteuid() if self.prefix else 0
+
+    def path(self, name):
+        return Path(self.prefix + name)
+
+    def safe(self, path, leaf_link=False):
+        parts = list(path.parents)[::-1] + [path]
+        if self.prefix:
+            parts = [p for p in parts if str(p) == self.prefix or str(p).startswith(self.prefix + '/')]
+        for p in parts:
+            if p.is_symlink() and not (leaf_link and p == path):
+                raise ValueError('symlink refused')
+            if p.exists() and not p.is_symlink():
+                s = p.stat()
+                if s.st_uid != self.system_uid or s.st_mode & 0o022:
+                    raise ValueError('untrusted system directory')
+
+    def run(self, *argv, query=False, allow_failure=False):
+        if not query and hasattr(self, 'policy_identity'):
+            self.execution_allowed(*self.policy_identity)
+        if self.args.dry_run and not query:
+            self.changed = True
+            return ''
+        # Command output is never copied to the public result.
+        r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           timeout=60, env={'PATH': os.environ['PATH'], 'LC_ALL': 'C'})
+        if r.returncode and not allow_failure:
+            raise ValueError('host command failed')
+        return r.stdout[:4096].decode('utf-8', errors='replace').strip()
+
+    def atomic(self, path, body, mode=0o644):
+        if hasattr(self, 'policy_identity'):
+            self.execution_allowed(*self.policy_identity)
+        self.safe(path)
+        if self.args.dry_run:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent))
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                os.fchmod(f.fileno(), mode)
+                f.write(body)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, str(path))
+            # Persist the receipt name before any destructive command can run.
+            for directory in (path.parent, path.parent.parent):
+                directory_fd = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def drop(self, name, body, enabled=True, sudoers=False):
+        if hasattr(self, 'policy_identity'):
+            self.execution_allowed(*self.policy_identity)
+        path = self.path(name)
+        self.safe(path)
+        old = path.read_bytes() if path.exists() else None
+        if old is not None and not old.startswith(HEADER.encode()):
+            if not enabled:
+                return
+            raise ValueError('existing unmanaged file preserved')
+        want = (HEADER + body).encode() if enabled else None
+        if old == want:
+            if old is not None and stat.S_IMODE(path.stat().st_mode) != (0o440 if sudoers else 0o644):
+                if not self.args.dry_run:
+                    path.chmod(0o440 if sudoers else 0o644)
+                self.changed = True
+            return
+        if sudoers and want is not None:
+            # A trusted root directory, never the agent's home or shared /tmp.
+            parent = Path(tempfile.gettempdir()) if self.args.dry_run else self.path('/var/lib/clawctl-fleet-apply')
+            parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=str(parent))
+            try:
+                with os.fdopen(fd, 'wb') as f:
+                    os.fchmod(f.fileno(), 0o440)
+                    f.write(want)
+                self.run('visudo', '-cf', tmp, query=True)
+            finally:
+                os.unlink(tmp)
+        if not self.args.dry_run:
+            if old is not None:
+                self.atomic(Path(str(path) + '.fleet-apply.bak'), old, 0o440 if sudoers else 0o644)
+            if want is None:
+                path.unlink()
+            else:
+                self.atomic(path, want, 0o440 if sudoers else 0o644)
+        self.changed = True
+
+    def execution_allowed(self, home=None, uid=None):
+        # Only this fixed agent file supplies policy; never accept profile text.
+        if home is None and hasattr(self, 'policy_identity'):
+            home, uid = self.policy_identity
+        if home is None:
+            conf = self.path('/etc/clawctl/fleet-apply.conf')
+            self.safe(conf)
+            c = json.loads(conf.read_text(), object_pairs_hook=strict)
+            user = c['agent_user']
+            if not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_-]{0,31}', user):
+                raise ValueError('invalid service user')
+            if self.prefix:
+                r = next(l.split(':') for l in self.path('/etc/passwd').read_text().splitlines() if l.split(':')[0] == user)
+                uid, home = int(r[2]), r[5]
+            else:
+                r = pwd.getpwnam(user)
+                uid, home = r.pw_uid, r.pw_dir
+        if uid == 0 or not home.startswith('/') or '..' in Path(home).parts:
+            raise ValueError('invalid service home')
+        path = self.path(home + '/.config/clawctl/agent.json')
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for component in path.parts[1:-1]:
+                nxt = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = nxt
+            f = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(f, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_size > 65536:
+                    raise ValueError('untrusted agent policy')
+                config = json.loads(stream.read(65537), object_pairs_hook=strict)
+            policy = config.get('execution_policy')
+            # Legacy agents have no profile. Explicit unknown/malformed profiles refuse.
+            if 'execution_policy' not in config:
+                self.policy_identity = (home, uid)
+                return
+            if (type(policy) is not dict or set(policy) != {'mode', 'revision'}
+                    or policy.get('mode') != 'managed' or type(policy.get('revision')) is not int
+                    or policy['revision'] < 1):
+                raise ValueError('machine execution is blocked by policy')
+            self.policy_identity = (home, uid)
+        finally:
+            os.close(fd)
+
+    def read_input(self):
+        conf = self.path('/etc/clawctl/fleet-apply.conf')
+        self.safe(conf)
+        s = conf.stat()
+        if s.st_uid != self.system_uid or s.st_mode & 0o022 or s.st_size > 1024:
+            raise ValueError('untrusted installer configuration')
+        c = json.loads(conf.read_text(), object_pairs_hook=strict)
+        if set(c) != {'agent_user'} or not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_-]{0,31}', c['agent_user']):
+            raise ValueError('invalid service user')
+        self.user = c['agent_user']
+        if self.prefix:
+            records = [l.split(':') for l in self.path('/etc/passwd').read_text().splitlines()]
+            record = next(r for r in records if r[0] == self.user)
+            uid, home = int(record[2]), record[5]
+        else:
+            record = pwd.getpwnam(self.user)
+            uid, home = record.pw_uid, record.pw_dir
+        if uid == 0 or not home.startswith('/') or '..' in Path(home).parts:
+            raise ValueError('non-root service user required')
+        self.agent_uid, self.agent_home = uid, home
+        # Traverse all user-controlled directories using dirfds and O_NOFOLLOW.
+        # Holding each descriptor prevents symlink swaps between stat and read.
+        self.execution_allowed(home, uid)
+        profile = self.path(home + '/.config/clawctl/host-profile.json')
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for component in profile.parts[1:-1]:
+                new = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = new
+            f = os.open(profile.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(f, 'rb') as stream:
+                s = os.fstat(stream.fileno())
+                if not stat.S_ISREG(s.st_mode) or s.st_uid != uid or s.st_size > 65536:
+                    raise ValueError('untrusted profile')
+                raw = stream.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError('oversized profile')
+        finally:
+            os.close(fd)
+        return parse(raw)
+
+    def apply_item(self, name, value):
+        self.execution_allowed()
+        if name == 'lid_ignore':
+            self.drop('/etc/systemd/logind.conf.d/90-clawctl-fleet.conf',
+                      '[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n', value)
+            # Avoid restarting logind under active sessions. HUP reloads config.
+            if self.changed:
+                self.run('systemctl', 'kill', '--kill-who=main', '--signal=HUP', 'systemd-logind.service')
+        elif name == 'disable_sleep':
+            for target in TARGETS:
+                mask = self.path('/etc/systemd/system/' + target)
+                marker = self.path('/var/lib/clawctl-fleet-apply/' + target + '.owned')
+                self.safe(mask, leaf_link=True)
+                self.safe(marker)
+                owned = marker.exists()
+                exists = mask.exists() or mask.is_symlink()
+                if value:
+                    if exists and (not mask.is_symlink() or os.readlink(mask) != '/dev/null'):
+                        raise ValueError('existing sleep unit preserved')
+                    if not exists:
+                        # Record intent first so interrupted masking can be repaired.
+                        self.atomic(marker, HEADER.encode())
+                        if not self.args.dry_run:
+                            mask.parent.mkdir(parents=True, exist_ok=True)
+                            mask.symlink_to('/dev/null')
+                        self.changed = True
+                elif owned:
+                    if exists and mask.is_symlink() and os.readlink(mask) == '/dev/null':
+                        if not self.args.dry_run:
+                            mask.unlink()
+                        self.changed = True
+                    if not self.args.dry_run:
+                        marker.unlink()
+            if self.changed:
+                self.run('systemctl', 'daemon-reload')
+        elif name == 'power_profile':
+            if not shutil.which('powerprofilesctl'):
+                return 'unsupported', 'Power profiles are unavailable'
+            if self.run('powerprofilesctl', 'get', query=True) != value:
+                self.run('powerprofilesctl', 'set', value)
+                self.changed = True
+        elif name == 'wifi_power_save_off':
+            self.drop('/etc/NetworkManager/conf.d/90-clawctl-fleet.conf',
+                      '[connection]\nwifi.powersave=2\n', value)
+            if self.changed:
+                self.run('systemctl', 'reload', 'NetworkManager.service')
+        elif name == 'journald_max_mb':
+            self.drop('/etc/systemd/journald.conf.d/90-clawctl-fleet.conf',
+                      '[Journal]\nSystemMaxUse=%dM\n' % value)
+            if self.changed:
+                self.run('systemctl', 'restart', 'systemd-journald.service')
+        elif name == 'unattended_upgrades':
+            release = self.path('/etc/os-release').read_text()
+            if not re.search(r'^ID=["\']?(ubuntu|debian)["\']?$', release, re.M):
+                return 'unsupported', 'Automatic security updates require Debian or Ubuntu'
+            # No package/network operations at this boundary.
+            if value and not self.path('/usr/bin/unattended-upgrade').exists():
+                return 'unsupported', 'Install the unattended-upgrades package first'
+            self.drop('/etc/apt/apt.conf.d/90-clawctl-fleet-auto-upgrades',
+                      'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n', value)
+        elif name == 'scoped_sudoers':
+            # Exact service commands only; never permit arbitrary binary/unit installation.
+            body = (self.user + ' ALL=(root) NOPASSWD: /usr/bin/systemctl restart clawctl-agent.service, '
+                    '/usr/bin/systemctl enable --now disk-clean-root.timer, '
+                    '/usr/bin/systemctl disable --now disk-clean-root.timer, '
+                    '/usr/local/sbin/disk-clean --scope root --dry-run\n')
+            self.drop('/etc/sudoers.d/clawctl-fleet-agent', body, value, sudoers=True)
+        elif name == 'linger':
+            marker = self.path('/var/lib/clawctl-fleet-apply/linger.owned')
+            self.safe(marker)
+            enabled = self.run('loginctl', 'show-user', self.user, '-p', 'Linger', '--value', query=True) == 'yes'
+            if value and not enabled:
+                self.atomic(marker, HEADER.encode())
+                self.run('loginctl', 'enable-linger', self.user)
+                self.changed = True
+            elif not value and marker.exists():
+                if enabled:
+                    self.run('loginctl', 'disable-linger', self.user)
+                    self.changed = True
+                if not self.args.dry_run:
+                    marker.unlink()
+        elif name == 'root_disk_clean_timer':
+            marker = self.path('/var/lib/clawctl-fleet-apply/disk-clean.owned')
+            self.safe(marker)
+            timer = self.path('/etc/systemd/system/disk-clean-root.timer')
+            self.safe(timer)
+            if value:
+                installer = self.path('/usr/local/lib/clawctl-fleet-apply/maintenance/install-timers.sh')
+                self.safe(installer)
+                destinations = ('/usr/local/sbin/disk-clean', '/etc/disk-clean/root.conf',
+                                '/etc/systemd/system/disk-clean-root.service',
+                                '/etc/systemd/system/disk-clean-root.timer',
+                                '/etc/tmpfiles.d/00-disk-clean.conf',
+                                '/etc/systemd/journald.conf.d/50-disk-clean.conf')
+                before = []
+                for dest in destinations:
+                    path = self.path(dest)
+                    self.safe(path)
+                    before.append(path.read_bytes() if path.exists() else None)
+                if not timer.exists():
+                    self.atomic(marker, HEADER.encode())
+                argv = ['bash', str(installer), '--scope', 'root', '--apply']
+                if self.prefix:
+                    argv += ['--prefix', self.prefix]
+                self.run(*argv)
+                after = [self.path(dest).read_bytes() if self.path(dest).exists() else None for dest in destinations]
+                if before != after or self.args.dry_run:
+                    self.changed = True
+                enabled = self.run('systemctl', 'is-enabled', 'disk-clean-root.timer', query=True, allow_failure=True) if timer.exists() else ''
+                active = self.run('systemctl', 'is-active', 'disk-clean-root.timer', query=True, allow_failure=True)
+                if enabled != 'enabled' or active != 'active':
+                    self.run('systemctl', 'enable', '--now', 'disk-clean-root.timer')
+                    self.changed = True
+            elif marker.exists():
+                enabled = self.run('systemctl', 'is-enabled', 'disk-clean-root.timer', query=True, allow_failure=True)
+                active = self.run('systemctl', 'is-active', 'disk-clean-root.timer', query=True, allow_failure=True)
+                if enabled == 'enabled' or active == 'active':
+                    self.run('systemctl', 'disable', '--now', 'disk-clean-root.timer')
+                    self.changed = True
+                # Retain provenance while installed files remain, including across
+                # repeated on/off cycles and interrupted timer changes.
+        return ('changed', 'Host setting updated') if self.changed else ('ok', '')
+
+    def disk_input(self):
+        # read_input resolves the installer-selected account, even if its profile
+        # is missing. The jobs file uses the same descriptor traversal boundary.
+        uid, home = self.agent_uid, self.agent_home
+        path = self.path(home + '/.config/clawctl/disk-jobs.json')
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for component in path.parts[1:-1]:
+                new = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = new
+            f = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(f, 'rb') as stream:
+                s = os.fstat(stream.fileno())
+                if not stat.S_ISREG(s.st_mode) or s.st_uid != uid or s.st_size > 65536:
+                    raise ValueError('Untrusted disk jobs file')
+                raw = stream.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError('Disk jobs file is too large')
+        finally:
+            os.close(fd)
+        jobs = json.loads(raw, object_pairs_hook=strict)
+        if type(jobs) is not list or len(jobs) > 128:
+            raise ValueError('Expected a bounded list of disk jobs')
+        seen = set()
+        for j in jobs:
+            self.validate_disk_job(j)
+            if j['id'] in seen:
+                raise ValueError('Duplicate disk job')
+            seen.add(j['id'])
+        return jobs
+
+    @staticmethod
+    def validate_disk_job(j):
+        keys = {'id', 'device', 'serial', 'wwn', 'size_bytes', 'model',
+                'mount_point', 'fstype', 'label', 'owner'}
+        if type(j) is not dict or set(j) != keys:
+            raise ValueError('Unknown or missing disk job fields')
+        for k in keys - {'size_bytes'}:
+            if type(j[k]) is not str or len(j[k]) > 256 or any(ord(c) < 32 or ord(c) > 126 for c in j[k]):
+                raise ValueError('Invalid disk job text')
+        if not re.fullmatch(r'[A-Za-z0-9-]{8,64}', j['id']):
+            raise ValueError('Invalid disk job ID')
+        if not re.fullmatch(r'/dev/[A-Za-z0-9_-]+', j['device']):
+            raise ValueError('Invalid disk path')
+        if type(j['size_bytes']) is not int or j['size_bytes'] < 1073741824 or not (j['serial'] or j['wwn']):
+            raise ValueError('Invalid disk identity')
+        m = j['mount_point']
+        if (not re.fullmatch(r'/[A-Za-z0-9._/-]+', m) or '..' in m or m == '/'
+                or os.path.normpath(m) != m or m.startswith('//')):
+            raise ValueError('Choose an absolute mount point without ..')
+        if any(m == p or m.startswith(p + '/') for p in ('/etc', '/usr', '/boot', '/proc', '/sys', '/dev', '/run')) or m.startswith('/var/lib/clawctl'):
+            raise ValueError('Mount point is in a protected system directory')
+        if j['fstype'] not in ('ext4', 'xfs') or not re.fullmatch(r'[A-Za-z0-9_-]{1,16}', j['label']):
+            raise ValueError('Invalid filesystem or label')
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,31}', j['owner']) or j['owner'] == 'root':
+            raise ValueError('A non-root owner user is required')
+
+    def disk_command(self, *argv, ok_codes=(0,)):
+        self.execution_allowed()
+        # Bound output while the process runs, rather than truncating an
+        # unbounded PIPE buffer after collection. No child inherits secrets.
+        with tempfile.TemporaryFile() as out:
+            p = subprocess.Popen(argv, stdout=out, stderr=subprocess.DEVNULL,
+                                 env={'PATH': os.environ['PATH'], 'LC_ALL': 'C'})
+            try:
+                deadline = time.monotonic() + 60
+                while p.poll() is None:
+                    if os.fstat(out.fileno()).st_size > 1048576 or time.monotonic() > deadline:
+                        raise ValueError('Disk command exceeded its time or output limit')
+                    time.sleep(0.01)
+                if p.returncode not in ok_codes:
+                    raise ValueError('Disk command failed: ' + argv[0])
+                out.seek(0)
+                raw = out.read(1048577)
+                if len(raw) > 1048576:
+                    raise ValueError('Disk command output is too large')
+                return raw.decode('utf-8', errors='strict').strip()
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                p.wait()
+
+    def disk_lsblk(self, device=None):
+        argv = ['lsblk', '--json', '--bytes', '--output',
+                'NAME,PATH,KNAME,TYPE,SIZE,MODEL,SERIAL,WWN,FSTYPE,UUID,LABEL,MOUNTPOINTS,PKNAME,RM,RO,PTTYPE']
+        if device:
+            argv += ['--', device]
+        raw = self.disk_command(*argv)
+        data = json.loads(raw, object_pairs_hook=strict)
+        if type(data) is not dict or type(data.get('blockdevices')) is not list:
+            raise ValueError('Disk inventory is unavailable')
+        return data['blockdevices']
+
+    @staticmethod
+    def disk_points(d):
+        return [p for p in (d.get('mountpoints') or [d.get('mountpoint')]) if p]
+
+    def disk_owner(self, name):
+        if self.prefix:
+            records = [l.split(':') for l in self.path('/etc/passwd').read_text().splitlines()]
+            r = next((r for r in records if r[0] == name), None)
+            if r is None:
+                raise ValueError('Owner user does not exist')
+            uid, gid = int(r[2]), int(r[3])
+        else:
+            try:
+                r = pwd.getpwnam(name)
+            except KeyError:
+                raise ValueError('Owner user does not exist') from None
+            uid, gid = r.pw_uid, r.pw_gid
+        if uid < 1000:
+            raise ValueError('Owner user must have a UID of at least 1000')
+        return uid, gid
+
+    def check_disk(self, j):
+        uid, gid = self.disk_owner(j['owner'])
+        mount = self.path(j['mount_point'])
+        self.safe(mount)
+        if mount.exists() and (not mount.is_dir() or any(mount.iterdir())):
+            raise ValueError('Mount point must be an empty directory')
+        if self.disk_command('findmnt', '--noheadings', '--mountpoint', j['mount_point'], ok_codes=(0, 1)):
+            raise ValueError('Mount point is already mounted')
+        fstab = self.path('/etc/fstab')
+        self.safe(fstab)
+        old = fstab.read_text() if fstab.exists() else ''
+        for line in old.splitlines():
+            fields = line.split()
+            if fields and not fields[0].startswith('#') and len(fields) > 1 and os.path.normpath(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[1])) == j['mount_point']:
+                raise ValueError('Mount point is already in fstab')
+        device = j['device']
+        actual = self.path(device)
+        self.safe(actual)
+        if not self.prefix and not stat.S_ISBLK(actual.stat().st_mode):
+            raise ValueError('Device is not a block device')
+        # Require a stable by-id alias containing the approved serial or WWN.
+        byid = self.path('/dev/disk/by-id')
+        self.safe(byid)
+        matches = []
+        for alias in byid.iterdir():
+            if not alias.is_symlink() or '-part' in alias.name:
+                continue
+            if any(v and (alias.name.endswith('-' + v) or alias.name.endswith('_' + v)) for v in (j['serial'], j['wwn'])):
+                matches.append(alias.resolve())
+        if not matches or any(p != actual for p in matches):
+            raise ValueError('Stable disk identity does not resolve to the approved device')
+        disks = self.disk_lsblk(device)
+        if len(disks) != 1:
+            raise ValueError('Expected exactly one disk')
+        d = disks[0]
+        if d.get('path') != device or d.get('type') != 'disk':
+            raise ValueError('Approved device is not a disk')
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', d.get('kname', '')) or d['kname'].startswith(('loop', 'zram', 'sr')):
+            raise ValueError('Unsupported disk device')
+        for key in ('serial', 'wwn'):
+            if (d.get(key) or '').strip() != j[key]:
+                raise ValueError('Disk ' + key + ' does not match approval')
+        if type(d.get('size')) not in (int, str) or int(d['size']) != j['size_bytes']:
+            raise ValueError('Disk size does not match approval')
+        if (d.get('model') or '').strip() != j['model']:
+            raise ValueError('Disk model does not match approval')
+        if d.get('rm') not in (False, 0, '0') or d.get('ro') not in (False, 0, '0'):
+            raise ValueError('Removable or read-only disk refused')
+        if d.get('children'):
+            raise ValueError('Disk already has partitions or members')
+        if any(d.get(k) for k in ('fstype', 'uuid', 'label', 'pttype')):
+            raise ValueError('Disk already contains a filesystem or partition table')
+        if self.disk_points(d):
+            raise ValueError('Disk is mounted')
+        swaps = self.path('/proc/swaps').read_text().splitlines()[1:]
+        for line in swaps:
+            if line.split() and self.path(line.split()[0]).resolve() == actual:
+                raise ValueError('Disk is used as swap')
+        holders = self.path('/sys/block/' + d['kname'] + '/holders')
+        self.safe(holders)
+        if any(holders.iterdir()):
+            raise ValueError('Disk has active holders')
+        # Walk all descendants and flat PKNAME chains to protect root and boot.
+        parents, boot = {}, set()
+        def walk(n, ancestors):
+            k = n.get('kname')
+            parents[k] = n.get('pkname')
+            if any(p == '/' or p == '/boot' or p.startswith('/boot/') for p in self.disk_points(n)):
+                boot.update(ancestors + [k])
+            for c in n.get('children') or []:
+                walk(c, ancestors + [k])
+        for n in self.disk_lsblk():
+            walk(n, [])
+        for k in list(boot):
+            for _ in range(64):
+                k = parents.get(k)
+                if not k:
+                    break
+                boot.add(k)
+        if d['kname'] in boot:
+            raise ValueError('Disk backs the root or boot filesystem')
+        if self.disk_command('wipefs', '--no-act', '--noheadings', '--output', 'TYPE', device):
+            raise ValueError('Disk has an existing signature')
+        return uid, gid, old
+
+    def disk_jobs(self):
+        self.execution_allowed()
+        if not hasattr(self, 'agent_uid'):
+            return
+        try:
+            jobs = self.disk_input()
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, TypeError, KeyError):
+            print('Disk jobs refused; check file ownership and strict JSON')
+            return
+        directory = self.path('/var/lib/clawctl-fleet-apply/disk-jobs')
+        self.safe(directory)
+        for j in jobs:
+            dest = directory / (j['id'] + '.json')
+            # Any existing ID, including an interrupted operation, is single use.
+            if os.path.lexists(dest):
+                continue
+            result = {'state': 'refused', 'reason': 'Disk setup could not be verified'}
+            step, started = 'verify', False
+            try:
+                uid, gid, old_fstab = self.check_disk(j)
+                if self.args.dry_run:
+                    continue
+                # Durable reservation precedes the first destructive command.
+                self.atomic(dest, b'{"state":"failed","step":"partition","reason":"Setup was interrupted; inspect the disk locally"}\n')
+                started, step = True, 'partition'
+                self.disk_command('parted', '-s', j['device'], 'mklabel', 'gpt', 'mkpart', j['label'], j['fstype'], '1MiB', '100%')
+                step = 'partition discovery'
+                self.disk_command('partprobe', j['device'])
+                self.disk_command('udevadm', 'settle')
+                disk = self.disk_lsblk(j['device'])
+                if len(disk) != 1 or len(disk[0].get('children') or []) != 1:
+                    raise ValueError('New partition is not the only child')
+                part = disk[0]['children'][0]
+                partition = part.get('path', '')
+                expected = j['device'] + ('p1' if j['device'][-1].isdigit() else '1')
+                if (partition != expected or part.get('type') != 'part' or part.get('children')
+                        or any(part.get(k) for k in ('fstype', 'uuid', 'label')) or self.disk_points(part)):
+                    raise ValueError('New partition identity or contents are unexpected')
+                self.safe(self.path(partition))
+                step = 'filesystem'
+                self.disk_command('mkfs.' + j['fstype'], '-L', j['label'], partition)
+                uuid = self.disk_command('blkid', '-s', 'UUID', '-o', 'value', partition)
+                if not re.fullmatch(r'[A-Fa-f0-9-]{8,64}', uuid):
+                    raise ValueError('Filesystem UUID is unavailable')
+                step = 'fstab'
+                fstab = self.path('/etc/fstab')
+                # Preserve concurrent local edits; never overwrite them.
+                if (fstab.read_text() if fstab.exists() else '') != old_fstab:
+                    raise ValueError('fstab changed during disk setup')
+                self.atomic(Path(str(fstab) + '.fleet-apply.bak'), old_fstab.encode())
+                entry = '\n' + HEADER + 'UUID=%s %s %s defaults,nofail 0 2\n' % (uuid, j['mount_point'], j['fstype'])
+                self.atomic(fstab, (old_fstab + entry).encode())
+                step = 'mount'
+                mount = self.path(j['mount_point'])
+                self.safe(mount)
+                mount.mkdir(parents=True, exist_ok=True, mode=0o755)
+                self.disk_command('mount', j['mount_point'])
+                step = 'ownership'
+                self.disk_command('chown', str(uid) + ':' + str(gid), str(mount))
+                mount.chmod(0o755)
+                step = 'verification'
+                facts = self.disk_command('findmnt', '--json', '--mountpoint', j['mount_point'], '--output', 'UUID,FSTYPE,TARGET')
+                mounted = json.loads(facts, object_pairs_hook=strict).get('filesystems', [])
+                if len(mounted) != 1 or mounted[0].get('uuid') != uuid or mounted[0].get('fstype') != j['fstype'] or mounted[0].get('target') != j['mount_point']:
+                    raise ValueError('Mounted filesystem does not match the new disk')
+                df = self.disk_command('df', '-h', '--', j['mount_point']).splitlines()[-1]
+                df = ''.join(c for c in df if 32 <= ord(c) <= 126)[:512]
+                result = {'state': 'done', 'uuid': uuid, 'partition': partition,
+                          'mount_point': j['mount_point'], 'fstype': j['fstype'], 'df': df}
+            except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError) as e:
+                reason = str(e) if isinstance(e, ValueError) else 'Required disk checks or commands are unavailable'
+                result = {'state': 'failed' if started else 'refused', 'reason': reason[:256]}
+                if started:
+                    result['step'] = step
+            self.atomic(dest, (json.dumps(result, separators=(',', ':')) + '\n').encode())
+
+    def apply(self):
+        self.execution_allowed()
+        result = {'schema': 'clawctl-fleet-apply/v1', 'profile_digest': '',
+                  'applied_at': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                  'items': {}, 'reboot_required': self.path('/var/run/reboot-required').exists()}
+        try:
+            profile = self.read_input()
+            canonical = json.dumps(profile, separators=(',', ':'), ensure_ascii=True).encode()
+            result['profile_digest'] = 'sha256:' + hashlib.sha256(canonical).hexdigest()
+        except (OSError, ValueError, KeyError, StopIteration, TypeError):
+            result['items']['profile'] = {'status': 'failed', 'detail': 'Profile refused; check ownership, JSON and installer configuration'}
+        else:
+            for name in FIELDS:
+                self.changed = False
+                status, detail = 'unmanaged', ''
+                if name in profile:
+                    pending = self.path('/var/lib/clawctl-fleet-apply/' + name + '.pending')
+                    self.safe(pending)
+                    self.changed = pending.exists()
+                    self.atomic(pending, HEADER.encode())
+                    try:
+                        status, detail = self.apply_item(name, profile[name])
+                        if not self.args.dry_run:
+                            pending.unlink()
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        status, detail = 'failed', 'Host setting could not be applied; inspect local service configuration'
+                result['items'][name] = {'status': status, 'detail': detail}
+        self.atomic(self.path('/var/lib/clawctl-fleet-apply/last.json'),
+                    (json.dumps(result, separators=(',', ':')) + '\n').encode())
+        self.disk_jobs()
+        print(json.dumps(result))
+        return int(any(v['status'] == 'failed' for v in result['items'].values()))
+
+
+def main():
+    os.umask(0o022)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--root-prefix', default='')
+    args = parser.parse_args()
+    if (os.geteuid() != 0 and not args.root_prefix) or (args.root_prefix and not args.root_prefix.startswith('/')):
+        parser.error('requires root and an absolute root prefix')
+    a = Applier(args)
+    try:
+        a.execution_allowed()
+    except (OSError, ValueError, KeyError, StopIteration, TypeError):
+        print(json.dumps({'schema': 'clawctl-fleet-apply/v1', 'items': {'profile': {'status': 'failed', 'detail': 'Machine policy or configuration refuses host changes'}}}))
+        return 1
+    state = a.path('/var/lib/clawctl-fleet-apply')
+    a.safe(state)
+    if args.dry_run:
+        return a.apply()
+    state.mkdir(parents=True, exist_ok=True, mode=0o755)
+    state.chmod(0o755)
+    lock = state / 'apply.lock'
+    a.safe(lock)
+    with lock.open('w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        return a.apply()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

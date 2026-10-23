@@ -152,6 +152,9 @@ func TestReadinessCanRequireFreshMatchingPlatformEvidence(t *testing.T) {
 func TestAgentAdvertisesTheFixedDeviceSyncExecutor(t *testing.T) {
 	var checkin model.Checkin
 	advertiseJobCapabilities(&checkin)
+	if checkin.DiskOpsV2 != (runtime.GOOS == "linux" && os.Geteuid() != 0) {
+		t.Fatal("disk_ops_v2 advertised without supported agent runtime")
+	}
 	if !checkin.DeviceSyncV1 {
 		t.Fatal("agent did not advertise device-sync v1")
 	}
@@ -443,5 +446,51 @@ func TestTheErrorMessageSaysWhatItRefusedToDo(t *testing.T) {
 		if !strings.Contains(msg, sub) {
 			t.Errorf("沒有列出子命令 %q —— 拒絕之後要告訴人正確的寫法是什麼", sub)
 		}
+	}
+}
+
+func TestReadinessMonitorOnlyRequiresDisabledJobsAndFreshEvidence(t *testing.T) {
+	since := time.Now().UTC()
+	enabled, disabled := true, false
+	receipt := model.AgentReadinessResponse{
+		MachineID: "machine-1", LastCheckinReceivedAt: &since, AgentStartedAt: &since,
+		AgentVersion: "v1", JobsEnabled: &disabled, DeviceSyncV1: &enabled,
+		IdentityReceivedAt: &since, IdentityMeasuredAt: &since, IdentityOS: runtime.GOOS, IdentityArch: runtime.GOARCH,
+	}
+	if got := readinessPending(receipt, "machine-1", "v1", since, true, true); got != "" {
+		t.Fatalf("monitor-only pending: %s", got)
+	}
+	if got := readinessPending(receipt, "machine-1", "v1", since, true); got == "" {
+		t.Fatal("normal verify accepted monitor-only")
+	}
+	receipt.JobsEnabled = &enabled
+	if got := readinessPending(receipt, "machine-1", "v1", since, true, true); got == "" {
+		t.Fatal("monitor-only verify accepted jobs enabled")
+	}
+	receipt.JobsEnabled = &disabled
+	receipt.IdentityReceivedAt = nil
+	if got := readinessPending(receipt, "machine-1", "v1", since, true, true); got == "" {
+		t.Fatal("monitor-only verify omitted platform evidence")
+	}
+}
+
+func TestReadinessHonorsHubExecutionPolicy(t *testing.T) {
+	now := time.Now().UTC()
+	enabled, disabled := true, false
+	receipt := model.AgentReadinessResponse{
+		MachineID: "machine-1", LastCheckinReceivedAt: &now, AgentStartedAt: &now,
+		AgentVersion: "v1", JobsEnabled: &disabled, DeviceSyncV1: &enabled,
+		ExecutionPolicy: &model.ExecutionPolicy{Mode: model.ExecutionMonitorOnly, Revision: 1},
+	}
+	if got := readinessPending(receipt, "machine-1", "v1", now, false); got != "" {
+		t.Fatalf("Hub monitor-only policy pending: %s", got)
+	}
+	receipt.JobsEnabled = &enabled
+	if got := readinessPending(receipt, "machine-1", "v1", now, false); got == "" {
+		t.Fatal("accepted enabled jobs under monitor-only policy")
+	}
+	receipt.ExecutionPolicy.Mode = model.ExecutionManaged
+	if got := readinessPending(receipt, "machine-1", "v1", now, false); got != "" {
+		t.Fatalf("managed policy pending: %s", got)
 	}
 }

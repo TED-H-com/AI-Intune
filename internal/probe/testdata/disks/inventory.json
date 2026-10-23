@@ -1,0 +1,128 @@
+{
+  "blockdevices": [
+    {
+      "name": "nvme1n1",
+      "path": "/dev/nvme1n1",
+      "kname": "nvme1n1",
+      "type": "disk",
+      "size": 2147483648,
+      "model": "Example NVMe",
+      "serial": "example-empty",
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sda",
+      "kname": "sda",
+      "type": "disk",
+      "children": [
+        {
+          "name": "sda1",
+          "kname": "sda1",
+          "pkname": "sda",
+          "type": "part",
+          "fstype": "ext4",
+          "mountpoints": [
+            "/",
+            null
+          ]
+        }
+      ],
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sdb",
+      "kname": "sdb",
+      "type": "disk",
+      "fstype": "LVM2_member",
+      "children": [
+        {
+          "type": "lvm",
+          "mountpoints": [
+            "/boot"
+          ]
+        }
+      ],
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sdc",
+      "kname": "sdc",
+      "type": "disk",
+      "fstype": "linux_raid_member",
+      "children": [
+        {
+          "type": "raid1"
+        }
+      ],
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sdd",
+      "kname": "sdd",
+      "type": "disk",
+      "fstype": "crypto_LUKS",
+      "children": [
+        {
+          "type": "crypt"
+        }
+      ],
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sde",
+      "kname": "sde",
+      "type": "disk",
+      "fstype": "zfs_member",
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sdf",
+      "kname": "sdf",
+      "type": "disk",
+      "fstype": "btrfs",
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sdg",
+      "path": "/dev/sdg",
+      "kname": "sdg",
+      "type": "disk",
+      "size": "2147483648",
+      "serial": "usb",
+      "rm": 1,
+      "ro": 0,
+      "tran": "usb"
+    },
+    {
+      "name": "sdh",
+      "kname": "sdh",
+      "type": "disk",
+      "rm": false,
+      "ro": true
+    },
+    {
+      "name": "loop0",
+      "kname": "loop0",
+      "type": "loop"
+    },
+    {
+      "name": "zram0",
+      "kname": "zram0",
+      "type": "disk",
+      "rm": false,
+      "ro": false
+    },
+    {
+      "name": "sr0",
+      "kname": "sr0",
+      "type": "rom"
+    }
+  ]
+}

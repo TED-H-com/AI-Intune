@@ -19,6 +19,8 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/operator"
+	"github.com/teddashh/AI-Intune/internal/operatorauth"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -30,11 +32,13 @@ type machineChannelOperatorRequest struct {
 }
 
 type enrollTokenPreviewOperatorRequest struct {
+	MonitorOnly bool   `json:"monitor_only,omitempty"`
 	DisplayName string `json:"display_name"`
 	TTLSeconds  int64  `json:"ttl_seconds"`
 }
 
 type enrollTokenCreateOperatorRequest struct {
+	MonitorOnly   bool   `json:"monitor_only,omitempty"`
 	DisplayName   string `json:"display_name"`
 	TTLSeconds    int64  `json:"ttl_seconds"`
 	PreviewDigest string `json:"preview_digest"`
@@ -53,6 +57,7 @@ type enrollTokenRevocationOperatorRequest struct {
 // intentionally empty fresh value from a response produced by older code.
 // EnrollmentToken is the only optional field and must be absent on replay.
 type enrollTokenOperatorResponse struct {
+	MonitorOnly      bool      `json:"monitor_only,omitempty"`
 	MachineID        string    `json:"machine_id"`
 	DisplayName      string    `json:"display_name"`
 	CreatedAt        time.Time `json:"created_at"`
@@ -167,6 +172,20 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 		"POST /v1/operator/deployments/{id}/skip-failed-batch-preview",
 		"POST /v1/operator/deployments/{id}/skip-failed-batches",
 	}
+	for _, pattern := range []string{"GET /v1/operator/offline-alert-settings", "POST /v1/operator/offline-alert-settings/preview", "POST /v1/operator/offline-alert-settings"} {
+		patterns = append(patterns, pattern)
+		mux.HandleFunc(pattern, h.handleOfflineAlertSettings)
+	}
+	patterns = append(patterns, "GET /v1/operator/machines/{id}/oom-kills")
+	mux.HandleFunc("GET /v1/operator/machines/{id}/oom-kills", h.handleOperatorOOMKills)
+	patterns = append(patterns, "GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status")
+	patterns = append(patterns, "GET /v1/operator/loops")
+	mux.HandleFunc("GET /v1/operator/loops", h.handleOperatorLoops)
+	mux.HandleFunc("GET /v1/operator/jobs-summary", h.handleOperatorJobsSummary)
+	mux.HandleFunc("GET /v1/operator/approvals-summary", h.handleOperatorApprovalsSummary)
+	mux.HandleFunc("GET /v1/operator/hub-status", h.handleOperatorHubStatus)
+	patterns = append(patterns, "GET /v1/operator/machines/{id}/safe")
+	mux.HandleFunc("GET /v1/operator/machines/{id}/safe", h.handleGetOperatorMachineSafe)
 	mux.HandleFunc(patterns[0], h.handleListOperatorMachines)
 	mux.HandleFunc(patterns[1], h.handleGetOperatorMachine)
 	mux.HandleFunc(patterns[2], h.handleGetOperatorMachineChannel)
@@ -295,7 +314,47 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 	} {
 		mux.HandleFunc(patterns[diskClean+i], handler)
 	}
-	return patterns
+	patterns = append(patterns, "GET /v1/operator/schedules", "GET /v1/operator/schedules/{id}", "POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now", "GET /v1/operator/script-catalog", "POST /v1/operator/script-runs/preview", "POST /v1/operator/script-runs")
+	mux.HandleFunc("GET /v1/operator/script-catalog", h.handleScriptCatalog)
+	mux.HandleFunc("GET /v1/operator/schedules", h.handleScheduleList)
+	mux.HandleFunc("GET /v1/operator/schedules/{id}", h.handleScheduleGet)
+	mux.HandleFunc("POST /v1/operator/schedules/{operation}/{phase}", h.handleScheduleManage)
+	mux.HandleFunc("POST /v1/operator/schedules/{id}/run-now", h.handleScheduleRunNow)
+	mux.HandleFunc("POST /v1/operator/script-runs/preview", h.handleScriptPreview)
+	mux.HandleFunc("POST /v1/operator/script-runs", h.handleScriptApply)
+	for _, pattern := range []string{"POST /v1/operator/disk-ops/actions/preview", "POST /v1/operator/disk-ops/actions/decide", "GET /v1/operator/disk-ops/quarantine/{machine_id}", "POST /v1/operator/disk-ops/restores/preview", "POST /v1/operator/disk-ops/restores"} {
+		patterns = append(patterns, pattern)
+		mux.HandleFunc(pattern, h.handleOperatorDiskActions)
+	}
+	patterns = append(patterns, "GET /v1/operator/disk-ops/reports", "GET /v1/operator/disk-ops/reports/{id}")
+	mux.HandleFunc("GET /v1/operator/disk-ops/reports", h.handleDiskReports)
+	mux.HandleFunc("GET /v1/operator/disk-ops/reports/{id}", h.handleDiskReports)
+
+	patterns = append(patterns, "GET /v1/operator/disk-ops/alerts", "GET /v1/operator/disk-ops/ownership/{machine_id}/{scope}", "POST /v1/operator/disk-ops/ownership/preview", "POST /v1/operator/disk-ops/ownership")
+	patterns = append(patterns, "POST /v1/operator/disk-ops/alerts/ack/preview", "POST /v1/operator/disk-ops/alerts/ack")
+	mux.HandleFunc("POST /v1/operator/disk-ops/alerts/ack/preview", h.handleDiskAlertAck)
+	mux.HandleFunc("POST /v1/operator/disk-ops/alerts/ack", h.handleDiskAlertAck)
+	mux.HandleFunc("GET /v1/operator/disk-ops/alerts", h.handleDiskAlerts)
+	mux.HandleFunc("GET /v1/operator/disk-ops/ownership/{machine_id}/{scope}", h.handleDiskOwnership)
+	mux.HandleFunc("POST /v1/operator/disk-ops/ownership/preview", h.handleDiskOwnership)
+	mux.HandleFunc("POST /v1/operator/disk-ops/ownership", h.handleDiskOwnership)
+	patterns = append(patterns, "GET /v1/operator/disk-ops/policies")
+	patterns = append(patterns, "GET /v1/operator/disk-ops/status/{machine_id}")
+	mux.HandleFunc("GET /v1/operator/disk-ops/status/{machine_id}", h.handleDiskOpsStatus)
+	mux.HandleFunc("GET /v1/operator/disk-ops/policies", h.handleDiskPolicies)
+	patterns = append(patterns, "GET /v1/operator/disk-ops/policies/{id}")
+	mux.HandleFunc("GET /v1/operator/disk-ops/policies/{id}", h.handleDiskPolicies)
+	patterns = append(patterns, "POST /v1/operator/disk-ops/policies/preview")
+	mux.HandleFunc("POST /v1/operator/disk-ops/policies/preview", h.handleDiskPolicies)
+	patterns = append(patterns, "POST /v1/operator/disk-ops/policies")
+	mux.HandleFunc("POST /v1/operator/disk-ops/policies", h.handleDiskPolicies)
+	patterns = append(patterns, "GET /v1/operator/disk-ops/approvals")
+	mux.HandleFunc("GET /v1/operator/disk-ops/approvals", h.handleDiskOpsApprovals)
+	for _, pattern := range []string{"POST /v1/operator/disk-ops/approvals/{id}/decision/preview", "POST /v1/operator/disk-ops/approvals/{id}/decision"} {
+		patterns = append(patterns, pattern)
+		mux.HandleFunc(pattern, h.handleDiskApprovalDecision)
+	}
+	return append(patterns, h.certificateRoutes(mux)...)
 }
 
 func (h *hub) handleListOperatorJobs(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +407,26 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
+	if principal, ok := operatorauth.PrincipalFromContext(r.Context()); ok && principal.AuthMethod == operatorauth.AuthMethodServiceToken {
+		// Classify the immutable desired state at use time, before fetching any
+		// raw evidence. Neither a legacy allowlist nor a read-looking resource
+		// ID can authorize a different job kind or a write catalog script.
+		detail, lookupErr := h.store.JobReadDetail(r.PathValue("id"), 1)
+		allowed := false
+		if lookupErr == nil && detail.Item.ResourceKind == scriptcatalog.Kind {
+			desired, desiredErr := h.store.DesiredState(detail.Item.DesiredID)
+			if desiredErr == nil {
+				spec, decodeErr := scriptcatalog.Decode([]byte(desired.Spec))
+				entry, exists := scriptcatalog.Lookup(spec.ScriptID)
+				allowed = decodeErr == nil && exists && serviceTokenScriptEvidenceAllowed(spec, entry, detail.Item.ResourceID)
+			}
+		}
+		if !allowed {
+			// The service-token boundary audits this denial without evidence.
+			writeErr(w, http.StatusForbidden, "SERVICE_TOKEN_SCRIPT_EVIDENCE_ONLY", "Service tokens require evidence from a read-only catalog script job")
+			return
+		}
+	}
 	result, err := operator.New(h.store).JobEvidence(operator.JobEvidenceRequest{
 		JobID: r.PathValue("id"), Limit: limit,
 	}, time.Now().UTC())
@@ -364,6 +443,15 @@ func (h *hub) handleGetOperatorJobEvidence(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// A current read classification cannot grant access to legacy or historical
+// write evidence. Identity and mode must agree with the immutable job spec.
+func serviceTokenScriptEvidenceAllowed(spec scriptcatalog.Spec, entry scriptcatalog.Entry, resourceID string) bool {
+	// Disk v2 evidence carries private mount paths and pinned protect paths.
+	// Keep it human-only; MCP disk_ops_status provides the safe projection.
+	return !scriptcatalog.IsDisk(spec.ScriptID) && spec.ExecutionMode == "read" && entry.Mode == "read" &&
+		spec.ScriptID == entry.ID && spec.ScriptID == resourceID && spec.ScriptSHA256 == entry.SHA256
 }
 
 func parseOperatorJobEvidenceLimit(r *http.Request) (int, error) {
@@ -787,8 +875,8 @@ func (h *hub) handlePreviewOperatorEnrollToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 	result, err := operator.New(h.store).PreviewEnrollToken(operator.EnrollTokenPreviewRequest{
-		DisplayName: body.DisplayName,
-		TTLSeconds:  body.TTLSeconds,
+		MonitorOnly: body.MonitorOnly, DisplayName: body.DisplayName,
+		TTLSeconds: body.TTLSeconds,
 	})
 	if err != nil {
 		status, code, detail := operator.HTTPError(err)
@@ -819,7 +907,7 @@ func (h *hub) handleCreateOperatorEnrollToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 	result, err := operator.New(h.store).CreateEnrollToken(operator.EnrollTokenCreateRequest{
-		DisplayName: body.DisplayName, TTLSeconds: body.TTLSeconds,
+		MonitorOnly: body.MonitorOnly, DisplayName: body.DisplayName, TTLSeconds: body.TTLSeconds,
 		PreviewDigest: body.PreviewDigest, Reason: body.Reason,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"), Actor: actor,
 	})
@@ -840,7 +928,7 @@ func (h *hub) handleCreateOperatorEnrollToken(w http.ResponseWriter, r *http.Req
 		MachineID: result.MachineID, DisplayName: result.DisplayName,
 		CreatedAt: result.CreatedAt, ExpiresAt: result.ExpiresAt,
 		TTLSeconds: result.TTLSeconds, PreviewDigest: result.PreviewDigest,
-		EnrollmentToken: result.EnrollmentToken, SecretAvailable: result.SecretAvailable,
+		MonitorOnly: result.MonitorOnly, EnrollmentToken: result.EnrollmentToken, SecretAvailable: result.SecretAvailable,
 		Replayed: result.Replayed, RecoveryRequired: result.RecoveryRequired,
 		RecoveryAction: result.RecoveryAction,
 	}
@@ -1144,4 +1232,40 @@ func (h *hub) rejectOperatorEnrollTokenRevocationTransport(w http.ResponseWriter
 
 func operatorActor(r *http.Request) operator.Actor {
 	return operator.ActorFromRequest(r, operator.SourceKindOperatorAPI)
+}
+
+func (h *hub) handleOperatorOOMKills(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.RawQuery != "" {
+		writeErr(w, 400, "BAD_REQUEST", "query parameters are not supported")
+		return
+	}
+	events, err := operator.New(h.store).MachineOOMKills(r.PathValue("id"), time.Now().UTC())
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, 404, store.OperatorCodeMachineNotFound, "machine not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, 500, "INTERNAL", "could not read OOM evidence")
+		return
+	}
+	writeJSON(w, 200, events)
+}
+
+func (h *hub) handleGetOperatorMachineSafe(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.ForceQuery || r.URL.RawQuery != "" {
+		writeErr(w, 400, "BAD_REQUEST", "Query parameters are not supported")
+		return
+	}
+	result, err := operator.New(h.store).MachineSafe(r.PathValue("id"), time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, 404, store.OperatorCodeMachineNotFound, "Machine not found")
+			return
+		}
+		writeErr(w, 500, "INTERNAL", "Unable to read scrubbed machine detail")
+		return
+	}
+	writeJSON(w, 200, result)
 }

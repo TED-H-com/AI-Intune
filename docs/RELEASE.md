@@ -4,8 +4,8 @@ A version tag publishes two multi-arch images (linux/amd64, linux/arm64):
 
 | Image | Dockerfile target | Purpose |
 |---|---|---|
-| `ghcr.io/teddashh/clawctl-hub` | `hub` | the Hub (distroless, nonroot) |
-| `ghcr.io/teddashh/clawctl-hub-init` | `hub-init` | one-shot volume init + agent bootstrap seed |
+| `ghcr.io/ted-h-com/clawctl-hub` | `hub` | the Hub (distroless, nonroot) |
+| `ghcr.io/ted-h-com/clawctl-hub-init` | `hub-init` | one-shot volume init + agent bootstrap seed |
 
 Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
@@ -45,15 +45,15 @@ Nothing reaches GHCR. The only difference from a release is where the signing id
 ```bash
 V=v1.2.3
 for img in clawctl-hub clawctl-hub-init; do
-  cosign verify "ghcr.io/teddashh/$img:$V" \
+  cosign verify "ghcr.io/ted-h-com/$img:$V" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    --certificate-identity-regexp '^https://github\.com/teddashh/AI-Intune/\.github/workflows/release\.yml@refs/tags/v'
-  cosign verify-attestation --type spdxjson "ghcr.io/teddashh/$img:$V" \
+    --certificate-identity-regexp '^https://github\.com/TED-H-com/AI-Intune/\.github/workflows/release\.yml@refs/tags/v'
+  cosign verify-attestation --type spdxjson "ghcr.io/ted-h-com/$img:$V" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    --certificate-identity-regexp '^https://github\.com/teddashh/AI-Intune/\.github/workflows/release\.yml@refs/tags/v' \
+    --certificate-identity-regexp '^https://github\.com/TED-H-com/AI-Intune/\.github/workflows/release\.yml@refs/tags/v' \
     --platform linux/amd64 >/dev/null
 done
-docker buildx imagetools inspect "ghcr.io/teddashh/clawctl-hub:$V" --format '{{ json .SBOM }}' | head -c 400
+docker buildx imagetools inspect "ghcr.io/ted-h-com/clawctl-hub:$V" --format '{{ json .SBOM }}' | head -c 400
 ```
 
 ## Running the release images

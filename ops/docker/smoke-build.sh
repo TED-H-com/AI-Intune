@@ -133,6 +133,8 @@ copy_bundle_tree() {
   for name in \
     clawctl-agent-bootstrap-linux-amd64.tar.gz \
     clawctl-agent-bootstrap-linux-arm64.tar.gz \
+    clawctl-agent-bootstrap-windows-amd64.tar.gz \
+    clawctl-agent-bootstrap-windows-arm64.tar.gz \
     SHA256SUMS
   do
     if ! docker cp "$cid:$root/$name" "$tmp/$name"; then
@@ -147,10 +149,12 @@ copy_bundle_tree() {
     fi
   done
   if [[ "$rc" -eq 0 ]]; then
-    if [[ "$(grep -c . "$tmp/SHA256SUMS" || true)" -ne 2 ]] ||
+    if [[ "$(grep -c . "$tmp/SHA256SUMS" || true)" -ne 4 ]] ||
        ! grep -q '  clawctl-agent-bootstrap-linux-amd64.tar.gz$' "$tmp/SHA256SUMS" ||
-       ! grep -q '  clawctl-agent-bootstrap-linux-arm64.tar.gz$' "$tmp/SHA256SUMS"; then
-      echo "FAIL: $image SHA256SUMS is not the publish-agent-bundles.sh Linux layout" >&2
+       ! grep -q '  clawctl-agent-bootstrap-linux-arm64.tar.gz$' "$tmp/SHA256SUMS" ||
+       ! grep -q '  clawctl-agent-bootstrap-windows-amd64.tar.gz$' "$tmp/SHA256SUMS" ||
+       ! grep -q '  clawctl-agent-bootstrap-windows-arm64.tar.gz$' "$tmp/SHA256SUMS"; then
+      echo "FAIL: $image SHA256SUMS is not the Linux + Windows release layout" >&2
       rc=1
     fi
   fi

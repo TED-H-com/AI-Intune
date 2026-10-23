@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -37,12 +38,16 @@ import (
 	"github.com/teddashh/AI-Intune/internal/catalog"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/probe"
+	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/settingpolicy"
 )
 
 var version = "dev"
 
 type config struct {
+	ExecutionPolicy          *model.ExecutionPolicy `json:"execution_policy,omitempty"`
+	execution                *executionGuard
+	ProxyURL                 string `json:"proxy_url,omitempty"`
 	HubURL                   string `json:"hub_url"`
 	MachineID                string `json:"machine_id"`
 	AgentToken               string `json:"agent_token"`
@@ -70,6 +75,8 @@ type appliedSettings struct {
 // 分開存，checkin 恰好在兩次 Load 中間更新時，Agent 會把 A 規則的量測標成
 // B token，Hub 就無法知道這批證據實際用了哪一份政策。
 type workloadPolicyBundle struct {
+	execution    *executionGuard
+	readiness    model.ReadinessConfig
 	expectations []model.Expectation
 	token        string
 }
@@ -99,35 +106,58 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
 	log.SetPrefix("clawctl-agent: ")
 
+	args, console := consoleArgs(os.Args[1:])
+	action := dispatch(args)
+	if err := setupPlatformLogging(action == actAgent, console); err != nil {
+		log.Fatalf("initialize logging: %v", err)
+	}
+	if runtime.GOOS == "windows" && action == actAgent {
+		defer func() {
+			if logRecoveredPanic(recover()) {
+				os.Exit(2)
+			}
+		}()
+	}
+
 	// ⚠⚠ 這裡刻意沒有 default: runAgent()。每一條路都要指名 ——
 	// 「掉下去就跑 daemon」正是 unknownArgError 記的那個六小時故障。
-	switch dispatch(os.Args[1:]) {
+	switch action {
+	case actSecretsPull:
+		runSecretsPull(args[1:])
 	case actAgent:
 		runAgent()
 	case actEnroll:
-		runEnroll(os.Args[2:])
+		runEnroll(args[1:])
 	case actProbe:
-		runProbeOnce(os.Args[2:])
+		runProbeOnce(args[1:])
 	case actVerify:
-		runVerify(os.Args[2:])
+		runVerify(args[1:])
 	case actVerifier:
-		runVerifier(os.Args[2:])
+		runVerifier(args[1:])
+	case actLogPath:
+		p, err := defaultAgentLogPath()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(p)
 	case actVersion:
 		fmt.Println(version)
 	case actHelp:
 		fmt.Print(usage)
 	default:
-		log.Fatal(unknownArgError(os.Args[1]))
+		log.Fatal(unknownArgError(args[0]))
 	}
 }
 
 // dispatch 認得的動作。⚠ actUnknown 不是一個「大概是 daemon」的預設值，
 // 它是一個必須讓程式停下來的答案。
 const (
-	actAgent  = "agent"
-	actEnroll = "enroll"
-	actProbe  = "probe"
-	actVerify = "verify"
+	actLogPath     = "log-path"
+	actAgent       = "agent"
+	actEnroll      = "enroll"
+	actProbe       = "probe"
+	actSecretsPull = "secrets-pull"
+	actVerify      = "verify"
 	// actVerifier 是第二雙眼睛那一側，跟 actVerify（等 Hub 確認自己開始接單）
 	// 沒有關係。兩個名字很像，做的事完全不同：一個問「Hub 看到我了嗎」，
 	// 一個去看別台機器現在實際長怎樣。
@@ -147,6 +177,10 @@ func dispatch(args []string) string {
 		return actAgent // 沒有參數才是 daemon —— 那是 systemd 用的那一條
 	}
 	switch args[0] {
+	case "log-path":
+		return actLogPath
+	case "secrets-pull":
+		return actSecretsPull
 	case "enroll":
 		return actEnroll
 	case "probe":
@@ -172,7 +206,13 @@ Usage:
   clawctl-agent verify                      Wait for Hub to confirm this version has begun receiving jobs
   clawctl-agent verifier --hub URL \
       --token-file T --targets F            Run as standalone verifier to verify jobs assigned by Hub
+  clawctl-agent secrets-pull --config F --ref R --output F  Pull a configured secret to a private file
   clawctl-agent version                     Print version
+  clawctl-agent log-path                    Print absolute default log file path
+  clawctl-agent --console [command]         Also log to stderr; attach parent console on Windows
+
+Windows daemon logs: %LOCALAPPDATA%\clawctl\logs\agent.log (5 MiB, 5 backups).
+Runtime stderr and crash traces: agent-crash.log beside agent.log.
 `
 
 // unknownArgError 是「認不得的第一個參數」。
@@ -232,7 +272,7 @@ func runEnroll(args []string) {
 		log.Printf("pre-enrollment observation failed: %v", err)
 	}
 
-	req := model.EnrollRequest{
+	req := model.EnrollRequest{ExecutionPolicyV1: true, MonitorOnlySupported: monitorOnlyRootSafe(),
 		SchemaVersion: model.SchemaVersion,
 		EnrollToken:   token,
 		Hostname:      obs.Identity.Hostname,
@@ -277,7 +317,10 @@ func enrollmentConfig(hubURL string, resp model.EnrollResponse) (config, error) 
 		resp.CheckinIntervalSeconds, resp.ObservationIntervalSeconds, resp.SettingsDigest); err != nil {
 		return zero, err
 	}
-	return config{
+	if resp.ExecutionPolicy != nil && resp.ExecutionPolicy.Validate() != nil {
+		return zero, errExecutionBlocked
+	}
+	return config{ExecutionPolicy: resp.ExecutionPolicy,
 		HubURL: hubURL, MachineID: resp.MachineID, AgentToken: resp.AgentToken,
 		EnrollmentSchemaVersion:    resp.SchemaVersion,
 		EnrollmentSettingsDigest:   resp.SettingsDigest,
@@ -339,6 +382,7 @@ func runVerify(args []string) {
 	timeoutText := fs.String("timeout", "2m", "maximum time to wait for a Hub receipt")
 	sinceText := fs.String("since", "", "minimum Hub receipt time in RFC3339")
 	expectedHub := fs.String("hub", "", "expected Hub base URL")
+	monitorOnly := fs.Bool("monitor-only", false, "require jobs disabled instead of enabled")
 	requirePlatformEvidence := fs.Bool("require-platform-evidence", false,
 		"require fresh Hub-stored identity evidence matching this binary's platform")
 	_ = fs.Parse(args)
@@ -360,6 +404,10 @@ func runVerify(args []string) {
 	if err != nil {
 		log.Fatalf("failed to read config: %v", err)
 	}
+	if err := configureHTTPClient(httpClient, cfg.ProxyURL); err != nil {
+		log.Fatal(err)
+	}
+
 	if cfg.MachineID == "" {
 		log.Fatal("config missing machine_id")
 	}
@@ -375,8 +423,15 @@ func runVerify(args []string) {
 		if err := doJSON(ctx, http.MethodGet, cfg.HubURL+"/v1/agent/readiness", cfg.AgentToken, nil, &receipt); err != nil {
 			last = err.Error()
 		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence); pending == "" {
-			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=enabled agent=%s",
-				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), receipt.AgentVersion)
+			jobsLabel := "enabled"
+			if receipt.ExecutionPolicy != nil && receipt.ExecutionPolicy.Mode == model.ExecutionMonitorOnly {
+				jobsLabel = "monitor-only"
+			}
+			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=%s agent=%s",
+				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), jobsLabel, receipt.AgentVersion)
+		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence, *monitorOnly); pending == "" {
+			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=%t agent=%s",
+				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), *receipt.JobsEnabled, receipt.AgentVersion)
 			if *requirePlatformEvidence {
 				fmt.Printf(" evidence=%s/%s received=%s", runtime.GOOS, runtime.GOARCH,
 					receipt.IdentityReceivedAt.UTC().Format(time.RFC3339))
@@ -397,7 +452,7 @@ func runVerify(args []string) {
 }
 
 func readinessPending(receipt model.AgentReadinessResponse, machineID, agentVersion string, since time.Time,
-	requirePlatformEvidence bool,
+	requirePlatformEvidence bool, monitorOnly ...bool,
 ) string {
 	if receipt.MachineID != machineID {
 		return "machine_id does not match"
@@ -411,8 +466,12 @@ func readinessPending(receipt model.AgentReadinessResponse, machineID, agentVers
 	if receipt.AgentVersion != agentVersion {
 		return "agent version received by Hub does not match"
 	}
-	if receipt.JobsEnabled == nil || !*receipt.JobsEnabled {
-		return "Hub has not confirmed jobs enabled"
+	wantJobs := len(monitorOnly) == 0 || !monitorOnly[0]
+	if receipt.ExecutionPolicy != nil && receipt.ExecutionPolicy.Validate() == nil && receipt.ExecutionPolicy.Mode == model.ExecutionMonitorOnly {
+		wantJobs = false
+	}
+	if receipt.JobsEnabled == nil || *receipt.JobsEnabled != wantJobs {
+		return "Hub has not confirmed requested jobs setting"
 	}
 	if receipt.DeviceSyncV1 == nil || !*receipt.DeviceSyncV1 {
 		return "Hub has not confirmed device-sync v1 executor"
@@ -445,6 +504,10 @@ func runAgent() {
 		log.Fatalf("cannot read config (has `clawctl-agent enroll` been run?): %v", err)
 	}
 
+	if err := configureHTTPClient(httpClient, cfg.ProxyURL); err != nil {
+		log.Fatal(err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -471,6 +534,8 @@ func runAgent() {
 	obsAge := &atomic.Int64{} // 上次成功觀測距今幾秒，-1 = 從未
 	obsAge.Store(-1)
 	var lastObs atomic.Pointer[time.Time]
+	var observationProgress atomic.Int64
+	processSignature := fmt.Sprintf("%x", sha256.Sum256([]byte(time.Now().UTC().Format(time.RFC3339Nano))))
 	// policy 是 Hub 下發的期望與其 opaque token；兩者必須原子地一起換。
 	var policy atomic.Pointer[workloadPolicyBundle]
 
@@ -490,13 +555,15 @@ func runAgent() {
 	}
 
 	observationNudge := make(chan struct{}, 1)
-	startJobs(ctx, cfg, observationNudge)
-	go runTerminalLink(ctx, cfg)
+	cfg.execution = newExecutionGuard(cfg.ExecutionPolicy)
+	go startExecutionLoops(ctx, cfg, observationNudge)
 
 	// --- 心跳 goroutine。
 	go func() {
 		notifyReady()
 		var skewTrack clockSkewTracker
+		timerTransitions := map[string]model.DiskTimerTransition{}
+		var heartbeatCalls int64
 		for {
 			lastTurn.Store(time.Now().UnixNano())
 			hb, err := probe.Heartbeat(ctx, seq.Add(1))
@@ -507,11 +574,18 @@ func runAgent() {
 				age := int64(time.Since(*t).Seconds())
 				hb.ObservationAgeSeconds = &age
 			}
+			heartbeatCalls++
+			hb.CallActivity = []model.CallActivity{heartbeatActivity(processSignature, heartbeatCalls, observationProgress.Load())}
 			hb.SchemaVersion = model.SchemaVersion
 			hb.AgentVersion = version
-			jobsEnabled := cfg.JobsEnabled
+			jobsEnabled := cfg.JobsEnabled && cfg.executionAllowed()
 			hb.JobsEnabled = &jobsEnabled
 			advertiseJobCapabilities(&hb)
+			hb.ExecutionPolicyV1 = true
+			hb.MonitorOnlySupported = monitorOnlyRootSafe()
+			currentExecutionPolicy := cfg.execution.Snapshot()
+			hb.ExecutionPolicy = &currentExecutionPolicy
+			echoDiskTimerTransitions(&hb, timerTransitions)
 			now := applied.Load()
 			hb.SettingsDigest = now.digest
 
@@ -521,12 +595,32 @@ func runAgent() {
 			callStart := time.Now()
 			hb.SentAt = callStart.UTC()
 			postErr := postJSON(ctx, cfg.HubURL+"/v1/checkins", cfg.AgentToken, hb, &resp)
+			if postErr == nil {
+				syncDiskActionOutbox(ctx, cfg.HubURL, cfg.AgentToken)
+			}
 			rtt := time.Since(callStart)
 			if postErr == nil {
+				policyErr := adoptExecutionPolicy(cfg, resp.ExecutionPolicy)
+				if policyErr != nil {
+					log.Print("Execution remains blocked: policy could not be accepted")
+				}
+				if cfg.executionAllowed() {
+					if err := adoptHostProfile(resp); err != nil {
+						log.Print("Host setup profile could not be saved")
+					}
+					for _, c := range resp.SigninCommands {
+						handleSigninCommand(ctx, c)
+					}
+				}
+				timerTransitions = resp.DiskTimerTransitions
+				if !cfg.executionAllowed() {
+					timerTransitions = nil
+				}
 				now = adoptSettings(now, resp, &applied, cfg, seq)
 				// ⚠ 期望由 Hub 下發，agent 不自己決定要量什麼。規則與 token
 				// 是同一份證據的身分，必須用同一次 atomic Store 發布。
 				bundle := &workloadPolicyBundle{
+					execution: cfg.execution, readiness: resp.ReadinessConfig,
 					expectations: append([]model.Expectation(nil), resp.Expectations...),
 					token:        resp.WorkloadPolicyToken,
 				}
@@ -566,6 +660,7 @@ func runAgent() {
 	// ⚠ 間隔每一圈重讀。以前它只在啟動時讀一次，於是 Hub 下發的觀測間隔
 	// 實際上要等 agent 重啟才會生效 —— 設定看起來送到了，其實沒在跑。
 	for {
+		observationStarted := time.Now().Round(0)
 		octx, ocancel := context.WithTimeout(ctx, 2*time.Minute)
 		obs, err := probe.Collect(octx)
 		ocancel()
@@ -587,8 +682,10 @@ func runAgent() {
 		if postErr == nil {
 			now := time.Now()
 			lastObs.Store(&now)
+			observationProgress.Add(1)
 		}
-		wait := jitter(applied.Load().observation)
+		interval := applied.Load().observation
+		wait := jitter(interval)
 		var floor time.Duration
 		if postErr != nil {
 			if honored, serverFloor, busy := hubBusyWait(wait, postErr); busy {
@@ -600,14 +697,27 @@ func runAgent() {
 			}
 		}
 
-		if waitNextObservation(ctx, wait, floor, observationNudge) == observationCanceled {
+		// Collection/posting may itself span a sleep or a long stall.
+		if floor == 0 && observationOverdue(time.Now(), observationStarted, interval) {
+			continue
+		}
+		currentInterval := func() time.Duration { return applied.Load().observation }
+		if waitObservation(ctx, wait, floor, observationNudge, realObservationClock{}, interval, currentInterval) == observationCanceled {
 			return
 		}
 	}
 }
 
 func advertiseJobCapabilities(checkin *model.Checkin) {
+	// Foundation support is Linux/non-root; execution adapters still require their
+	// own catalog entries and reviewed runtime profiles.
+	checkin.DiskActionKey, _ = scriptcatalog.DiskActionReadiness()
+	checkin.DiskOpsV2 = runtime.GOOS == "linux" && os.Geteuid() != 0
+	if checkin.DiskOpsV2 {
+		checkin.DiskTimers = observeDiskTimers(time.Now().UTC())
+	}
 	checkin.DeviceSyncV1 = true
+	checkin.ScriptV1 = runtime.GOOS == "linux" && os.Geteuid() != 0
 	checkin.MaintenanceDiskCleanV1 = true
 }
 
@@ -617,6 +727,25 @@ func applyWorkloadPolicy(obs *model.ObservationBatch, policy *workloadPolicyBund
 	if policy == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if runtime.GOOS == "linux" {
+		obs.BlockDevices = probe.CollectBlockDevices(ctx)
+		obs.DiskJobResults = readPendingDiskJobResults("/var/lib/clawctl-fleet-apply/disk-jobs")
+		obs.HostProfileApply = readHostApplyResult("/var/lib/clawctl-fleet-apply/last.json")
+	}
+	readiness := policy.readiness
+	if policy.execution != nil {
+		scope, release, err := policy.execution.Scope(ctx)
+		if err != nil {
+			readiness.AutoRemediate = false
+		} else {
+			ctx = scope
+			defer release()
+		}
+	}
+	obs.Readiness = probe.CollectReadiness(ctx, readiness, obs.Credentials)
+	probe.CollectReadinessUnits(ctx, readiness, obs.Readiness)
 	obs.Artifacts = probe.CheckArtifacts(policy.expectations)
 	// ⚠ 用 obs.MeasuredAt（agent 自己的時鐘）當事件窗口的原點。
 	// 這裡跟 artifact 不一樣：artifact 只回報 mtime、由 Hub 用 Hub 的
@@ -644,52 +773,7 @@ const (
 // ⚠ nudge 不是把平常觀測調快，而是機器剛被工作單改過後，舊事實不准再掛
 // 10 分鐘。channel 只有一格且送端不阻塞；滿了代表已經有一輪排隊，丟掉也沒關係。
 func waitNextObservation(ctx context.Context, wait, floor time.Duration, nudge <-chan struct{}) observationWakeReason {
-	if wait < 0 {
-		wait = 0
-	}
-	if floor < 0 {
-		floor = 0
-	}
-	if floor > wait {
-		floor = wait
-	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	if floor <= 0 {
-		select {
-		case <-ctx.Done():
-			return observationCanceled
-		case <-timer.C:
-			return observationTimer
-		case <-nudge:
-			return observationNudged
-		}
-	}
-	if floor >= wait {
-		select {
-		case <-ctx.Done():
-			return observationCanceled
-		case <-timer.C:
-			return observationTimer
-		}
-	}
-	floorTimer := time.NewTimer(floor)
-	defer floorTimer.Stop()
-	select {
-	case <-ctx.Done():
-		return observationCanceled
-	case <-timer.C:
-		return observationTimer
-	case <-floorTimer.C:
-	}
-	select {
-	case <-ctx.Done():
-		return observationCanceled
-	case <-timer.C:
-		return observationTimer
-	case <-nudge:
-		return observationNudged
-	}
+	return waitObservation(ctx, wait, floor, nudge, realObservationClock{}, 0, nil)
 }
 
 // jitter 加 ±20% 的抖動。
@@ -881,10 +965,24 @@ func loadConfig() (config, error) {
 		c.CheckinIntervalSeconds, c.ObservationIntervalSeconds, c.EnrollmentSettingsDigest); err != nil {
 		return c, fmt.Errorf("invalid enrollment receipt in config: %w", err)
 	}
+	if c.ExecutionPolicy != nil && c.ExecutionPolicy.Validate() != nil {
+		return c, errExecutionBlocked
+	}
 	return c, nil
 }
 
 func saveConfig(c config) error {
+	if c.execution != nil {
+		g := c.execution
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		p := g.policy
+		c.ExecutionPolicy = &p
+		c.execution = nil
+	}
+	if c.ExecutionPolicy != nil && c.ExecutionPolicy.Validate() != nil {
+		return errExecutionBlocked
+	}
 	if c.HubURL == "" || c.HubURL != strings.TrimSpace(c.HubURL) {
 		return errors.New("incomplete config: missing or invalid hub_url")
 	}
@@ -1004,4 +1102,10 @@ func feedWatchdog(ctx context.Context, every, stall time.Duration, lastTurn *ato
 			}
 		}
 	}
+}
+
+// A successful observation upload is heartbeat progress. A successful heartbeat
+// is only another call and cannot mark its own progress.
+func heartbeatActivity(process string, calls, progress int64) model.CallActivity {
+	return model.CallActivity{ProcessSignature: process, CallSignature: fmt.Sprintf("%x", sha256.Sum256([]byte("hub.checkin.v1"))), TotalCalls: calls, Progress: progress}
 }

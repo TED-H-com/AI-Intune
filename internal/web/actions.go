@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"log"
 	"net/http"
 	"strconv"
@@ -157,9 +158,9 @@ func (s *Server) actionRoutes(mux *http.ServeMux) []string {
 func (s *Server) previewMachineNotes(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	reason := r.FormValue("reason")
-	if strings.TrimSpace(reason) == "" || reason != strings.TrimSpace(reason) || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, id, "沒有建立名冊備註預覽",
-			"理由不可省略、前後不可有空白，且最多 500 bytes。", "/machines/"+id)
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	preview, err := s.operator.PreviewMachineNotes(operator.MachineNotesPreviewRequest{
@@ -213,9 +214,9 @@ func (s *Server) applyMachineNotes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) previewMachineRename(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	reason := r.FormValue("reason")
-	if strings.TrimSpace(reason) == "" || reason != strings.TrimSpace(reason) || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, id, "沒有建立重新命名預覽",
-			"理由不可省略、前後不可有空白，且最多 500 bytes。", "/machines/"+id)
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	preview, err := s.operator.PreviewMachineRename(operator.MachineRenamePreviewRequest{
@@ -269,9 +270,9 @@ func (s *Server) applyMachineRename(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) previewRestoreDrill(w http.ResponseWriter, r *http.Request) {
 	reason := r.FormValue("reason")
-	if reason == "" || strings.TrimSpace(reason) != reason || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, "還原演練", "未建立演練預覽",
-			"理由不可省略、前後不可有空白，且最多 500 字。", "/tenant/maintenance")
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	preview, err := s.operator.PreviewRestoreDrill(r.Context(), time.Now().UTC())
@@ -316,9 +317,9 @@ func (s *Server) applyRestoreDrill(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) previewRetentionPrune(w http.ResponseWriter, r *http.Request) {
 	reason := r.FormValue("reason")
-	if reason == "" || strings.TrimSpace(reason) != reason || len(reason) > 500 {
-		s.renderActionStatus(w, r, http.StatusBadRequest, "資料保留政策",
-			"未建立清理預覽", "理由不可省略、前後不可有空白，且最多 500 字。", "/tenant/maintenance")
+	reason, reasonErr := boundedtext.Reason(reason)
+	if reasonErr != nil {
+		http.Error(w, reasonErr.Error(), http.StatusBadRequest)
 		return
 	}
 	now := time.Now().UTC().Truncate(time.Second)
@@ -540,8 +541,8 @@ const enrollTTLSeconds = int64(enrollTTL / time.Second)
 // second credential under a conveniently new key.
 func (s *Server) previewEnrollToken(w http.ResponseWriter, r *http.Request) {
 	preview, err := s.operator.PreviewEnrollToken(operator.EnrollTokenPreviewRequest{
-		DisplayName: r.FormValue("name"),
-		TTLSeconds:  enrollTTLSeconds,
+		MonitorOnly: r.FormValue("monitor_only") == "true", DisplayName: r.FormValue("name"),
+		TTLSeconds: enrollTTLSeconds,
 	})
 	if err != nil {
 		status, _, detail := operator.HTTPError(err)
@@ -571,7 +572,7 @@ func (s *Server) previewEnrollToken(w http.ResponseWriter, r *http.Request) {
 		Title: "確認 " + preview.DisplayName + " 的 enroll 票", Nav: "machines-enrollment",
 		Now: time.Now().Local().Format("2006-01-02 15:04"),
 		EnrollPreview: &enrollPreviewResult{
-			Name: preview.DisplayName, Reason: strings.TrimSpace(r.FormValue("reason")),
+			MonitorOnly: preview.MonitorOnly, Name: preview.DisplayName, Reason: strings.TrimSpace(r.FormValue("reason")),
 			PreviewDigest: preview.PreviewDigest, IdempotencyKey: key,
 			ExpiresAt:                  preview.ExpiresAtIfCreatedNow.Local().Format("2006-01-02 15:04"),
 			TTL:                        (time.Duration(preview.TTLSeconds) * time.Second).String(),
@@ -620,7 +621,7 @@ func (s *Server) doEnrollToken(w http.ResponseWriter, r *http.Request) {
 	// secret-bearing handler safe when embedded or tested without that wrapper.
 	w.Header().Set("Cache-Control", "no-store")
 	result, err := s.operator.CreateEnrollToken(operator.EnrollTokenCreateRequest{
-		DisplayName:    r.FormValue("name"),
+		MonitorOnly: r.FormValue("monitor_only") == "true", DisplayName: r.FormValue("name"),
 		TTLSeconds:     enrollTTLSeconds,
 		PreviewDigest:  r.FormValue("preview_digest"),
 		Reason:         r.FormValue("reason"),
@@ -820,6 +821,7 @@ type tokenResult struct {
 }
 
 type enrollPreviewResult struct {
+	MonitorOnly                                 bool
 	Name, Reason, PreviewDigest, IdempotencyKey string
 	ExpiresAt, TTL                              string
 	CreatesExpectedMachine                      bool
@@ -851,6 +853,10 @@ func (s *Server) doConnect(w http.ResponseWriter, r *http.Request) {
 			Outcome: operator.MachineConnectAuditDetailUnavailable, MachineID: id,
 		})
 		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.MachineExecutionAllowed(id); err != nil {
+		s.renderActionStatus(w, r, 403, "Monitor only", "Actions are unavailable", "只監控 / Monitor only: this machine only reports observations.", "/machines/"+id)
 		return
 	}
 	connect, err := s.operator.MachineConnect(machine)
@@ -1040,6 +1046,10 @@ func (s *Server) renderActionStatus(w http.ResponseWriter, r *http.Request, stat
 		nav = "deployments-detail"
 	} else if strings.HasPrefix(back, "/jobs/") {
 		nav = "jobs-detail"
+	} else if back == diskPoliciesBack {
+		nav = "tenant-disk-policies"
+	} else if back == diskApprovalsBack {
+		nav = "tenant-approvals"
 	} else if back == "/tenant/maintenance" {
 		nav = "tenant-maintenance"
 	}

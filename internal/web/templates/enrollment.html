@@ -6,6 +6,7 @@
     <p>建立註冊票證、下載代理程式安裝套件，並將新裝置加入管理。</p>
   </div>
   <div class="command-bar" aria-label="頁面動作">
+    <a class="button" href="/machines/join">Waiting to join</a>
     <a class="button secondary" href="/machines#machines">查看所有裝置</a>
   </div>
 </div>
@@ -68,6 +69,7 @@
   {{end}}
   {{if .Access.CanAdmin}}
   <form class="enrollment-form" method="post" action="/enrollments/preview">
+ <label><span>管理方式</span><select name="monitor_only"><option value="false">Managed / 允許執行核准的作業</option><option value="true">Monitor only / 只監控</option></select></label>
     <label><span class="field-label">機器名稱</span>
       <input type="text" name="name" value="{{.EnrollmentName}}" placeholder="要納管的機器叫什麼"
              style="width:100%;padding:6px" autocomplete="off" required aria-required="true">
@@ -100,6 +102,7 @@
   </table>
   {{if $.Access.CanAdmin}}{{range .Tailnet.Unenrolled}}
   <form class="enrollment-form" method="post" action="/enrollments/preview">
+ <label><span>管理方式</span><select name="monitor_only"><option value="false">Managed / 允許執行核准的作業</option><option value="true">Monitor only / 只監控</option></select></label>
     <label><span class="sr-only">名冊名稱（目前 {{.Hostname}}）</span>
       <input type="text" name="name" value="{{.Hostname}}"
              autocomplete="off" required aria-required="true">

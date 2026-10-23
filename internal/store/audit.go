@@ -28,6 +28,33 @@ import (
 type AuditAction string
 
 const (
+	AuditMachineExecutionPolicyPreview AuditAction = "machine-execution-policy-preview"
+	AuditMachineExecutionPolicyApply   AuditAction = "machine-execution-policy-apply"
+	AuditSigninStart                   AuditAction = "signin_start"
+	AuditSigninCodeSubmitted           AuditAction = "signin_code_submitted"
+	AuditSigninCancel                  AuditAction = "signin_cancel"
+	AuditSigninResult                  AuditAction = "signin_result"
+	AuditSigninNotifications           AuditAction = "signin_notifications"
+	AuditChannelManage                 AuditAction = "channel-manage"
+	AuditChannelTest                   AuditAction = "channel-test"
+	AuditSecretTest                    AuditAction = "secret-test"
+)
+
+const (
+	AuditUsagePolicyApply  AuditAction = "usage-policy-apply"
+	AuditDiskPolicyPreview AuditAction = "disk-policy-preview"
+	AuditDiskPolicyApply   AuditAction = "disk-policy-apply"
+	AuditOpsApproval       AuditAction = "ops-approval"
+
+	AuditScheduleUpsertPreview     AuditAction = "schedule-upsert-preview"
+	AuditScheduleUpsertApply       AuditAction = "schedule-upsert-apply"
+	AuditScheduleEnabledPreview    AuditAction = "schedule-set-enabled-preview"
+	AuditScheduleEnabledApply      AuditAction = "schedule-set-enabled-apply"
+	AuditScheduleRun               AuditAction = "schedule-run"
+	AuditScheduleRunNow            AuditAction = "schedule-run-now"
+	AuditScriptPreview             AuditAction = "script-run-preview"
+	AuditScriptApply               AuditAction = "script-run-apply"
+	AuditScriptComplete            AuditAction = "script-run-complete"
 	AuditHubGuessing               AuditAction = "hub-login-guessing"
 	AuditHubSetup                  AuditAction = "hub-setup"
 	AuditHubUserCreated            AuditAction = "hub-user-created"
@@ -47,6 +74,8 @@ const (
 	AuditConnect                   AuditAction = "connect"
 	AuditRetire                    AuditAction = "retire"
 	AuditUnretire                  AuditAction = "unretire"
+	AuditJoinApprove               AuditAction = "join_approve"
+	AuditJoinReject                AuditAction = "join_reject"
 	AuditKeyedInstaller            AuditAction = "keyed-installer-download"
 	AuditEnrollToken               AuditAction = "enroll-token"
 	AuditRevokeToken               AuditAction = "revoke-token"
@@ -154,16 +183,17 @@ func (e AuditEntry) IsOperatorReplay() bool {
 // That catalog controls filtering and unknown_action; newly added observational
 // actions must not silently become canonical mutations. Do not copy this list.
 func IsCanonicalOperatorAction(action AuditAction) bool {
-	return action == AuditMachineChannel || action == AuditMachineAssignedUser || action == AuditAgentSessionOpen || action == AuditAgentSessionClose || action == AuditMachineLifecycle || action == AuditMachineRename || action == AuditMachineNotes || action == AuditEnrollToken || action == AuditRevokeToken ||
+	return action == AuditJoinApprove || action == AuditJoinReject || action == AuditUsagePolicyApply || action == AuditDiskPolicyPreview || action == AuditDiskPolicyApply || action == AuditOpsApproval || action == AuditMachineChannel || action == AuditMachineAssignedUser || action == AuditAgentSessionOpen || action == AuditAgentSessionClose || action == AuditMachineLifecycle || action == AuditMachineRename || action == AuditMachineNotes || action == AuditEnrollToken || action == AuditRevokeToken ||
 		action == AuditEnrollmentLimit ||
 		action == AuditDeploymentCreate || action == AuditDeploymentRetry ||
 		action == AuditDeploymentContinue || action == AuditDeploymentSkipFailedBatch || action == AuditDeploymentAbandon ||
 		action == AuditArtifactFetch || action == AuditCatalogManifest || action == AuditMachineProfile ||
-		action == AuditMachineProfileAssign || action == AuditDiagnosticNoop || action == AuditDeviceSync || action == AuditTailnetPeerIgnore ||
+		action == AuditScheduleUpsertPreview || action == AuditScheduleUpsertApply || action == AuditScheduleEnabledPreview || action == AuditScheduleEnabledApply || action == AuditScheduleRun || action == AuditScheduleRunNow ||
+		action == AuditScriptPreview || action == AuditScriptApply || action == AuditScriptComplete || action == AuditMachineProfileAssign || action == AuditDiagnosticNoop || action == AuditDeviceSync || action == AuditTailnetPeerIgnore ||
 		action == AuditRetentionPrune || action == AuditRestoreDrill ||
 		action == AuditVerifierRegister || action == AuditVerifierRevoke ||
 		action == AuditVerificationAssign ||
-		action == AuditSettingPolicy || action == AuditSettingAssign ||
+		action == AuditSettingPolicy || action == AuditSettingAssign || action == AuditOfflineAlertSettings ||
 		action == AuditCompliancePolicy || action == AuditComplianceAssign ||
 		action == AuditMaintenanceProfile || action == AuditMaintenanceDryRun ||
 		action == AuditMaintenanceCanary || action == AuditMaintenanceContinue ||
@@ -253,7 +283,7 @@ INSERT INTO audit_log
 	   boundary_decision, source_kind, outcome, detail)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		fmtTime(e.At.UTC()), string(e.Action), nullStr(e.MachineID), truncAudit(e.Subject, auditMaxReason),
-		nullStr(truncAudit(e.Reason, auditMaxReason)),
+		nullStr(truncReason(e.Reason)),
 		nullStr(auditIdempotencyKey(e.IdempotencyKey)), nullStr(e.RequestDigest),
 		e.SourceAddr, nullStr(e.WhoNode), nullStr(e.WhoUser), nullStr(e.WhoUnavailable),
 		nullStr(truncAudit(e.UserAgent, 200)),

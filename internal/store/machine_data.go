@@ -27,14 +27,26 @@ type MachineDataTable struct {
 
 // machineDataTables 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var machineDataTables = []MachineDataTable{
+	{Table: "machine_offline_alerts", TimeCol: "unreachable_since"},
+	{Table: "fleet_host_profile", TimeCol: ""},
+	{Table: "signin_sessions", TimeCol: "created_at"},
+	{Table: "signin_notification_state", TimeCol: ""},
+	{Table: "host_readiness_config", TimeCol: ""},
+	{Table: "disk_setup_jobs", TimeCol: "created_at"},
+	{Table: "channel_bots", TimeCol: ""},
+	{Table: "channel_bindings", TimeCol: ""},
 	{Table: "machine_registry", TimeCol: "created_at"},
 	{Table: "machine_registry_lifecycle_events", TimeCol: "occurred_at"},
 	{Table: "agent_sessions", TimeCol: "opened_at"},
 	{Table: "machine_identity_hints", TimeCol: "last_seen_at"},
 	{Table: "machine_checkins", TimeCol: "received_at"},
+	{Table: "loop_streams", TimeCol: "last_seen_at"},
+	{Table: "loop_samples", TimeCol: "received_at"},
+	{Table: "loop_episodes", TimeCol: "last_seen_at"},
 	// capability 沒有自己的 Hub 時刻；它跟 exact check-in 同生同滅，保留期由 FK cascade 繼承。
 	{Table: "machine_job_capabilities", TimeCol: ""},
 	{Table: "observed_state", TimeCol: "received_at"},
+	{Table: "observed_latest", TimeCol: "received_at"},
 	{Table: "ticket_occupancy_observation", TimeCol: "received_at"},
 	{Table: "credential_on_machine", TimeCol: "updated_at"},
 	{Table: "verification_results", TimeCol: "received_at"},
@@ -44,6 +56,32 @@ var machineDataTables = []MachineDataTable{
 	{Table: "workload_observation_evidence", TimeCol: "received_at"},
 	{Table: "canary_silent_failures", TimeCol: "last_seen_at"},
 	{Table: "jobs", TimeCol: "created_at"},
+	{Table: "disk_reports", TimeCol: "created_at"},
+	{Table: "disk_deep_trigger_slots", TimeCol: "slot"},
+	{Table: "disk_ownership", TimeCol: "changed_at"},
+	{Table: "disk_timer_observations", TimeCol: "received_at"},
+	{Table: "disk_timer_ingestion", TimeCol: "received_at"},
+	{Table: "disk_alert_delivery_reservations", TimeCol: "reserved_at"},
+	{Table: "disk_alerts", TimeCol: "opened_at"},
+	{Table: "disk_growth_samples", TimeCol: "received_at"},
+	{Table: "disk_growth_evidence", TimeCol: "updated_at"},
+	{Table: "disk_canary_days", TimeCol: "day"},
+	{Table: "usage_accounts", TimeCol: ""},
+	{Table: "usage_files", TimeCol: ""},
+	{Table: "usage_upload_receipts", TimeCol: "received_at"},
+	{Table: "usage_daily", TimeCol: ""},
+	{Table: "usage_window", TimeCol: ""},
+	{Table: "usage_sessions", TimeCol: "updated_at"},
+	{Table: "usage_jobs", TimeCol: ""},
+	{Table: "usage_recommendations", TimeCol: "created_at"},
+	{Table: "usage_recommendation_cycles", TimeCol: ""},
+	{Table: "ops_approvals", TimeCol: "created_at"},
+	{Table: "ops_manifests", TimeCol: "created_at"},
+	{Table: "disk_quarantine", TimeCol: "received_at"},
+	{Table: "disk_action_receipts", TimeCol: "received_at"},
+	{Table: "disk_action_items", TimeCol: "received_at"},
+	{Table: "disk_expiry_jobs", TimeCol: "created_at"},
+
 	{Table: "maintenance_summaries", TimeCol: "received_at"},
 	{Table: "maintenance_rollout_targets", TimeCol: ""},
 	{Table: "maintenance_assignments", TimeCol: "assigned_at"},
@@ -105,6 +143,49 @@ func (s *Store) MachineDataHoldings(machineID string) ([]MachineDataHolding, err
 
 func (s *Store) machineDataHolding(table MachineDataTable, machineID string) (MachineDataHolding, error) {
 	holding := MachineDataHolding{Table: table.Table}
+	if table.Table == "fleet_host_profile" {
+		// Shared desired settings apply to every Linux machine, not a per-host copy.
+		err := s.rdb.QueryRow(`SELECT count(*) FROM fleet_host_profile WHERE singleton=1 AND EXISTS(SELECT 1 FROM machine_registry WHERE machine_id=? AND os='linux')`, machineID).Scan(&holding.Rows)
+		return holding, err
+	}
+
+	if table.Table == "usage_recommendation_cycles" {
+		err := s.rdb.QueryRow(`SELECT count(*) FROM usage_recommendation_cycles c JOIN usage_recommendations r ON r.id=c.recommendation_id WHERE r.machine_id=?`, machineID).Scan(&holding.Rows)
+		return holding, err
+	}
+	// Usage timestamps may have variable fractional precision; aggregate instants
+	// after parsing rather than taking lexical TEXT minima and maxima.
+	if table.Table == "usage_recommendations" || table.Table == "usage_sessions" {
+		rows, err := s.rdb.Query(fmt.Sprintf(`SELECT %s FROM %s WHERE machine_id=?`, table.TimeCol, table.Table), machineID)
+		if err != nil {
+			return holding, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw sql.NullString
+			if err := rows.Scan(&raw); err != nil {
+				return holding, err
+			}
+			holding.Rows++
+			if !raw.Valid || raw.String == "" {
+				continue
+			}
+			stamp, err := time.Parse(time.RFC3339Nano, raw.String)
+			if err != nil {
+				return holding, err
+			}
+			holding.Dated++
+			if holding.Oldest == nil || stamp.Before(*holding.Oldest) {
+				t := stamp
+				holding.Oldest = &t
+			}
+			if holding.Newest == nil || stamp.After(*holding.Newest) {
+				t := stamp
+				holding.Newest = &t
+			}
+		}
+		return holding, rows.Err()
+	}
 	if table.TimeCol == "" {
 		err := s.rdb.QueryRow(
 			fmt.Sprintf(`SELECT count(*) FROM %s WHERE machine_id = ?`, table.Table),
@@ -127,4 +208,18 @@ SELECT count(*),
 	holding.Oldest = parseTimePtr(oldest)
 	holding.Newest = parseTimePtr(newest)
 	return holding, nil
+}
+
+// Shared approval storage is disclosed by operation, without double counting.
+func (s *Store) MachineApprovalDataHolding(machine string, usage bool) (MachineDataHolding, error) {
+	h := MachineDataHolding{Table: "ops_approvals"}
+	op := "<>"
+	if usage {
+		op = "="
+	}
+	var oldest, newest sql.NullString
+	err := s.rdb.QueryRow(`SELECT count(*),count(NULLIF(created_at,'')),min(NULLIF(created_at,'')),max(NULLIF(created_at,'')) FROM ops_approvals WHERE machine_id=? AND operation `+op+` 'usage-recommendation-v1'`, machine).Scan(&h.Rows, &h.Dated, &oldest, &newest)
+	h.Oldest = parseTimePtr(oldest)
+	h.Newest = parseTimePtr(newest)
+	return h, err
 }

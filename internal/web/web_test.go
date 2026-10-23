@@ -124,7 +124,7 @@ func batch(measuredAt time.Time) model.ObservationBatch {
 		Credentials: []model.Credential{{Provider: "claude", Status: model.CredConfigured}},
 		CLITools: []model.CLITool{{
 			Name: "openclaw", Present: true, Path: "/usr/bin/openclaw",
-			VersionReported: "2026.6.1", RunningPID: 4242,
+			VersionReported: "2026.6.1", RunningPID: 913370421,
 		}},
 		// ⚠ 這組值照 samplehub1 的實機抄的：--bind=tailscale --port=9876，
 		// 而且核心的 socket 表上真的有東西在聽那個 port。
@@ -2157,8 +2157,10 @@ func TestInstalledVersusRunningIsSpelledOut(t *testing.T) {
 	if !strings.Contains(body, "PATH 與執行中的安裝不同") {
 		t.Error("沒有把安裝與執行中的檔案不一致講出來")
 	}
-	for _, private := range []string{"/opt/openclaw-2.2.0", "/opt/openclaw-2.1.0", "4242"} {
-		if strings.Contains(body, private) {
+	// The PID is matched as a whole number: random IDs, CSRF tokens and
+	// timestamps in the page can contain short digit runs by chance.
+	for _, private := range []string{"/opt/openclaw-2.2.0", "/opt/openclaw-2.1.0", "913370421"} {
+		if regexp.MustCompile(`(^|[^0-9])` + regexp.QuoteMeta(private) + `([^0-9]|$)`).MatchString(body) {
 			t.Errorf("typed machine page leaked host coordinate %q", private)
 		}
 	}
@@ -2806,7 +2808,8 @@ func TestAllCredentialStatesGetTheirOwnWord(t *testing.T) {
 	if err := st.RecordObservation(id, b, now); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	body := stripTags(get(t, s, "/machines/"+id))
+	rendered := get(t, s, "/machines/"+id)
+	body := stripTags(rendered)
 
 	seen := map[string]model.CredStatus{}
 	for _, cs := range all {
@@ -2821,8 +2824,12 @@ func TestAllCredentialStatesGetTheirOwnWord(t *testing.T) {
 		seen[w] = cs
 	}
 	// ⚠ 六個狀態六個詞，但每一個都必須是**人話**，不能是原始的 enum 字串洩出來。
+	// Inline reasons intentionally use human phrases such as "grok login expired".
+	// Exclude only their spans; raw enum fallbacks elsewhere must still fail.
+	reasonSpan := regexp.MustCompile(`<span class="[^"]*\battention-reasons\b[^"]*">[^<]*</span>`)
+	statusBody := stripTags(reasonSpan.ReplaceAllString(rendered, ""))
 	for _, cs := range all {
-		if strings.Contains(body, string(cs)) {
+		if strings.Contains(statusBody, string(cs)) {
 			t.Errorf("畫面上出現了原始代號 %q —— 那代表 credLabel 沒認得它，"+
 				"人看到的會是 expires_soon 而不是「即將過期」", cs)
 		}
@@ -3186,18 +3193,15 @@ func firstLine(s string) string {
 
 // PHASES.md Phase 3 的第二條判準：「瀏覽器與前端 log 裡找不到 BAT token」。
 //
-// 終端那一頁有 script，也因此有 console。第一個理由不再涵蓋整個 UI。
-// 這個測試守的是例外只有那一頁：其餘每一個 operator HTML 頁面仍然沒有
-// script。判準本身現在靠的是第二個理由 —— Hub 沒有 BAT 的憑證，所以
-// 沒有前端可以把它交出去。會讓這個測試紅的修改，是讓第二個頁面開始跑
-// JavaScript。
+// Only the audit helper, active sign-in refresh, and terminal may run scripts.
+// These scripts never receive BAT credentials; the Hub does not hold them.
 func TestNoFrontEndMeansNoFrontEndLog(t *testing.T) {
 	s, st := newServer(t)
 	id := onlineMachine(t, st, "samplehub1")
 	markers := []string{"<script", "javascript:", "onclick=", "onload=", "<iframe"}
 
 	for _, path := range []string{"/", "/machines/" + id, "/reports/tickets"} {
-		assertHTMLHasNoScriptMarkers(t, path, get(t, s, path), markers)
+		assertHTMLHasNoScriptMarkers(t, path, strings.ReplaceAll(get(t, s, path), "<script data-audit-reason>"+ReasonScript+"</script>", ""), markers)
 	}
 
 	entries, err := templateFS.ReadDir("templates")
@@ -3216,8 +3220,8 @@ func TestNoFrontEndMeansNoFrontEndLog(t *testing.T) {
 		}
 	}
 	sort.Strings(scriptedTemplates)
-	if len(scriptedTemplates) != 1 || scriptedTemplates[0] != "terminal.html" {
-		t.Fatalf("script-bearing templates=%v, want only terminal.html", scriptedTemplates)
+	if len(scriptedTemplates) != 3 || scriptedTemplates[0] != "base.html" || scriptedTemplates[1] != "signins.html" || scriptedTemplates[2] != "terminal.html" {
+		t.Fatalf("script-bearing templates=%v, want base.html, signins.html, terminal.html", scriptedTemplates)
 	}
 
 	mux := http.NewServeMux()
@@ -3274,6 +3278,7 @@ func htmlHasScriptMarker(body string, markers []string) bool {
 }
 
 func assertHTMLHasNoScriptMarkers(t *testing.T, path, body string, markers []string) {
+	body = strings.ReplaceAll(body, "<script data-audit-reason>"+ReasonScript+"</script>", "")
 	t.Helper()
 	low := strings.ToLower(body)
 	for _, marker := range markers {
@@ -4602,5 +4607,28 @@ func TestMachinePageSeparatesAnUnmeasuredUptimeFromAFreshBoot(t *testing.T) {
 	freshBootBody := get(t, s, "/machines/"+freshBootID)
 	if !strings.Contains(freshBootBody, "uptime=0s") {
 		t.Fatalf("量到 0 uptime 的機器頁沒有 uptime=0s；真正剛開機被印成 unknown，operator 無法分辨量到的 0")
+	}
+}
+
+func TestDashboardRequiresActualOnlineTailnetPeer(t *testing.T) {
+	for _, result := range []tailnet.Result{
+		{}, {Available: true},
+		{OnlineButSilent: map[string]tailnet.Peer{"m-sampleagent1": {Online: true}}},
+		{Available: true, OnlineButSilent: map[string]tailnet.Peer{"m-sampleagent1": {Online: false}}},
+	} {
+		body := renderDashboardWithTailnet(t, result)
+		if strings.Contains(body, "但 Tailscale 說它現在是 online") {
+			t.Fatal("claimed online without available matched online peer")
+		}
+	}
+}
+func TestLocalSessionBadgeDoesNotClaimTailscaleVerification(t *testing.T) {
+	s, _ := newServer(t)
+	var out bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&out, "dashboard.html", page{Access: accessView{Known: true, LocalSession: true}, Locale: navigationLocaleFor(httptest.NewRequest("GET", "/?lang=en", nil), "")}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Local account · MFA verified") || strings.Contains(out.String(), "Tailscale verified") {
+		t.Fatal("incorrect local session badge")
 	}
 }

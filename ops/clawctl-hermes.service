@@ -1,6 +1,6 @@
 [Unit]
 Description=AI-Intune managed Hermes Agent
-Documentation=https://github.com/teddashh/AI-Intune
+Documentation=https://github.com/TED-H-com/AI-Intune
 After=network-online.target
 Wants=network-online.target
 Conflicts=openclaw-gateway.service

@@ -42,6 +42,7 @@ func runEnrollTokenCommandWithDeps(ctx context.Context, argv []string, out, errO
 	}
 	dbPath := fs.String("db", "", "existing SQLite file location for stopped-service direct DB break-glass")
 	hubURL := fs.String("hub-url", "", "HTTP operator API base URL (auto-discovered if omitted)")
+	monitorOnly := fs.Bool("monitor-only", false, "enroll with observations only; refuse all machine execution")
 	ttl := fs.Duration("ttl", defaultEnrollTokenTTL, "token validity duration (1m to 24h, whole seconds)")
 	reason := fs.String("reason", "", "enrollment reason (recorded in audit, optional)")
 	previewOnly := fs.Bool("preview", false, "preview expiry and denominator impact without generating token")
@@ -83,7 +84,7 @@ func runEnrollTokenCommandWithDeps(ctx context.Context, argv []string, out, errO
 	inputs := enrollTokenInputs{
 		DisplayName: strings.TrimSpace(fs.Arg(0)), TTLSeconds: int64(*ttl / time.Second),
 		Reason: *reason, IdempotencyKey: strings.TrimSpace(*idempotencyKey),
-		PreviewDigest: strings.TrimSpace(*previewDigest), PreviewOnly: *previewOnly,
+		PreviewDigest: strings.TrimSpace(*previewDigest), PreviewOnly: *previewOnly, MonitorOnly: *monitorOnly,
 	}
 	// Do not silently canonicalize a name whose request identity would differ
 	// from what the operator typed. The domain service enforces the same rule.
@@ -121,6 +122,7 @@ func runEnrollTokenCommandWithDeps(ctx context.Context, argv []string, out, errO
 }
 
 type enrollTokenInputs struct {
+	MonitorOnly    bool
 	DisplayName    string
 	TTLSeconds     int64
 	Reason         string
@@ -135,7 +137,7 @@ func runEnrollTokenHTTP(ctx context.Context, client *operatorclient.Client, hubU
 	digest := inputs.PreviewDigest
 	if digest == "" {
 		preview, err := client.PreviewEnrollToken(ctx, operatorclient.EnrollmentTokenPreviewRequest{
-			DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds,
+			DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds, MonitorOnly: inputs.MonitorOnly,
 		})
 		if err != nil {
 			return fmt.Errorf("enroll-token preview (HTTP operator API) failed: %w", err)
@@ -144,7 +146,7 @@ func runEnrollTokenHTTP(ctx context.Context, client *operatorclient.Client, hubU
 			DisplayName: preview.DisplayName, TTLSeconds: preview.TTLSeconds,
 			ExpiresAt: preview.ExpiresAtIfCreatedNow, Digest: preview.PreviewDigest,
 			InDenominator: preview.InDenominator, LimitMaxMachines: preview.LimitMaxMachines,
-			AtLimit: preview.AtLimit,
+			AtLimit: preview.AtLimit, MonitorOnly: preview.MonitorOnly,
 		}
 		if inputs.PreviewOnly {
 			return writeEnrollTokenPreview(out, previewCopy)
@@ -159,7 +161,7 @@ func runEnrollTokenHTTP(ctx context.Context, client *operatorclient.Client, hubU
 		return fmt.Errorf("enroll-token: %w", err)
 	}
 	result, err := client.CreateEnrollToken(ctx, key, operatorclient.EnrollmentTokenCreateRequest{
-		DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds,
+		DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds, MonitorOnly: inputs.MonitorOnly,
 		PreviewDigest: digest, Reason: inputs.Reason,
 	})
 	if err != nil {
@@ -176,7 +178,7 @@ func runEnrollTokenDirect(st *store.Store, inputs enrollTokenInputs, out, errOut
 	digest := inputs.PreviewDigest
 	if digest == "" {
 		preview, err := service.PreviewEnrollToken(operator.EnrollTokenPreviewRequest{
-			DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds,
+			DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds, MonitorOnly: inputs.MonitorOnly,
 		})
 		if err != nil {
 			return fmt.Errorf("enroll-token preview (direct DB operator service) failed: %w", err)
@@ -185,7 +187,7 @@ func runEnrollTokenDirect(st *store.Store, inputs enrollTokenInputs, out, errOut
 			DisplayName: preview.DisplayName, TTLSeconds: preview.TTLSeconds,
 			ExpiresAt: preview.ExpiresAtIfCreatedNow, Digest: preview.PreviewDigest,
 			InDenominator: preview.InDenominator, LimitMaxMachines: preview.LimitMaxMachines,
-			AtLimit: preview.AtLimit,
+			AtLimit: preview.AtLimit, MonitorOnly: preview.MonitorOnly,
 		}
 		if inputs.PreviewOnly {
 			return writeEnrollTokenPreview(out, previewCopy)
@@ -200,7 +202,7 @@ func runEnrollTokenDirect(st *store.Store, inputs enrollTokenInputs, out, errOut
 		return fmt.Errorf("enroll-token: %w", err)
 	}
 	result, err := service.CreateEnrollToken(operator.EnrollTokenCreateRequest{
-		DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds,
+		DisplayName: inputs.DisplayName, TTLSeconds: inputs.TTLSeconds, MonitorOnly: inputs.MonitorOnly,
 		PreviewDigest: digest, Reason: inputs.Reason, IdempotencyKey: key,
 		Actor: operator.Actor{
 			SourceAddr:     "local-cli",
@@ -227,6 +229,7 @@ func enrollTokenRequestKey(supplied string) (string, error) {
 // enrollTokenPreviewCopy 是這一行預覽要講的全部事實，兩個來源（HTTP 與 direct DB）
 // 各自填同一組欄位，才不會只有其中一條路講得出上限。
 type enrollTokenPreviewCopy struct {
+	MonitorOnly      bool
 	DisplayName      string
 	TTLSeconds       int64
 	ExpiresAt        time.Time
@@ -242,6 +245,9 @@ type enrollTokenPreviewCopy struct {
 // 結果——下一個動作就會被擋下來——而一份預告錯結果的預覽，會讓操作的人把那次拒絕當成
 // 偶發失敗去重試。網頁在按鈕旁邊講的是同一件事，terminal 不能少講。
 func writeEnrollTokenPreview(w io.Writer, preview enrollTokenPreviewCopy) error {
+	if preview.MonitorOnly {
+		fmt.Fprintln(w, "Profile: 只監控 / Monitor only; all machine execution is refused.")
+	}
 	if preview.AtLimit {
 		_, err := fmt.Fprintf(w,
 			"preview: %s cannot be created now: %d machines already on roster (retired excluded), limit %d machines; "+

@@ -63,8 +63,18 @@ en" TELEGRAM_CHAT_ID="chat" /bin/sh ops/fly/notify-env.sh 2>/dev/null; then
 
 test_r2_env() {
   # 1. defaults
-  out=$(env -i /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION"')
-  if [[ "$out" != "10s 24h 168h" ]]; then echo "fail: bad defaults: $out"; return 1; fi
+  out=$(env -i /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION $LITESTREAM_L0_RETENTION_CHECK_INTERVAL"')
+  if [[ "$out" != "60s 24h 168h 5m" ]]; then echo "fail: bad defaults: $out"; return 1; fi
+
+  # Cleanup cadence is independent of upload cadence and snapshot retention.
+  out=$(env -i LITESTREAM_L0_RETENTION_CHECK_INTERVAL=15s /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION $LITESTREAM_L0_RETENTION_CHECK_INTERVAL"')
+  if [[ "$out" != "60s 24h 168h 15s" ]]; then echo "fail: bad cleanup override: $out"; return 1; fi
+  for invalid in 0s 5d 1.5h -1m '5 m'; do
+    if env -i LITESTREAM_L0_RETENTION_CHECK_INTERVAL="$invalid" /bin/sh -c '. ops/fly/r2-env.sh' 2>/dev/null; then
+      echo "fail: accepted cleanup interval $invalid"
+      return 1
+    fi
+  done
 
   # 2. rejects bad durations
   if env -i LITESTREAM_SYNC_INTERVAL="5d" /bin/sh -c '. ops/fly/r2-env.sh' 2>/dev/null; then echo "fail: accepted 5d"; return 1; fi
@@ -389,6 +399,7 @@ SH
   fail_boot 'replication is incomplete' R2_SECRET_ACCESS_KEY=stub-private-secret
   fail_boot 'replication is incomplete' LITESTREAM_REQUIRED=1
   fail_boot 'must be a duration' LITESTREAM_SYNC_INTERVAL=5d
+  fail_boot 'must be a duration' LITESTREAM_L0_RETENTION_CHECK_INTERVAL=5d
   boot R2_ACCOUNT_ID=12345678901234567890123456789012 R2_ACCESS_KEY_ID=stub-key R2_SECRET_ACCESS_KEY=stub-private-secret R2_BUCKET=stub-bucket TELEGRAM_BOT_TOKEN=stub-private-secret TELEGRAM_CHAT_ID=stub-chat
   grep -q '^litestream:restore$' "$tmpdir/calls"
   grep -q '^litestream:replicate$' "$tmpdir/calls"
@@ -435,7 +446,7 @@ test_autopilot() (
   trap 'rm -rf "$tmpdir"' EXIT
   mkdir "$tmpdir/bin"
   export PATH="$tmpdir/bin:$PATH" STUB_DIR="$tmpdir" FLY_API_TOKEN=stub-auth
-  unset FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL
+  unset FLY_VM_SIZE FLY_VM_MEMORY FLY_APP FLY_ORG FLY_REGION FLY_SECRETS_FILE FLY_PUBLIC_URL FLY_BUILDER FLY_SKIP_SNAPSHOT FLY_SNAPSHOT_TIMEOUT FLY_VERIFY_ATTEMPTS FLY_VERIFY_TIMEOUT
   cat > "$tmpdir/bin/fly" <<'STUB'
 #!/bin/bash
 set -euo pipefail
@@ -446,19 +457,51 @@ case "$1 $2" in
       echo '[{"Name":"test-hub"},{"Name":"fly-builder-keep"},{"Name":"fly-builder-new"}]'
     elif [[ "${STUB_MISSING:-0}" == 1 ]]; then echo '[]'
     else echo '[{"Name":"test-hub"},{"Name":"fly-builder-keep"}]'; fi ;;
+  'volumes create') touch "$STUB_DIR/volume" ;;
+  'volumes snapshots')
+    if [[ "$3" == create ]]; then
+      touch "$STUB_DIR/snapshot-$4"
+      [[ "${STUB_SNAPSHOT:-}" != create-fail ]] || exit 1
+    elif [[ ( -e "$STUB_DIR/snapshot-$4" || "${STUB_SNAPSHOT:-}" == reused ) && "${STUB_SNAPSHOT:-}" != missing ]]; then
+      python3 -c 'import datetime,json,os; print(json.dumps([dict(id="vs_new",status="pending" if os.getenv("STUB_SNAPSHOT")=="pending" else "created",created_at="2000-01-01T00:00:00Z" if os.getenv("STUB_SNAPSHOT")=="stale" else datetime.datetime.now(datetime.timezone.utc).isoformat())]))'
+    else echo '[]'; fi ;;
   'volumes list')
-    if [[ "${STUB_MISSING:-0}" == 1 ]]; then echo '[]'
+    if [[ "${STUB_MISSING:-0}" == 1 && ! -e "$STUB_DIR/volume" ]]; then echo '[]'
+    elif [[ "${STUB_MULTI:-0}" == 1 ]]; then echo '[{"id":"vol_test","name":"clawctl_data"},{"id":"vol_second","name":"clawctl_data"},{"id":"vol_other","name":"other"}]'
     else echo '[{"id":"vol_test","name":"clawctl_data"},{"id":"vol_other","name":"other"}]'; fi ;;
-  'machines list') echo '[{"id":"machine_test"}]' ;;
+  'machines list')
+    if [[ -n "${STUB_MACHINES:-}" ]]; then printf '%s\n' "$STUB_MACHINES"
+    elif [[ "${STUB_MISSING:-0}" == 1 ]]; then echo '[]'
+    else echo '[{"id":"machine_test","config":{"guest":{"cpu_kind":"performance","cpus":1,"memory_mb":2048}}}]'; fi ;;
   'logs -a')
     echo 'unrelated log content that must stay private'
     echo "first-run setup: open ${STUB_LOG_URL:-https://test-hub.fly.dev}/setup and enter setup code stub-first-run-code" ;;
   'deploy .')
-    if [[ "${STUB_FAIL:-}" == other ]]; then echo 'unrelated failure'; exit 1; fi
-    if [[ "${STUB_FAIL:-}" == depot ]]; then
-      if [[ " $* " == *' --depot=false '* ]]; then
-        touch "$STUB_DIR/fallback"
-      else echo 'authentication handshake failed'; exit 1; fi
+    for ((i=1; i<=$#; i++)); do
+      if [[ "${!i}" == --config ]]; then
+        i=$((i + 1))
+        cp "${!i}" "$STUB_DIR/deployed.toml"
+        break
+      fi
+    done
+    if [[ -n "${STUB_TRANSIENT:-}" && ! -e "$STUB_DIR/once" ]]; then
+      touch "$STUB_DIR/once"
+      echo "$STUB_TRANSIENT"
+      exit 1
+    fi
+    if [[ " $* " == *' --local-only '* ]]; then
+      echo "${FLY_API_TOKEN} local output"
+      [[ "${STUB_LOCAL_FAIL:-0}" == 0 ]] || exit 1
+    elif [[ " $* " == *' --depot=false '* ]]; then
+      touch "$STUB_DIR/fallback"
+      case "${STUB_FAIL:-}" in
+        transport) echo "${FLY_API_TOKEN} h2c failed to dial gRPC: Unavailable"; exit 1 ;;
+        remote-build) echo 'Dockerfile RUN failed'; exit 1 ;;
+      esac
+    elif [[ "${STUB_FAIL:-}" == other ]]; then
+      echo 'Dockerfile RUN failed'; exit 1
+    elif [[ -n "${STUB_FAIL:-}" ]]; then
+      echo "${FLY_API_TOKEN} authentication handshake failed: EOF"; exit 1
     fi ;;
   'apps destroy')
     if [[ "${STUB_CLEANUP_FAIL:-0}" == 1 && "$3" == fly-builder-new ]]; then exit 1; fi ;;
@@ -468,10 +511,39 @@ STUB
   cat > "$tmpdir/bin/curl" <<'STUB'
 #!/bin/bash
 printf '%s\n' "$*" >> "$STUB_DIR/curl-calls"
-if [[ "${*: -1}" == */setup ]]; then printf '%s' "${STUB_SETUP_STATUS:-404}"; else printf 200; fi
+path=${*: -1}
+if [[ "$path" == *"${STUB_CHECK:-/healthz}" ]]; then
+  if [[ "${STUB_CURL_ONCE:-0}" == 1 && ! -e "$STUB_DIR/curl-once" ]]; then
+    touch "$STUB_DIR/curl-once"
+    printf 000
+    exit "${STUB_CURL_RC:-52}"
+  fi
+  if [[ -n "${STUB_CURL_FAIL:-}" ]]; then printf 000; exit "$STUB_CURL_FAIL"; fi
+  if [[ -n "${STUB_HTTP:-}" ]]; then printf '%s' "$STUB_HTTP"; exit 0; fi
+fi
+body=/dev/null
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --output ]]; then body=$2; shift; fi
+  shift
+done
+if [[ "$path" == */version ]]; then
+  if [[ "${STUB_BAD_VERSION:-0}" == 1 ]]; then printf 'not-json' > "$body"
+  else printf '{"commit":"%s"}' "${STUB_COMMIT:-$(git rev-parse HEAD)}" > "$body"; fi
+fi
+if [[ "$path" == */setup ]]; then printf '%s' "${STUB_SETUP_STATUS:-404}"; else printf 200; fi
+STUB
+  cat > "$tmpdir/bin/docker" <<'STUB'
+#!/bin/bash
+printf 'docker:%s\n' "$*" >> "$STUB_DIR/calls"
+echo "${FLY_API_TOKEN} Docker daemon diagnostic"
+exit "${STUB_DOCKER_FAIL:-0}"
+STUB
+  cat > "$tmpdir/bin/sleep" <<'STUB'
+#!/bin/bash
+exit 0
 STUB
   chmod +x "$tmpdir/bin/"*
-  reset_stub() { : > "$tmpdir/calls"; : > "$tmpdir/curl-calls"; rm -f "$tmpdir/fallback"; }
+  reset_stub() { : > "$tmpdir/calls"; : > "$tmpdir/curl-calls"; rm -f "$tmpdir/fallback" "$tmpdir/volume" "$tmpdir/once" "$tmpdir/curl-once" "$tmpdir"/snapshot-*; }
   deploy() { bash ops/fly/deploy.sh --org test-org --app test-hub "$@" > "$tmpdir/output" 2>&1; }
   reset_stub
   deploy --dry-run
@@ -488,6 +560,98 @@ STUB
   ! grep -q 'stub-first-run-code' "$tmpdir/output"
   grep -q 'already closed' "$tmpdir/output"
 
+  assert_vm() {
+    python3 - "$tmpdir/deployed.toml" "$1" <<'PY_VM_TEST'
+import json, sys, tomllib
+with open(sys.argv[1], 'rb') as config:
+    assert tomllib.load(config)['vm'] == [json.loads(sys.argv[2])]
+PY_VM_TEST
+  }
+  assert_vm '{"cpu_kind":"performance","cpus":1,"memory":"2048mb"}'
+  grep -q 'VM sizing source: preserved' "$tmpdir/output"
+  reset_stub
+  FLY_VM_SIZE=shared-cpu-2x FLY_VM_MEMORY=1gb deploy
+  assert_vm '{"cpu_kind":"shared","cpus":2,"memory":"1024mb"}'
+  reset_stub
+  FLY_VM_SIZE=shared-cpu-2x FLY_VM_MEMORY=1gb deploy --vm-size performance-2x --vm-memory 4096mb
+  assert_vm '{"cpu_kind":"performance","cpus":2,"memory":"4096mb"}'
+  reset_stub
+  deploy --vm-memory 3gb
+  assert_vm '{"cpu_kind":"performance","cpus":1,"memory":"3072mb"}'
+  reset_stub
+  STUB_MACHINES='[]' deploy
+  assert_vm '{"size":"shared-cpu-2x","memory":"1024mb"}'
+  grep -q 'VM sizing source: fly.toml default' "$tmpdir/output"
+  for invalid in shared-cpu-0x shared-cpu-65x performance-cpu-1x bad; do
+    reset_stub
+    if deploy --vm-size "$invalid"; then exit 1; fi
+    [[ ! -s "$tmpdir/calls" ]]
+  done
+  for invalid in 255mb 129gb 2048 bad 1.5gb; do
+    reset_stub
+    if deploy --vm-memory "$invalid"; then exit 1; fi
+    [[ ! -s "$tmpdir/calls" ]]
+  done
+  export STUB_MACHINES='[{"config":{"guest":{"cpu_kind":"shared","cpus":2,"memory_mb":1024}}},{"config":{"guest":{"cpu_kind":"performance","cpus":1,"memory_mb":2048}}}]'
+  reset_stub
+  if deploy; then exit 1; fi
+  grep -q 'machines disagree' "$tmpdir/output"
+  if grep -q '^deploy ' "$tmpdir/calls"; then exit 1; fi
+  reset_stub
+  deploy --vm-size performance-1x --vm-memory 2048mb
+  assert_vm '{"cpu_kind":"performance","cpus":1,"memory":"2048mb"}'
+  for guest in '{"cpu_kind":"bad","cpus":1,"memory_mb":2048}' '{"cpu_kind":"shared","cpus":true,"memory_mb":2048}' '{"cpu_kind":"shared","cpus":1,"memory_mb":255}'; do
+    reset_stub
+    if STUB_MACHINES="[{\"config\":{\"guest\":$guest}}]" deploy; then exit 1; fi
+    grep -q 'invalid machine guest' "$tmpdir/output"
+  done
+  unset STUB_MACHINES
+  reset_stub
+  deploy --dry-run --vm-size performance-1x
+  grep -q 'VM sizing source: override' "$tmpdir/output"
+  [[ ! -s "$tmpdir/calls" ]]
+
+  # Every endpoint survives a dropped connection; all requested curl failures retry.
+  for endpoint in /healthz /version /setup; do
+    for curl_rc in 6 7 28 52 56; do
+      reset_stub
+      STUB_CHECK=$endpoint STUB_CURL_ONCE=1 STUB_CURL_RC=$curl_rc deploy --verify-attempts 2 --verify-timeout 1
+      grep -q "Verify $endpoint attempt 2/2:.*OK\|Verify $endpoint attempt 2/2: commit matches" "$tmpdir/output"
+    done
+    for failure in 7 28 52 56; do
+      reset_stub
+      result=0
+      STUB_CHECK=$endpoint STUB_CURL_FAIL=$failure FLY_VERIFY_ATTEMPTS=2 deploy || result=$?
+      [[ "$result" == 2 ]]
+      grep -q 'deploy succeeded, verification failed' "$tmpdir/output"
+      [[ $(grep -c "$endpoint$" "$tmpdir/curl-calls") == 2 ]]
+      ! grep -q '^logs ' "$tmpdir/calls"
+    done
+    for http_status in 502 503 504; do
+      reset_stub
+      result=0
+      STUB_CHECK=$endpoint STUB_HTTP=$http_status deploy --verify-attempts 2 || result=$?
+      [[ "$result" == 2 ]]
+      grep -q "transient HTTP $http_status" "$tmpdir/output"
+    done
+  done
+  reset_stub
+  result=0
+  STUB_COMMIT=wrong deploy --verify-attempts 2 || result=$?
+  [[ "$result" == 2 ]]
+  grep -q 'commit mismatch' "$tmpdir/output"
+  ! grep -q '^logs ' "$tmpdir/calls"
+  reset_stub
+  result=0
+  STUB_BAD_VERSION=1 deploy --verify-attempts 2 || result=$?
+  [[ "$result" == 2 ]]
+  grep -q 'invalid version response' "$tmpdir/output"
+  for invalid in 0 -1 abc 100; do
+    reset_stub
+    if deploy --verify-attempts "$invalid"; then exit 1; fi
+    [[ ! -s "$tmpdir/calls" ]]
+  done
+
   reset_stub
   STUB_MISSING=1 STUB_SETUP_STATUS=200 deploy
   grep -q '^apps create test-hub --org test-org$' "$tmpdir/calls"
@@ -501,6 +665,26 @@ STUB
   grep -q 'https://test-hub.fly.dev/setup$' "$tmpdir/curl-calls"
   ! grep -q '^logs ' "$tmpdir/calls"
 
+  reset_stub
+  deploy
+  grep -q 'Verified snapshot vs_new for volume vol_test' "$tmpdir/output"
+  [[ $(grep -n '^volumes snapshots create' "$tmpdir/calls" | head -1 | cut -d: -f1) -lt $(grep -n '^deploy ' "$tmpdir/calls" | head -1 | cut -d: -f1) ]]
+  for failure in missing stale pending reused create-fail; do
+    reset_stub
+    if STUB_SNAPSHOT=$failure FLY_SNAPSHOT_TIMEOUT=1 deploy; then exit 1; fi
+    ! grep -q '^deploy ' "$tmpdir/calls"
+  done
+  reset_stub
+  STUB_MULTI=1 deploy
+  [[ $(grep -c '^volumes snapshots create' "$tmpdir/calls") == 2 ]]
+  grep -q 'Verified snapshot vs_new for volume vol_second' "$tmpdir/output"
+  ! grep -q '^volumes snapshots .*vol_other' "$tmpdir/calls"
+  for option in flag env; do
+    reset_stub
+    if [[ "$option" == flag ]]; then deploy --skip-snapshot; else FLY_SKIP_SNAPSHOT=1 deploy; fi
+    grep -q 'WARNING: SNAPSHOT SAFETY GATE DISABLED' "$tmpdir/output"
+    ! grep -q '^volumes snapshots' "$tmpdir/calls"
+  done
   reset_stub
   deploy --public-url https://hub.example.com
   grep -q 'https://hub.example.com/healthz$' "$tmpdir/curl-calls"
@@ -535,12 +719,64 @@ STUB
   grep -q 'Wait for https://hub.example.com/healthz' "$tmpdir/output"
   [[ ! -s "$tmpdir/calls" && ! -s "$tmpdir/curl-calls" ]]
 
+  for builder_mode in depot remote local; do
+    for message in 'Depot EOF' 'unexpected EOF' 'remote builder HTTP 500' 'remote builder HTTP 502' 'remote builder HTTP 503' 'context deadline exceeded'; do
+      reset_stub
+      STUB_TRANSIENT=$message deploy --builder "$builder_mode"
+      [[ $(grep -c '^deploy ' "$tmpdir/calls") == 2 ]]
+    done
+  done
   reset_stub
   STUB_FAIL=depot deploy
-  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 2 ]]
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 4 ]]
   grep -q '^deploy .*--depot=false' "$tmpdir/calls"
   grep -q '^apps destroy fly-builder-new --yes$' "$tmpdir/calls"
   ! grep -q '^apps destroy fly-builder-keep' "$tmpdir/calls"
+  reset_stub
+  STUB_FAIL=transport deploy
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 7 ]]
+  grep -q '^deploy .*--depot=false --local-only$' "$tmpdir/calls"
+  grep -q '^docker:info$' "$tmpdir/calls"
+  [[ $(grep -n '^apps destroy fly-builder-new' "$tmpdir/calls" | cut -d: -f1) -lt $(grep -n '^deploy .*--local-only' "$tmpdir/calls" | cut -d: -f1) ]]
+  ! grep -q "$FLY_API_TOKEN" "$tmpdir/output"
+  reset_stub
+  if STUB_FAIL=transport STUB_DOCKER_FAIL=1 deploy; then exit 1; fi
+  grep -q -- '--local-only' "$tmpdir/output"
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 6 ]]
+  ! grep -q "$FLY_API_TOKEN" "$tmpdir/output"
+  reset_stub
+  if STUB_FAIL=remote-build deploy; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 4 ]]
+  grep -q '^apps destroy fly-builder-new' "$tmpdir/calls"
+  ! grep -q '^docker:' "$tmpdir/calls"
+  reset_stub
+  STUB_FAIL=transport deploy --builder local
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 1 ]]
+  grep -q '^deploy .*--local-only$' "$tmpdir/calls"
+  ! grep -q -- '--depot=' "$tmpdir/calls"
+  reset_stub
+  FLY_BUILDER=local deploy --dry-run
+  grep -q -- '--local-only' "$tmpdir/output"
+  [[ ! -s "$tmpdir/calls" ]]
+  reset_stub
+  deploy --dry-run
+  grep -q 'Fallback chain: Depot' "$tmpdir/output"
+  grep -q -- '--local-only' "$tmpdir/output"
+  reset_stub
+  if STUB_FAIL=transport deploy --builder depot; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 3 ]]
+  reset_stub
+  STUB_FAIL=depot deploy --builder remote
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 1 ]]
+  grep -q '^apps destroy fly-builder-new' "$tmpdir/calls"
+  reset_stub
+  if STUB_FAIL=transport STUB_CLEANUP_FAIL=1 deploy; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 6 ]]
+  ! grep -q '^docker:' "$tmpdir/calls"
+  reset_stub
+  if STUB_FAIL=transport STUB_LOCAL_FAIL=1 deploy; then exit 1; fi
+  [[ $(grep -c '^deploy ' "$tmpdir/calls") == 7 ]]
+  ! grep -q "$FLY_API_TOKEN" "$tmpdir/output"
   reset_stub
   if STUB_FAIL=depot STUB_CLEANUP_FAIL=1 deploy; then echo 'fail: teardown failure accepted'; exit 1; fi
   grep -q 'Warning: builder teardown failed for fly-builder-new' "$tmpdir/output"

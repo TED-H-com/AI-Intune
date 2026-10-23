@@ -51,7 +51,7 @@
   <td class="name"><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a><span class="sub mono">{{.MachineID}}</span>
     {{range .Issues}}<span class="sub st amber">{{.}}</span>{{end}}
   </td>
-  <td>{{if .RetiredAt}}<span class="st dim">Retired</span>{{else if .State}}<span class="st">{{.State}}</span>{{else}}Unknown{{end}}</td>
+  <td>{{if .RetiredAt}}<span class="st dim">Retired</span>{{else if .State}}<span class="st">{{statusDisplayLabel .State}}</span>{{$machineID := .MachineID}}{{with index $view.AttentionReasons .MachineID}} <span class="small dim attention-reasons">— {{.}}</span> <a class="small" href="/machines/{{$machineID}}#attention-next-action">Review findings and next steps</a>{{end}}{{else}}Unknown{{end}}</td>
   <td>{{if .Expected}}是{{else}}否{{end}}</td>
   <td>{{triBool .Reporting}}</td>
   <td>{{if .Channel}}{{.Channel}}{{else}}未指派{{end}} <span class="sub">rev {{.ChannelRevision}}</span></td>

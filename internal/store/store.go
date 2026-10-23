@@ -22,6 +22,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
@@ -36,7 +37,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/deploy"
@@ -368,6 +371,12 @@ type Change struct {
 // ---------------------------------------------------------------- Store
 
 type Store struct {
+	unchangedInterval  atomic.Int64
+	signins            signinMemory
+	usageToolCallLimit atomic.Int64
+	diskGrowthDefaults atomic.Pointer[DiskGrowthPolicy]
+	diskOpsV2Writes    atomic.Bool
+	diskManifestSigner atomic.Pointer[rsa.PrivateKey]
 	// db is the single writer connection. rdb is the query-only reader pool,
 	// opened on the same file after migrations. Reads that do not need to see
 	// the caller's uncommitted writes go to rdb: with MaxOpenConns(1), a read
@@ -390,7 +399,7 @@ type Store struct {
 	expectsLoaded bool
 
 	// afterReconcileOverview 只給 deterministic transaction-boundary 測試用。
-	// production 永遠是 nil；hook 執行時 BEGIN IMMEDIATE writer lock 已在手上。
+	// production 永遠是 nil；derive 後、取得 writer 前執行，每次 derivation 都會呼叫。
 	afterReconcileOverview func()
 	// afterBatchPromoteGate 只給 stable Continue/OpenDeploymentBatch 的
 	// gate→insert transaction-boundary 測試用；production 永遠是 nil。
@@ -585,6 +594,18 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if _, err := db.Exec(diskGrowthSchema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := migrateDiskTimerEvidence(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate disk timer evidence: %w", err)
+	}
+	if err := migrateUsagePolicyKind(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate usage policy kind: %w", err)
+	}
 	if _, err := db.Exec(schemaSQL); err != nil {
 		if conflictErr := rejectDuplicateDesiredStateResourceRevisions(db); conflictErr != nil &&
 			errors.Is(conflictErr, ErrDesiredResourceRevisionConflict) {
@@ -599,9 +620,21 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if err := migrateUsageSnapshotTimes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate usage snapshot times: %w", err)
+	}
 	if err := addMissingColumns(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	if err := installExecutionPolicyGuards(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: execution guards: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS disk_mount_missing_expiry ON disk_alerts(COALESCE(NULLIF(last_seen_at,''),opened_at),id) WHERE cleared_at IS NULL AND condition_key LIKE 'mount:%'`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: mount expiry index: %w", err)
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS hub_accounts_email ON hub_accounts(email) WHERE email IS NOT NULL`); err != nil {
 		db.Close()
@@ -632,9 +665,17 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate identity hints: %w", err)
 	}
+	if err := migrateHermesServiceRoutes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate Hermes service routes: %w", err)
+	}
 	if err := clearTerminalLeases(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
+	if err := migrateReconcileEvidence(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate reconcile evidence: %w", err)
 	}
 	// The writer pool is one connection for the life of the process. Set this
 	// only after migrations, which run on this same *sql.DB before any reader
@@ -653,6 +694,11 @@ func Open(path string) (*Store, error) {
 		changeReadSlots: make(chan struct{}, maxConcurrentChangeReads),
 	}
 	st.gate.stats.init()
+	st.SetObservationUnchangedInterval(30 * time.Minute)
+	if err := st.backfillObservedLatest(); err != nil {
+		st.Close()
+		return nil, err
+	}
 	return st, nil
 }
 
@@ -835,7 +881,10 @@ func addMissingColumns(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 	want := map[string]map[string]string{
-		"hub_accounts": {"auth_generation": "INTEGER NOT NULL DEFAULT 0", "email": "TEXT", "role": "TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin'))"},
+		"disk_alerts":      {"cleared_reason": "TEXT NOT NULL DEFAULT ''", "last_seen_at": "TEXT NOT NULL DEFAULT ''"},
+		"disk_canary_days": {"received_at": "TEXT NOT NULL DEFAULT ''"},
+		"schedules":        {"tz": "TEXT NOT NULL DEFAULT 'UTC'", "execution_mode": "TEXT NOT NULL DEFAULT '' CHECK(execution_mode IN ('','read','write'))"},
+		"hub_accounts":     {"auth_generation": "INTEGER NOT NULL DEFAULT 0", "email": "TEXT", "role": "TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin'))"},
 		// ⚠ agent_started_at 是 2026-09-03 事故後補的。舊 DB 沒有這欄，
 		// 而那些機器正是最需要被抓出來的那批。
 		"machine_checkins": {
@@ -853,12 +902,16 @@ func addMissingColumns(db *sql.DB) error {
 			"last_error_text": "TEXT",
 		},
 		"machine_registry": {
-			"channel":                "TEXT",
-			"channel_revision":       "INTEGER NOT NULL DEFAULT 0",
-			"lifecycle_revision":     "INTEGER NOT NULL DEFAULT 0",
-			"assigned_user_id":       "TEXT",
-			"assigned_user_login":    "TEXT",
-			"assigned_user_revision": "INTEGER NOT NULL DEFAULT 0",
+			"execution_policy":                   "TEXT NOT NULL DEFAULT 'managed' CHECK(execution_policy IN ('managed','monitor_only'))",
+			"execution_policy_revision":          "INTEGER NOT NULL DEFAULT 1",
+			"execution_policy_supported":         "INTEGER NOT NULL DEFAULT 0",
+			"execution_policy_observed_revision": "INTEGER NOT NULL DEFAULT 0",
+			"channel":                            "TEXT",
+			"channel_revision":                   "INTEGER NOT NULL DEFAULT 0",
+			"lifecycle_revision":                 "INTEGER NOT NULL DEFAULT 0",
+			"assigned_user_id":                   "TEXT",
+			"assigned_user_login":                "TEXT",
+			"assigned_user_revision":             "INTEGER NOT NULL DEFAULT 0",
 		},
 		// desired_state revision is immutable deployment material identity.  This
 		// separate token fences stale lifecycle/open-batch operator requests.
@@ -884,6 +937,7 @@ func addMissingColumns(db *sql.DB) error {
 		},
 		// generation=1 讓舊 DB 的 active row 有一個可持久化的起點；新 token
 		// 格式包含 generation，因此升級前的 witness 仍會自然失效。
+		"ops_approvals": {"decision_reason": "TEXT NOT NULL DEFAULT ''"},
 		"active_workload_policy": {
 			"generation": "INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0)",
 		},
@@ -920,6 +974,16 @@ func addMissingColumns(db *sql.DB) error {
 			"source_plan": "TEXT NOT NULL DEFAULT '' CHECK (length(CAST(source_plan AS BLOB)) <= 8192)",
 		},
 	}
+	want["hub_sessions"] = map[string]string{"mfa_verified_at": "TEXT NOT NULL DEFAULT ''"}
+	want["service_tokens"] = map[string]string{
+		"rotation_chain_id":      "TEXT NOT NULL DEFAULT ''",
+		"rotated_from":           "TEXT NOT NULL DEFAULT ''",
+		"rotated_at":             "TEXT",
+		"overlap_deadline":       "TEXT",
+		"chain_created_at":       "TEXT NOT NULL DEFAULT ''",
+		"issue_lifetime_seconds": "INTEGER NOT NULL DEFAULT 0",
+		"max_lifetime_seconds":   "INTEGER NOT NULL DEFAULT 0",
+	}
 	legacyFailureOpenAdded := false
 	verificationTablePresent := false
 	jobEventTablePresent := false
@@ -947,6 +1011,28 @@ func addMissingColumns(db *sql.DB) error {
 			}
 			if table == "canary_silent_failures" && col == "open" {
 				legacyFailureOpenAdded = true
+			}
+		}
+	}
+	if _, err := tx.Exec(`UPDATE service_tokens SET rotation_chain_id=id,chain_created_at=created_at,issue_lifetime_seconds=CAST(round((julianday(expires_at)-julianday(created_at))*86400) AS INTEGER) WHERE rotation_chain_id=''`); err != nil {
+		return err
+	}
+	// Legacy schemas made names unique; rotations intentionally retain the name.
+	var tokenSchema string
+	if err := tx.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='service_tokens'").Scan(&tokenSchema); err != nil {
+		return err
+	}
+	if strings.Contains(tokenSchema, "name TEXT NOT NULL UNIQUE") || !strings.Contains(tokenSchema, "'operator-admin'") {
+		definitionStart := strings.Index(tokenSchema, "(")
+		if definitionStart < 0 {
+			return fmt.Errorf("invalid service token schema")
+		}
+		replacement := "CREATE TABLE service_tokens_rotation_migration " + tokenSchema[definitionStart:]
+		replacement = strings.Replace(replacement, "name TEXT NOT NULL UNIQUE", "name TEXT NOT NULL", 1)
+		replacement = strings.Replace(replacement, "'view','operate'", "'view','operate','operator-admin'", 1)
+		for _, stmt := range []string{replacement, "INSERT INTO service_tokens_rotation_migration SELECT * FROM service_tokens", "DROP TABLE service_tokens", "ALTER TABLE service_tokens_rotation_migration RENAME TO service_tokens"} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate service token names: %w", err)
 			}
 		}
 	}
@@ -1239,6 +1325,16 @@ func (s *Store) RedeemEnrollToken(tok string, req model.EnrollRequest, now time.
 	if exp := parseTime(expiresAt); exp.IsZero() || !now.Before(exp) {
 		// ⚠ 解不出來的 expires_at 也算過期。壞掉的時間戳不可以變成永久有效的 token。
 		return "", "", ErrTokenExpired
+	}
+
+	if boundTo.Valid {
+		var mode string
+		if err := tx.QueryRow(`SELECT execution_policy FROM machine_registry WHERE machine_id=?`, boundTo.String).Scan(&mode); err != nil {
+			return "", "", err
+		}
+		if mode != model.ExecutionManaged && (!req.ExecutionPolicyV1 || !req.MonitorOnlySupported || mode != model.ExecutionMonitorOnly) {
+			return "", "", ErrTokenInvalid
+		}
 	}
 
 	agentTok, err := newToken()
@@ -1628,6 +1724,9 @@ func withoutRawOccupancy(oc model.OpenClaw) model.OpenClaw {
 // 真的量測值。重試把它改成「現在」會讓時鐘偏移的量測失真，而那是我們用來判斷
 // 「這台回報的時間可不可信」的唯一依據。
 func (s *Store) RecordCheckin(machineID string, c model.Checkin, receivedAt time.Time) error {
+	if err := ValidateLoopActivity(c.CallActivity); err != nil {
+		return err
+	}
 	// ⚠ 規格明講：ClockSkew = sent_at - received_at。正值 = 機器時鐘比 Hub 快。
 	skew := int64(c.SentAt.Sub(receivedAt) / time.Second)
 	var obsAge any
@@ -1689,6 +1788,41 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 		machineID, fmtTime(c.SentAt), model.MaintenanceDiskCleanCapability); err != nil {
 		return fmt.Errorf("store: replace disk-clean job capability: %w", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM machine_job_capabilities WHERE machine_id=? AND sent_at=? AND capability='script_v1'`, machineID, fmtTime(c.SentAt)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM machine_job_capabilities WHERE machine_id=? AND sent_at=? AND capability='disk_ops_v2'`, machineID, fmtTime(c.SentAt)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM machine_job_capabilities WHERE machine_id=? AND sent_at=? AND capability LIKE 'disk_actions_v1:%'`, machineID, fmtTime(c.SentAt)); err != nil {
+		return err
+	}
+	if validLowerSHA256(c.DiskActionKey) {
+		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities VALUES (?,? ,?,1)`, machineID, fmtTime(c.SentAt), "disk_actions_v1:"+c.DiskActionKey); err != nil {
+			return err
+		}
+	}
+	if c.DiskTotalBytes > 0 && c.DiskFreeBytes >= 0 && c.DiskFreeBytes <= c.DiskTotalBytes && !c.SentAt.After(receivedAt) && receivedAt.Sub(c.SentAt) <= 15*time.Minute {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO disk_growth_samples VALUES(?,?,?,?,?,?)`, machineID, "/", fmtTime(c.SentAt), c.DiskTotalBytes, c.DiskFreeBytes, fmtTime(receivedAt)); err != nil {
+			return err
+		}
+	}
+	if err := s.recordLoopActivityTx(tx, machineID, c.CallActivity, receivedAt); err != nil {
+		return err
+	}
+	if err := s.recordDiskTimersTx(tx, machineID, c, receivedAt); err != nil {
+		return err
+	}
+	if c.DiskOpsV2 {
+		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities(machine_id,sent_at,capability,supported) VALUES (?,?,'disk_ops_v2',1)`, machineID, fmtTime(c.SentAt)); err != nil {
+			return err
+		}
+	}
+	if c.ScriptV1 {
+		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities (machine_id,sent_at,capability,supported) VALUES (?,?,'script_v1',1)`, machineID, fmtTime(c.SentAt)); err != nil {
+			return err
+		}
+	}
 	if c.MaintenanceDiskCleanV1 {
 		if _, err := tx.Exec(`INSERT INTO machine_job_capabilities
 		 (machine_id,sent_at,capability,supported) VALUES (?,?,?,1)`,
@@ -1696,6 +1830,22 @@ ON CONFLICT(machine_id, sent_at) DO UPDATE SET
 			return fmt.Errorf("store: record disk-clean job capability: %w", err)
 		}
 	}
+	{
+		observed := int64(0)
+		if c.ExecutionPolicyV1 && c.ExecutionPolicy != nil && c.ExecutionPolicy.Validate() == nil {
+			p, e := readExecutionPolicy(tx, machineID)
+			if e != nil {
+				return e
+			}
+			if p.Mode == c.ExecutionPolicy.Mode && p.Revision == c.ExecutionPolicy.Revision {
+				observed = p.Revision
+			}
+		}
+		if _, e := tx.Exec(`UPDATE machine_registry SET execution_policy_supported=?,execution_policy_observed_revision=? WHERE machine_id=?`, c.ExecutionPolicyV1 && c.MonitorOnlySupported, observed, machineID); e != nil {
+			return e
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit checkin: %w", err)
 	}
@@ -1710,7 +1860,9 @@ func isForeignKeyErr(err error) bool {
 
 // ---------------------------------------------------------------- 完整觀測
 
-// RecordObservation 記一批完整觀測。⚠ append-only：每個 (kind, subject) 插一列新的，
+// RecordObservation 記一批完整觀測。Identical cli_tool/systemd payloads may be
+// suppressed for the configured interval; changed snapshots remain append-only.
+// 每個 (kind, subject) 插一列新的，
 // 永遠不 UPDATE、不 DELETE、不「只留最新一筆」。
 //
 // 如果你正打算把這裡改成一台一列的快照 —— 請先讀 docs/SPEC.md §4.2。
@@ -1727,33 +1879,38 @@ func isForeignKeyErr(err error) bool {
 //     「當時用的是哪張票」的那些。缺口要留著，不要用猜的補平。
 //  3. **process_alive 永遠寫 0。** 「有個 process 活著」不是占用的證據。
 //     用它假裝占用，帳本會在每一台開著 OpenClaw 的機器上都顯示滿載。
+func prepareOccupancy(machineID string, d *model.OpenClawDB, receivedAt string) [][]any {
+	var rows [][]any
+	if d == nil {
+		return rows
+	}
+	for _, e := range d.Occupancy {
+		if e.Provider == "" {
+			continue
+		}
+		rows = append(rows, []any{occupancyID(machineID, e.Source, e.JobID, e.At), machineID, e.Provider, nullStr(e.Model),
+			fmtTime(e.At), receivedAt, e.SessionKey, nullStr(e.JobID), nullStr(e.AgentID), nullStr(e.Status), nullInt(e.TotalTokens), nullStr(e.ErrorText), e.Source})
+	}
+	return rows
+}
+
 func recordOccupancy(tx dbTx, machineID string, d *model.OpenClawDB, receivedAt string) error {
-	if d == nil || len(d.Occupancy) == 0 {
+	return recordPreparedOccupancy(tx, machineID, prepareOccupancy(machineID, d, receivedAt))
+}
+
+func recordPreparedOccupancy(tx dbTx, machineID string, rows [][]any) error {
+	if len(rows) == 0 {
 		return nil
 	}
-	ins, err := tx.Prepare(`
-INSERT OR IGNORE INTO ticket_occupancy_observation
-  (observation_id, machine_id, profile_id, provider, model,
-   measured_at, received_at, occupant_evidence, job_id, agent_id,
-   process_alive, run_status, total_tokens, last_error_text, source)
-VALUES (?,?,NULL,?,?,?,?,?,?,?,0,?,?,?,?)`)
+	ins, err := tx.Prepare(`INSERT OR IGNORE INTO ticket_occupancy_observation
+ (observation_id,machine_id,profile_id,provider,model,measured_at,received_at,occupant_evidence,job_id,agent_id,process_alive,run_status,total_tokens,last_error_text,source)
+ VALUES (?,?,NULL,?,?,?,?,?,?,?,0,?,?,?,?)`)
 	if err != nil {
 		return fmt.Errorf("store: prepare occupancy: %w", err)
 	}
 	defer ins.Close()
-
-	for _, e := range d.Occupancy {
-		if e.Provider == "" {
-			continue // 規則 2。probe 已經濾過一次，這裡是第二道。
-		}
-		// ⚠ id 由內容決定，不是隨機的。agent 每 10 分鐘重送最近 200 筆，
-		// 用隨機 id 會讓同一個 cron 回合在帳本上出現幾十次，
-		// 而一本會自我複製的帳，比沒有帳更難查。
-		id := occupancyID(machineID, e.Source, e.JobID, e.At)
-		if _, err := ins.Exec(id, machineID, e.Provider, nullStr(e.Model),
-			fmtTime(e.At), receivedAt, e.SessionKey, nullStr(e.JobID), nullStr(e.AgentID),
-			nullStr(e.Status), nullInt(e.TotalTokens), nullStr(e.ErrorText),
-			e.Source); err != nil {
+	for _, row := range rows {
+		if _, err := ins.Exec(row...); err != nil {
 			if isForeignKeyErr(err) {
 				return fmt.Errorf("store: occupancy from %q: %w", machineID, ErrNotFound)
 			}
@@ -1776,45 +1933,49 @@ func nullInt(n int) any {
 }
 
 func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, receivedAt time.Time) error {
-	tx, err := s.beginWrite(context.Background(), "record_observation")
-	if err != nil {
-		return fmt.Errorf("store: begin: %w", err)
+	if len(b.OOMKills) > 64 {
+		return model.ErrInvalidOOM
 	}
-	defer tx.Rollback()
+	for _, e := range b.OOMKills {
+		if !model.ValidOOM(e, receivedAt) {
+			return model.ErrInvalidOOM
+		}
+	}
 	var displayName string
-	if err := tx.QueryRow(`SELECT display_name FROM machine_registry WHERE machine_id=?`, machineID).Scan(&displayName); err != nil {
+	if err := s.rdb.QueryRow(`SELECT display_name FROM machine_registry WHERE machine_id=?`, machineID).Scan(&displayName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
 		}
 		return fmt.Errorf("store: observation machine: %w", err)
 	}
 
-	ins, err := tx.Prepare(`
-INSERT INTO observed_state
-  (observation_id, machine_id, measured_at, received_at, kind, subject, payload, source)
-VALUES (?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return fmt.Errorf("store: prepare observation: %w", err)
-	}
-	defer ins.Close()
-
+	var prepared [][]any
 	measured, recv := fmtTime(b.MeasuredAt), fmtTime(receivedAt)
 	put := func(kind, subject string, v any) error {
 		payload, err := json.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("store: marshal %s/%s: %w", kind, subject, err)
 		}
-		_, err = ins.Exec(newID(), machineID, measured, recv, kind, subject,
-			string(payload), SourceAgentMeasurement)
-		if err != nil {
-			if isForeignKeyErr(err) {
-				return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
-			}
-			return fmt.Errorf("store: insert %s/%s: %w", kind, subject, err)
-		}
+		prepared = append(prepared, []any{newID(), machineID, measured, recv, kind, subject, string(payload), SourceAgentMeasurement})
 		return nil
 	}
 
+	if b.BlockDevices != nil {
+		if err := put("block_devices", "block_devices", b.BlockDevices); err != nil {
+			return err
+		}
+	}
+	if err := put("host_profile_apply", "host_profile_apply", b.HostProfileApply); err != nil {
+		return err
+	}
+	if err := put("host_readiness", "host_readiness", b.Readiness); err != nil {
+		return err
+	}
+	if b.OOMKills != nil {
+		if err := put("oom", "oom", b.OOMKills); err != nil {
+			return err
+		}
+	}
 	if err := put(KindIdentity, KindIdentity, b.Identity); err != nil {
 		return err
 	}
@@ -1855,6 +2016,11 @@ VALUES (?,?,?,?,?,?,?,?)`)
 			return err
 		}
 	}
+	for _, h := range b.AuthHealth {
+		if err := put("auth_health", h.CLI+"/"+strconv.Itoa(h.Slot), h); err != nil {
+			return err
+		}
+	}
 	for _, c := range b.Credentials {
 		if err := put(KindCredential, c.Provider, c); err != nil {
 			return err
@@ -1864,6 +2030,93 @@ VALUES (?,?,?,?,?,?,?,?)`)
 		if err := put(KindCLITool, t.Name, t); err != nil {
 			return err
 		}
+	}
+
+	diskResults, err := prepareDiskSetupResults(b.DiskJobResults)
+	if err != nil {
+		return err
+	}
+	occupancy := prepareOccupancy(machineID, b.OpenClaw.DB, recv)
+	tx, err := s.beginWrite(context.Background(), "record_observation")
+	if err != nil {
+		return fmt.Errorf("store: begin: %w", err)
+	}
+	defer tx.Rollback()
+	// The display name participates in policy-token validation. Recheck it under
+	// the writer so a concurrent rename cannot validate evidence for an old name.
+	if err := tx.QueryRow("SELECT display_name FROM machine_registry WHERE machine_id=?", machineID).Scan(&displayName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
+		}
+		return fmt.Errorf("store: observation machine: %w", err)
+	}
+
+	// Read the bounded projection once instead of one query per tool/unit.
+	interval := time.Duration(s.unchangedInterval.Load())
+	type snapshotKey struct{ kind, subject string }
+	type snapshot struct {
+		payload  string
+		received time.Time
+	}
+	previous := map[snapshotKey]snapshot{}
+	if interval > 0 && (len(b.CLITools) > 0 || len(b.Systemd) > 0) {
+		rows, err := tx.Query("SELECT kind,subject,payload,received_at FROM observed_latest WHERE machine_id=? AND kind IN ('cli_tool','systemd')", machineID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var kind, subject, payload, received string
+			if err = rows.Scan(&kind, &subject, &payload, &received); err != nil {
+				rows.Close()
+				return err
+			}
+			previous[snapshotKey{kind, subject}] = snapshot{payload, parseTime(received)}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	var values []string
+	var args []any
+	flush := func() error {
+		if len(values) == 0 {
+			return nil
+		}
+		_, err := tx.Exec("INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES "+strings.Join(values, ","), args...)
+		values = nil
+		args = nil
+		if isForeignKeyErr(err) {
+			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
+		}
+		return err
+	}
+	for _, row := range prepared {
+		if interval > 0 && (row[4] == KindCLITool || row[4] == KindSystemd) {
+			old, ok := previous[snapshotKey{row[4].(string), row[5].(string)}]
+			age := receivedAt.Sub(old.received)
+			if ok && old.payload == row[6] && age >= 0 && age < interval {
+				continue
+			}
+		}
+		values = append(values, "(?,?,?,?,?,?,?,?)")
+		args = append(args, row...)
+		if len(values) == 100 {
+			if err := flush(); err != nil {
+				return fmt.Errorf("store: insert observations: %w", err)
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return fmt.Errorf("store: insert observations: %w", err)
+	}
+
+	if err := s.recordPreparedDiskSetupResults(tx, machineID, diskResults, receivedAt); err != nil {
+		return err
+	}
+	if err := s.signinNotificationFacts(tx, machineID, b.AuthHealth, receivedAt); err != nil {
+		return err
 	}
 
 	// credential_on_machine 是「目前狀態」的投影，可以覆蓋 —— 因為歷史在
@@ -1903,7 +2156,7 @@ ON CONFLICT(machine_id, provider) DO UPDATE SET
 	}
 
 	// 占用帳本。⚠ append-only，而且**只寫有 provider 的那些**。
-	if err := recordOccupancy(tx, machineID, b.OpenClaw.DB, recv); err != nil {
+	if err := recordPreparedOccupancy(tx, machineID, occupancy); err != nil {
 		return err
 	}
 
@@ -2423,9 +2676,8 @@ func (s *Store) latestObservation(machineID, kind, subject string) (observation,
 	var o observation
 	var measured, recv string
 	err := s.rdb.QueryRow(`
-SELECT subject, payload, measured_at, received_at FROM observed_state
- WHERE machine_id = ? AND kind = ? AND subject = ?
- ORDER BY received_at DESC, measured_at DESC, rowid DESC LIMIT 1`,
+SELECT subject, payload, measured_at, received_at FROM observed_latest
+ WHERE machine_id = ? AND kind = ? AND subject = ?`,
 		machineID, kind, subject).Scan(&o.Subject, &o.Payload, &measured, &recv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return observation{}, false, nil
@@ -2442,6 +2694,10 @@ SELECT subject, payload, measured_at, received_at FROM observed_state
 // cutoff belongs in SQL: filtering a newer row after LIMIT 1 would hide an
 // older row that was valid at that instant.
 func (s *Store) latestObservationReceivedBy(machineID, kind, subject string, evaluatedAt time.Time) (observation, bool, error) {
+	if o, ok, err := s.latestObservation(machineID, kind, subject); err != nil || !ok || !o.ReceivedAt.After(evaluatedAt) {
+		return o, ok, err
+	}
+
 	var o observation
 	var measured, recv string
 	err := s.rdb.QueryRow(`
@@ -2459,37 +2715,56 @@ SELECT subject, payload, measured_at, received_at FROM observed_state
 	return o, true, nil
 }
 
-// LatestOpenClawDBs 拿指定這幾台各自最新的一筆 OpenClaw 觀測裡的資料庫那一段。
-//
-// ⚠⚠ 存在的理由是效能，而且兩次都是實測逼出來的：
-//
-//  1. `/metrics` 原本為了排程指標，對每一台各叫一次 `Detail()`。`Detail()` 會做
-//     十幾個查詢、還會 `credRefreshHistory()` 掃一次整張 observed_state ——
-//     在 46 MB 的真實資料庫上把 `/metrics` 從 57 ms 拖到 300 ms。
-//  2. 第一版的修法是「一個查詢拿全機隊」，只濾 `kind`。**更慢，900 ms。**
-//     因為 `ix_observed_prune` 是 `(machine_id, kind, subject, received_at DESC)`，
-//     **machine_id 打頭**；不給它就整表掃描。
-//
-// 所以這裡吃索引：一台一個 O(1) 的查詢。⚠ 要改這支之前先跑 EXPLAIN QUERY PLAN，
-// 「一個查詢一定比五個快」在有複合索引的時候是錯的。
-//
-// ⚠ 沒有觀測、或觀測裡沒有 db 那一段的機器**不在 map 裡**（不是給一個零值）。
-// 「不知道」跟「0 個工作」在這一層就要分開，到了 /metrics 才分就太晚了。
-func (s *Store) LatestOpenClawDBs(machineIDs []string) (map[string]*model.OpenClawDB, error) {
-	out := make(map[string]*model.OpenClawDB, len(machineIDs))
-	for _, id := range machineIDs {
-		obs, ok, err := s.latestObservation(id, KindOpenClaw, KindOpenClaw)
+// latestOpenClawObservations reads the requested current snapshots in bounded
+// sets. The projection's primary key makes this independent of ledger size.
+func (s *Store) latestOpenClawObservations(machineIDs []string) (map[string]observation, error) {
+	out := make(map[string]observation, len(machineIDs))
+	for offset := 0; offset < len(machineIDs); offset += 500 {
+		end := offset + 500
+		if end > len(machineIDs) {
+			end = len(machineIDs)
+		}
+		args := []any{KindOpenClaw, KindOpenClaw}
+		for _, id := range machineIDs[offset:end] {
+			args = append(args, id)
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", end-offset), ",")
+		rows, err := s.rdb.Query(`SELECT machine_id,subject,payload,measured_at,received_at
+ FROM observed_latest WHERE kind=? AND subject=? AND machine_id IN (`+placeholders+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			continue
+		for rows.Next() {
+			var id, measured, received string
+			var obs observation
+			if err = rows.Scan(&id, &obs.Subject, &obs.Payload, &measured, &received); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			obs.MeasuredAt, obs.ReceivedAt = parseTime(measured), parseTime(received)
+			out[id] = obs
 		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// LatestOpenClawDBs omits absent, undecodable and non-present DB evidence.
+func (s *Store) LatestOpenClawDBs(machineIDs []string) (map[string]*model.OpenClawDB, error) {
+	observations, err := s.latestOpenClawObservations(machineIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*model.OpenClawDB, len(machineIDs))
+	for id, obs := range observations {
 		oc, ok := unmarshalInto[model.OpenClaw](obs.Payload)
-		if !ok || oc.DB == nil || !oc.DB.Present {
-			continue
+		if ok && oc.DB != nil && oc.DB.Present {
+			out[id] = oc.DB
 		}
-		out[id] = oc.DB
 	}
 	return out, nil
 }
@@ -2532,7 +2807,18 @@ func (s *Store) latestOpenClawInstallObservations(machineIDs []string,
 // LatestOpenClawInstallObservations preserves the evidence timestamp without
 // imposing a historical cutoff.
 func (s *Store) LatestOpenClawInstallObservations(machineIDs []string) (map[string]OpenClawInstallObservation, error) {
-	return s.latestOpenClawInstallObservations(machineIDs, s.latestObservation)
+	observations, err := s.latestOpenClawObservations(machineIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]OpenClawInstallObservation, len(observations))
+	for id, obs := range observations {
+		oc, ok := unmarshalInto[model.OpenClaw](obs.Payload)
+		if ok {
+			out[id] = OpenClawInstallObservation{Install: oc.Install, MeasuredAt: obs.MeasuredAt, ReceivedAt: obs.ReceivedAt}
+		}
+	}
+	return out, nil
 }
 
 // LatestOpenClawInstallObservationsAt is the snapshot-aware adapter used by
@@ -2604,8 +2890,8 @@ SELECT o.machine_id,
        CASE WHEN m.retired_at IS NULL THEN 0 ELSE 1 END
  FROM observed_state o
   JOIN machine_registry m ON m.machine_id = o.machine_id
- WHERE o.kind = ? AND o.received_at <= ?
-GROUP BY o.machine_id, m.display_name, o.subject, m.retired_at`, KindCredential, fmtTime(evaluatedAt))
+ WHERE o.kind = 'credential' AND o.received_at <= ?
+GROUP BY o.machine_id, m.display_name, o.subject, m.retired_at`, fmtTime(evaluatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("store: credential refresh history: %w", err)
 	}
@@ -2703,7 +2989,7 @@ func (s *Store) latestBySubject(machineID, kind string, evaluatedAt time.Time) (
 	// the production-sized ledger that made one credential read take ~2.8s and
 	// one Overview ~11s. This window shape visits the machine/kind history once
 	// while preserving the received_at -> measured_at -> rowid tie-break.
-	rows, err := s.rdb.Query(latestBySubjectAtSQL, machineID, kind, fmtTime(evaluatedAt))
+	rows, err := s.rdb.Query(latestBySubjectCurrentSQL, machineID, kind, fmtTime(evaluatedAt), fmtTime(evaluatedAt), machineID, kind, fmtTime(evaluatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("store: latest by subject %s: %w", kind, err)
 	}
@@ -2770,6 +3056,13 @@ func (s *Store) facts(machineID string, now time.Time, refresh credRefreshFleet)
 	if err != nil {
 		return state.Facts{}, err
 	}
+	return s.factsForMachine(m, now, refresh)
+}
+
+// Overview already has the registry row; avoid looking it up again per host.
+func (s *Store) factsForMachine(m Machine, now time.Time, refresh credRefreshFleet) (state.Facts, error) {
+	machineID := m.MachineID
+	var err error
 	f := state.Facts{
 		Now:       now,
 		Artifacts: s.artifactFacts(machineID, m.DisplayName, now),
@@ -2841,6 +3134,11 @@ SELECT COUNT(DISTINCT agent_started_at), COUNT(agent_started_at) FROM machine_ch
 	}
 	f.AgentRestartSignalObserved = agentStartedRows > 0
 
+	events, err := s.RecentOOMKills(machineID, now)
+	if err != nil {
+		return state.Facts{}, err
+	}
+	f.RecentOOMKills = len(events)
 	// --- 完整觀測最後一次收到的時間。
 	var lastObs sql.NullString
 	if err := s.rdb.QueryRow(
@@ -2927,6 +3225,13 @@ SELECT COUNT(DISTINCT agent_started_at), COUNT(agent_started_at) FROM machine_ch
 		}
 	}
 
+	if obs, ok, err := s.latestObservationReceivedBy(machineID, KindCLITool, "agy", now); err != nil {
+		return state.Facts{}, err
+	} else if ok {
+		if tool, ok := unmarshalInto[model.CLITool](obs.Payload); ok {
+			f.AgyPresent = tool.Present
+		}
+	}
 	// --- 憑證。⚠ Status 原樣帶過去，五個詞，不壓成布林。
 	creds, err := s.latestBySubject(machineID, KindCredential, now)
 	if err != nil {
@@ -2940,6 +3245,7 @@ SELECT COUNT(DISTINCT agent_started_at), COUNT(agent_started_at) FROM machine_ch
 			continue
 		}
 		cf := state.CredFact{
+			Source:    c.Source,
 			Provider:  c.Provider,
 			Status:    string(c.Status),
 			ExpiresAt: c.ExpiresAt,
@@ -3108,7 +3414,7 @@ func (s *Store) Overview(now time.Time) (Overview, error) {
 			ov.Retired = append(ov.Retired, m)
 			continue
 		}
-		f, err := s.facts(m.MachineID, now, refresh)
+		f, err := s.factsForMachine(m, now, refresh)
 		if err != nil {
 			return Overview{}, err
 		}

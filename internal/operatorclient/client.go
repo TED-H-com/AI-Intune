@@ -1,7 +1,5 @@
-// Package operatorclient is the reusable HTTP client for the human/operator
-// control plane. It intentionally has no machine-bearer or invented auth option:
-// the server derives the source identity and exact app capability from Tailscale
-// LocalAPI. A caller-supplied auth header must never override that authority.
+// Package operatorclient calls the Hub operator JSON API using tailnet identity
+// or an explicitly configured HTTPS service token.
 package operatorclient
 
 import (
@@ -31,8 +29,9 @@ const (
 )
 
 type Client struct {
-	base *url.URL
-	http *http.Client
+	token string
+	base  *url.URL
+	http  *http.Client
 }
 
 // New creates a client with a bounded timeout and refuses redirects. A control
@@ -130,11 +129,13 @@ type MachineChannelResponse struct {
 // digest must be carried into CreateEnrollToken. TTLSeconds is deliberately an
 // integer on the wire: clients must not disagree about duration spelling.
 type EnrollmentTokenPreviewRequest struct {
+	MonitorOnly bool   `json:"monitor_only,omitempty"`
 	DisplayName string `json:"display_name"`
 	TTLSeconds  int64  `json:"ttl_seconds"`
 }
 
 type EnrollmentTokenPreviewResponse struct {
+	MonitorOnly                bool      `json:"monitor_only,omitempty"`
 	DisplayName                string    `json:"display_name"`
 	TTLSeconds                 int64     `json:"ttl_seconds"`
 	PreviewedAt                time.Time `json:"previewed_at"`
@@ -156,6 +157,7 @@ type EnrollmentTokenPreviewResponse struct {
 }
 
 type EnrollmentTokenCreateRequest struct {
+	MonitorOnly   bool   `json:"monitor_only,omitempty"`
 	DisplayName   string `json:"display_name"`
 	TTLSeconds    int64  `json:"ttl_seconds"`
 	PreviewDigest string `json:"preview_digest"`
@@ -163,6 +165,7 @@ type EnrollmentTokenCreateRequest struct {
 }
 
 type EnrollmentTokenResponse struct {
+	MonitorOnly      bool      `json:"monitor_only,omitempty"`
 	DisplayName      string    `json:"display_name"`
 	MachineID        string    `json:"machine_id"`
 	TTLSeconds       int64     `json:"ttl_seconds"`
@@ -385,6 +388,12 @@ func (c *Client) newOperatorRequest(ctx context.Context, method, path string, bo
 	if err != nil {
 		return nil, fmt.Errorf("operator client: build request: %w", err)
 	}
+	if c.token != "" {
+		if !strings.HasPrefix(path, "/v1/operator/") {
+			return nil, errors.New("service token cannot access this route")
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", UserAgent)
 	return req, nil
@@ -596,6 +605,7 @@ func validateJSONNoStoreResponse(header http.Header) error {
 func decodeEnrollmentTokenPreviewResponse(raw []byte) (EnrollmentTokenPreviewResponse, error) {
 	var result EnrollmentTokenPreviewResponse
 	seen, err := decodeExactJSONObject(raw, "enrollment token preview", map[string]any{
+		"monitor_only":                  &result.MonitorOnly,
 		"display_name":                  &result.DisplayName,
 		"ttl_seconds":                   &result.TTLSeconds,
 		"previewed_at":                  &result.PreviewedAt,
@@ -625,6 +635,9 @@ func decodeEnrollmentTokenPreviewResponse(raw []byte) (EnrollmentTokenPreviewRes
 }
 
 func validateEnrollmentTokenPreviewResponse(result EnrollmentTokenPreviewResponse, request EnrollmentTokenPreviewRequest) error {
+	if result.MonitorOnly != request.MonitorOnly {
+		return errors.New("operator client: enrollment monitoring policy does not match request")
+	}
 	if result.DisplayName != request.DisplayName {
 		return errors.New("operator client: enrollment token preview display_name does not match request")
 	}
@@ -667,6 +680,7 @@ func validateEnrollmentTokenPreviewResponse(result EnrollmentTokenPreviewRespons
 func decodeEnrollmentTokenResponse(raw []byte) (EnrollmentTokenResponse, bool, error) {
 	var result EnrollmentTokenResponse
 	seen, err := decodeExactJSONObject(raw, "enrollment token create", map[string]any{
+		"monitor_only":      &result.MonitorOnly,
 		"machine_id":        &result.MachineID,
 		"display_name":      &result.DisplayName,
 		"created_at":        &result.CreatedAt,
@@ -694,6 +708,9 @@ func decodeEnrollmentTokenResponse(raw []byte) (EnrollmentTokenResponse, bool, e
 func validateEnrollmentTokenResponse(result EnrollmentTokenResponse, tokenFieldPresent bool,
 	status int, request EnrollmentTokenCreateRequest,
 ) error {
+	if result.MonitorOnly != request.MonitorOnly {
+		return errors.New("operator client: enrollment monitoring policy does not match request")
+	}
 	if result.DisplayName != request.DisplayName {
 		return errors.New("operator client: enrollment token response display_name does not match request")
 	}

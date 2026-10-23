@@ -644,10 +644,10 @@ CLI 版本不在 `SupportedVersions()` 內時：**`Discover` 與 `AuthStatus` �
 
 | CLI | 檔案 | 欄位 | 有效期 |
 |---|---|---|---|
-| claude | `~/.claude/.credentials.json` | `.claudeAiOauth.expiresAt`（ms epoch） | — |
+| claude | `~/.config/claude-automation/oauth-token`; absent → `~/.claude/.credentials.json` | setup-token shape; fallback `.claudeAiOauth.expiresAt`（ms epoch） | automation expiry not encoded |
 | codex | `~/.codex/auth.json` | 解 `.tokens.access_token` 的 JWT `exp` | ~10 天 |
 | grok | `~/.grok/auth.json` | `.["https://auth.x.ai::<uuid>"][].expires_at` | ~6 小時 |
-| agy | `~/.gemini/oauth_creds.json` | `.token.expiry` | ~1 小時 |
+| agy (`gemini` slot) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | `.token.refresh_token`; expiry only without refresh token | refreshable on use |
 | openclaw | — | **沒有任何過期欄位** | ❌ |
 
 **三個一定會踩的坑：**
@@ -656,7 +656,7 @@ CLI 版本不在 `SupportedVersions()` 內時：**`Discover` 與 `AuthStatus` �
 2. ⚠️ **grok 的頂層 key 是動態的**（`https://auth.x.ai::<uuid>`，每個帳號不同）。不能寫死，要遍歷。
 3. ⚠️ **`~/.codex/auth.json` 會被 BAT 熱抽換**，要同時讀 `codex-accounts.json` 的 `activeAccountId`。
 
-好消息：四家都是純 JSON、`0600`、**沒有 keyring 也沒有 SQLite**，所以算過期不需要解密、不需要呼叫 API、不會觸發任何遠端請求。
+Credential probes are offline file inspections. Claude automation uses a plain setup-token line; agy uses JSON. See [Fleet AI CLIs](FLEET-AI-CLIS.md#agent-credential-observations) for file safety checks and the additive `source` contract. Refreshable agy and long-lived Claude automation report `configured` without `expires_at`; legacy Gemini credentials are ignored when agy is present.
 
 ---
 

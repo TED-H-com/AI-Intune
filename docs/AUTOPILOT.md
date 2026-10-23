@@ -148,7 +148,7 @@ Use the account's existing username when resetting. Headless bootstrap needs no 
 | `CLAWCTL_REQUIRE_MFA` | Defaults **on** when unset in `local` / `both`; irrelevant in `tailscale`. Accepts `1` / `true` / `on` and `0` / `false` / `off`; other values (including empty) refuse startup. Opting out logs a WARNING and shows a persistent warning for local sessions on the dashboard and Account security. |
 | `CLAWCTL_SETUP_CODE` | Optional first-run code in `local` / `both`; omit to generate and log it. If supplied, requires at least 16 characters after removing whitespace/hyphens; comparisons are case-insensitive. Empty is invalid before the first admin exists. |
 | `CLAWCTL_TRUSTED_PROXIES` | Comma/space separated proxy CIDRs or bare IPv4/IPv6 addresses (/32 or /128). Default empty ignores forwarded headers. Invalid entries and prefixes broader than IPv4 /8 or IPv6 /16 refuse startup. |
-| `CLAWCTL_CLIENT_IP_HEADER` | `X-Forwarded-For` (default) or `Fly-Client-IP`; other values refuse startup. |
+| `CLAWCTL_CLIENT_IP_HEADER` | `X-Forwarded-For` (default), `Fly-Client-IP`, or `CF-Connecting-IP` (case-insensitive); other values refuse startup. |
 | `CLAWCTL_DOCKER_SUBNET` | Compose bridge subnet and Hub trusted proxies; default `172.31.87.0/24`. Override if it collides. |
 | `CLAWCTL_DB` / `--db` | SQLite path; its parent must be private and owned by the service user. The Docker image's explicit `--db` pins `/var/lib/clawctl/clawctl.sqlite`. |
 | `CLAWCTL_PUBLIC_HOST` | Compose/Caddy input only: public DNS hostname used to construct `CLAWCTL_PUBLIC_URL`. |
@@ -165,7 +165,7 @@ CLAWCTL_TRUSTED_PROXIES=127.0.0.1,::1
 CLAWCTL_CLIENT_IP_HEADER=X-Forwarded-For
 ```
 
-Trust only your proxy's actual source addresses and ensure it sanitizes forwarded headers. Empty trust uses the TCP peer; without configuration every proxied client shares one IP. Trusted XFF chains are walked right-to-left (at most 32 entries), skipping trusted hops. The first untrusted IP wins; malformed entries fall back to the last trusted hop, and all-trusted chains fall back to the peer. `Fly-Client-IP` must contain exactly one header value and one IP without a port. XFF entries with ports or empty entries are malformed; surrounding spaces are accepted. `Forwarded` and `X-Real-IP` are never used. This affects account limiter, lockout, audit/session source addresses and enrollment limits; operator identity, Host checks and WhoIs continue to use their existing boundary.
+Trust only your proxy's actual source addresses and ensure it sanitizes forwarded headers. Empty trust uses the TCP peer; without configuration every proxied client shares one IP. Trusted XFF chains are walked right-to-left (at most 32 entries), skipping trusted hops. The first untrusted IP wins; malformed entries fall back to the last trusted hop, and all-trusted chains fall back to the peer. `Fly-Client-IP` and `CF-Connecting-IP` must contain exactly one header value and one IP without a port. XFF entries with ports or empty entries are malformed; surrounding spaces are accepted. `Forwarded` and `X-Real-IP` are never used. This affects account limiter, lockout, audit/session source addresses and enrollment limits; operator identity, Host checks and WhoIs continue to use their existing boundary.
 
 For Fly public HTTP mode use:
 
@@ -176,12 +176,23 @@ CLAWCTL_CLIENT_IP_HEADER=Fly-Client-IP
 
 On Fly the rightmost `X-Forwarded-For` entry is the app's own edge address. Fly staff describe fly-proxy egress as `172.16.0.0/16`, but `172.19.x` has been observed, hence `/12`. Fly 6PN private networking is IPv6 `fdaa::/16` and is not trusted by this setting. The Fly entrypoint supplies these defaults in local mode; see [the Fly deployment guide](DEPLOY-FLY.md).
 
+### Cloudflare Tunnel
+
+With `cloudflared` on the host and Hub in Docker bridge networking, the direct peer is the Docker bridge gateway (for example, `172.17.0.1`). Use the actual gateway address:
+
+```env
+CLAWCTL_CLIENT_IP_HEADER=CF-Connecting-IP
+CLAWCTL_TRUSTED_PROXIES=172.17.0.1/32
+```
+
+Trust only that gateway `/32`, never broad ranges. The header must contain exactly one valid, unscoped IP; invalid or multiple values fall back to the peer address. Untrusted peers cannot override the client IP.
+
 ## Security model and current limits
 
 - Public HTTPS exposes the login surface to the Internet. Tailscale-only deployments instead keep it privately reachable within the mesh. TLS protects transport; it does not make the public service invisible.
 - Enrollment tickets have a **2-hour TTL** and are **one-time**. A keyed package is password-equivalent until its ticket is used, revoked or expires. It embeds the Hub URL and token, and is delivered with `Cache-Control: no-store`. The extracted token file is removed after successful enrollment; archived or copied tokens are not erased remotely.
 - The resulting machine bearer is long-lived. If stolen, retire the compromised machine credential and re-enroll with a new ticket; `--reenroll` alone does not revoke the old Hub credential. See [Moving agents](MOVE-AGENTS.md).
-- Passwords use **Argon2id** and a **12-character minimum** (enforced as 12 bytes). **5 consecutive failures** lock only that **(account, client key)** pair for **15 minutes**. IPv4 keys use the address; IPv6 keys use its /64 prefix (IPv4-mapped IPv6 uses IPv4). An attacker can lock out their own key; an admin on another key is unaffected. Audit/session sources retain the full address. Completing login resets only its pair; with MFA enabled, password verification alone does not clear failures; password reset clears all pairs. Rows older than 24 hours are pruned opportunistically. At least 50 failures across IPs in one rolling hour produce one audit signal per hour, without blocking the account. Password and second-factor failures both feed this signal. Distributed guessing is slowed by Argon2id, per-IP buckets, the password minimum, and required MFA.
+- Passwords use **Argon2id** and a **12-character minimum** (enforced as 12 bytes). **5 consecutive failures** lock only that **(account, client key)** pair for **15 minutes**. IPv4 keys use the address; IPv6 keys use its /64 prefix (IPv4-mapped IPv6 uses IPv4). An attacker can lock out their own key; an admin on another key is unaffected. Audit/session sources retain the full address. Completing login resets only its pair; with MFA enabled, password verification alone does not clear failures; password reset clears all pairs. Rows older than 24 hours are pruned opportunistically. At least 50 failures across IPs in one rolling hour produce one audit signal per hour; the signal itself blocks nothing. Password and second-factor failures both feed this signal. Distributed guessing is slowed by Argon2id, per-IP buckets, the password minimum, required MFA, and the account-wide second-factor lock below.
 - Login/setup POSTs share a per-client-key token bucket: **10/minute**, burst **5**. Enrollment uses **30/minute**, burst **30**. Behind a proxy, configure trusted proxies or every client shares the proxy IP, bucket and lockout pair. Each limiter holds at most 4096 buckets, pruning idle entries and evicting the least recently updated bucket when full so new admin sources remain eligible. An evicted attacker regains only a fresh burst.
 - Sessions expire after **12 hours idle** or **7 days absolute**. Cookies are HttpOnly and SameSite=Lax; HTTPS uses a Secure `__Host-` cookie. HTTPS mode emits HSTS. Go `CrossOriginProtection` checks browser writes; Host is pinned to `PUBLIC_URL`. `/metrics` requires an operator session in local mode; `/healthz` remains a content-free public probe and is exempt from the Host check on Hub directly. Through the Docker pack's Caddy, a foreign Host on any path returns 421 at the edge: `curl -H 'Host: wrong.example' https://<host>/login`. The in-network `docker run` check in [OCI verification](DEPLOY-OCI.md#checks) is an optional deeper check of Hub itself.
 - **TOTP MFA is required by default in local and both modes** and currently supports **multiple admin accounts**. Local admin authorizes all three operator capabilities. Operator **CLI/MCP transport remains Tailscale-mode only**; operator API tokens are a follow-up. The local maintenance commands above are separate from that HTTP transport.
@@ -196,7 +207,7 @@ Hub-driven Tailscale provisioning and Cloudflare Tunnel automation remain out of
 
 The first admin enrolls during setup: after the account and session are created, the Hub opens **Account security** with a secret, an `otpauth` URI, and a confirmation form automatically. Enter the displayed base32 secret in your authenticator or copy the `otpauth` link, then confirm its six-digit code. No QR library is used. Save the ten recovery codes immediately: they are shown only once, stored as SHA-256 hashes, and each works once. Continue to the dashboard after saving them. Admins created with `bootstrap-admin` enter the same enrollment on their first login.
 
-Login then requires your password followed by an authenticator or recovery code. Authenticator codes allow one 30-second step of clock skew on either side; used steps cannot be replayed. Bad second-factor attempts share the password login's **(account, client key)** five-attempt / fifteen-minute lockout and client IP limiter. Only that pair is locked; an admin on a different client key can still complete MFA. Pending logins expire after five minutes and bind to the full resolved client IP, including behind explicitly trusted proxies. Audit sources retain the full resolved address; IPv6 lockout/limiter keys use /64 prefixes.
+Login then requires your password followed by an authenticator or recovery code. Authenticator codes allow one 30-second step of clock skew on either side; used steps cannot be replayed. Bad second-factor attempts share the password login's **(account, client key)** five-attempt / fifteen-minute lockout and client IP limiter. They also count per account across every client key: **10 consecutive second-factor failures** lock authenticator codes for that account on every key for **one hour**. During that hour a recovery code still completes login and clears the lock. A successful second factor, password reset or MFA reset clears the count; submissions refused by either lock do not count. Reaching the second factor requires the password, so this lock means the password is known: sign in with a recovery code and change it. Pending logins expire after five minutes and bind to the full resolved client IP, including behind explicitly trusted proxies. Audit sources retain the full resolved address; IPv6 lockout/limiter keys use /64 prefixes.
 
 MFA enforcement defaults on in `local` / `both`. Until enrollment is confirmed, operator HTML routes redirect to Account security, and JSON routes return HTTP 403 with `MFA_ENROLLMENT_REQUIRED`. Enrollment and logout remain available. Tailscale principals are unaffected. `CLAWCTL_REQUIRE_MFA=0` (also `false` / `off`) explicitly opts out: startup logs `WARNING: MFA enforcement disabled by CLAWCTL_REQUIRE_MFA=0; local admin accounts can sign in with a password only`, and local sessions show a persistent warning on the dashboard and Account security. An enrolled account still requires its second factor when enforcement is disabled.
 
@@ -249,3 +260,19 @@ The Linux installer detects `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` (upper a
 Detected settings are saved in `/etc/systemd/system/clawctl-agent.service.d/10-proxy.conf` before the agent starts. The file is mode 0644, or 0600 when values contain possible URL credentials. Unsafe values (control characters, double quotes, backslashes, or `%`) are skipped with a warning that names only the variable. The file is parsed as data, without shell expansion.
 
 Use `--no-proxy-dropin` to skip detection and writing. With no detected settings, an existing drop-in is preserved. To change settings, edit the drop-in with `sudoedit`, then run `sudo systemctl daemon-reload` and `sudo systemctl restart clawctl-agent.service`. Reenrollment rollback keeps the drop-in, including when it removes a newly installed unit; agent upgrades also preserve it. Review `NO_PROXY` when moving to a different Hub.
+
+Agent upgrades with `ops/upgrade-agent.sh` (local or SSH) use non-interactive
+`sudo -n`. A narrow sudoers drop-in can authorize the default
+`/usr/local/bin` binary publication and specific service commands. The rendered
+unit is compared with `/etc/systemd/system/clawctl-agent.service` without sudo;
+identical units skip unit installation and daemon reload. Already enabled
+services skip enable.
+
+Changed units require full sudo password authorization for installing the unit
+and moving it into place; these commands are intentionally outside the narrow
+rule. If authorization fails, rerun interactively after authenticating full sudo
+access on the target (for example, `sudo -v` in the operator's terminal). The
+upgrade itself never prompts. SELinux relabeling runs only when SELinux is active
+and also requires authorization outside the narrow rule. Non-default
+`CLAWCTL_SYSTEM_BIN_DIR` or `CLAWCTL_SYSTEM_UNIT_DIR` values still work with
+suitable sudo access, but the default-path narrow sudoers rule will not match.

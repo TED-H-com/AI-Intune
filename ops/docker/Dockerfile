@@ -11,9 +11,9 @@
 #     --build-arg CLAWCTL_VERSION=dev -t clawctl-hub:local .
 #
 # CLAWCTL_VERSION is baked into the Hub binary (main.version) and into the
-# Linux agent bootstrap release. Hub loads that release from
+# Linux, Darwin, and Windows agent bootstrap release. Hub loads that release from
 # <dir of --db>/agent-bootstrap/<version> at startup (both amd64 and arm64
-# are required). The default target below stores the release in the image at
+# are shipped for each OS). The default target stores the release in the image at
 # /usr/local/share/clawctl/agent-bootstrap/<version>/. The hub-init target
 # copies the same tree to /opt/clawctl-seed/... and the compose one-shot
 # seeds it into the data volume on first use. Hub has no flag for another path.
@@ -40,10 +40,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 
 ARG CLAWCTL_VERSION=dev
+ARG CLAWCTL_COMMIT=unknown
+ARG CLAWCTL_BUILD_TIME=unknown
 ENV CGO_ENABLED=0
 # Bundles are packed by ops/build-agent-bundles.sh (same archive layout the
 # Hub checks). SHA256SUMS matches ops/publish-agent-bundles.sh for the
-# required Linux pair: "<sha256><two spaces><filename>" amd64 then arm64.
+# required Linux pair, then Windows and Darwin pairs (amd64 then arm64):
+# "<sha256><two spaces><filename>".
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     <<'EOF'
@@ -74,7 +77,7 @@ if [ "${#version}" -gt 128 ]; then
 fi
 
 mkdir -p /out /src/build
-ldflags="-s -w -X main.version=${version}"
+ldflags="-s -w -X main.version=${version} -X main.commit=${CLAWCTL_COMMIT} -X main.buildTime=${CLAWCTL_BUILD_TIME}"
 
 goos="${TARGETOS:-$(go env GOOS)}"
 goarch="${TARGETARCH:-$(go env GOARCH)}"
@@ -90,7 +93,19 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath \
   -ldflags "$ldflags" \
   -o /src/build/clawctl-agent-linux-arm64 ./cmd/clawctl-agent
 
+for arch in amd64 arm64; do
+  CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -buildvcs=false -trimpath \
+    -ldflags "$ldflags" -o "/src/build/clawctl-agent-darwin-$arch" ./cmd/clawctl-agent
+done
+
+for arch in amd64 arm64; do
+  CGO_ENABLED=0 GOOS=windows GOARCH="$arch" go build -buildvcs=false -trimpath \
+    -ldflags "$ldflags -H=windowsgui" -o "/src/build/clawctl-agent-windows-$arch" ./cmd/clawctl-agent
+done
+
 /src/ops/build-agent-bundles.sh "$version" linux
+/src/ops/build-agent-bundles.sh "$version" windows
+/src/ops/build-agent-bundles.sh "$version" darwin
 
 amd64=clawctl-agent-bootstrap-linux-amd64.tar.gz
 arm64=clawctl-agent-bootstrap-linux-arm64.tar.gz
@@ -103,6 +118,14 @@ for name in "$amd64" "$arm64"; do
   digest=$(sha256sum "$dest/$name") || exit 1
   printf '%s  %s\n' "${digest%% *}" "$name" >> "$dest/SHA256SUMS"
 done
+for os in windows darwin; do
+  for arch in amd64 arm64; do
+    name="clawctl-agent-bootstrap-$os-$arch.tar.gz"
+    install -m 0644 "/src/build/$name" "$dest/$name"
+    digest=$(sha256sum "$dest/$name") || exit 1
+    printf '%s  %s\n' "${digest%% *}" "$name" >> "$dest/SHA256SUMS"
+  done
+done
 chmod 0644 "$dest/SHA256SUMS"
 chmod 0700 /out/agent-bootstrap "$dest"
 EOF
@@ -112,6 +135,8 @@ EOF
 # cannot fix a root-owned volume itself.
 FROM busybox:1.36.1 AS hub-init
 ARG CLAWCTL_VERSION=dev
+ARG CLAWCTL_COMMIT=unknown
+ARG CLAWCTL_BUILD_TIME=unknown
 ENV CLAWCTL_VERSION=${CLAWCTL_VERSION}
 COPY --from=build /out/agent-bootstrap /opt/clawctl-seed/agent-bootstrap
 COPY ops/docker/hub-data-init.sh /usr/local/bin/hub-data-init.sh
@@ -125,7 +150,7 @@ FROM gcr.io/distroless/static-debian12:nonroot AS hub
 
 LABEL org.opencontainers.image.title="clawctl-hub" \
       org.opencontainers.image.description="clawctl fleet Hub (Go + SQLite); Tailscale operator auth" \
-      org.opencontainers.image.source="https://github.com/teddashh/AI-Intune"
+      org.opencontainers.image.source="https://github.com/TED-H-com/AI-Intune"
 
 USER nonroot:nonroot
 
@@ -160,6 +185,8 @@ FROM litestream/litestream:0.5.17 AS litestream-bins
 
 FROM debian:bookworm-slim AS hub-fly
 ARG CLAWCTL_VERSION=dev
+ARG CLAWCTL_COMMIT=unknown
+ARG CLAWCTL_BUILD_TIME=unknown
 ENV CLAWCTL_VERSION=${CLAWCTL_VERSION} \
     CLAWCTL_DB=/var/lib/clawctl/clawctl.sqlite \
     CLAWCTL_REPORT_STAMP=/var/lib/clawctl/last-report.stamp \

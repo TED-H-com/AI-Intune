@@ -81,6 +81,11 @@ var baselineLedgerTables = []ledgerTableInvariant{
 			`channel:TEXT:0:-:0 channel_revision:INTEGER:1:0:0`,
 			`channel:TEXT:0:-:0 channel_revision:INTEGER:1:0:0 lifecycle_revision:INTEGER:1:0:0`,
 			`channel:TEXT:0:-:0 channel_revision:INTEGER:1:0:0 lifecycle_revision:INTEGER:1:0:0 assigned_user_id:TEXT:0:-:0 assigned_user_login:TEXT:0:-:0 assigned_user_revision:INTEGER:1:0:0`,
+			` execution_policy:TEXT:1:'managed':0 execution_policy_revision:INTEGER:1:1:0 execution_policy_supported:INTEGER:1:0:0 execution_policy_observed_revision:INTEGER:1:0:0`,
+			`channel:TEXT:0:-:0 execution_policy:TEXT:1:'managed':0 execution_policy_revision:INTEGER:1:1:0 execution_policy_supported:INTEGER:1:0:0 execution_policy_observed_revision:INTEGER:1:0:0`,
+			`channel:TEXT:0:-:0 channel_revision:INTEGER:1:0:0 execution_policy:TEXT:1:'managed':0 execution_policy_revision:INTEGER:1:1:0 execution_policy_supported:INTEGER:1:0:0 execution_policy_observed_revision:INTEGER:1:0:0`,
+			`channel:TEXT:0:-:0 channel_revision:INTEGER:1:0:0 lifecycle_revision:INTEGER:1:0:0 execution_policy:TEXT:1:'managed':0 execution_policy_revision:INTEGER:1:1:0 execution_policy_supported:INTEGER:1:0:0 execution_policy_observed_revision:INTEGER:1:0:0`,
+			`channel:TEXT:0:-:0 channel_revision:INTEGER:1:0:0 lifecycle_revision:INTEGER:1:0:0 assigned_user_id:TEXT:0:-:0 assigned_user_login:TEXT:0:-:0 assigned_user_revision:INTEGER:1:0:0 execution_policy:TEXT:1:'managed':0 execution_policy_revision:INTEGER:1:1:0 execution_policy_supported:INTEGER:1:0:0 execution_policy_observed_revision:INTEGER:1:0:0`,
 		},
 	},
 	{

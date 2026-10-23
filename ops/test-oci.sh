@@ -273,7 +273,7 @@ test_render_user_data() (
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   bash ops/oci/provision.sh --render-user-data "$tmp/user-data" --domain hub.example.com --git-ref main \
-    --repo https://github.com/teddashh/AI-Intune.git >"$tmp/out"
+    --repo https://github.com/TED-H-com/AI-Intune.git >"$tmp/out"
   python3 - "$tmp/user-data" ops/oci/host-setup.sh <<'PY'
 import base64, pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text()

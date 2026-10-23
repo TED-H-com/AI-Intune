@@ -70,12 +70,78 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return nil, &CallError{Code: "invalid_arguments", Message: "context is required"}
 	}
 	switch name {
+	case "join_requests_list":
+		return s.joinRequestsList(ctx, raw)
+	case "certificate_list", "certificate_get":
+		return s.certificateCall(ctx, name, raw)
+	case "disk_action_preview", "disk_action_decide", "disk_quarantine_list", "disk_restore_preview", "disk_restore_apply":
+		return s.diskActionCall(ctx, name, raw)
+	case "disk_approval_list", "disk_approval_decision_preview", "disk_approval_decision_apply":
+		return s.diskApprovalCall(ctx, name, raw)
+	case "disk_alerts_list", "disk_ownership_get", "disk_report_get", "disk_ops_status", "disk_policy_list", "disk_policy_get", "disk_policy_upsert_preview", "disk_policy_upsert_apply":
+		return s.diskPolicyCall(ctx, name, raw)
+	case "schedule_list", "schedule_get", "schedule_upsert_preview", "schedule_upsert_apply", "schedule_set_enabled_preview", "schedule_set_enabled_apply", "schedule_run_now":
+		return s.scheduleCall(ctx, name, raw)
+	case "script_catalog_list", "script_run_preview", "script_run_apply":
+		return s.scriptCall(ctx, name, raw)
+	case "jobs_summary":
+		var args operator.SupervisionFilter
+		if err := decodeSupervisionArgs(raw, &args); err != nil {
+			return nil, err
+		}
+		if err := operator.ValidateSupervisionFilter(args); err != nil {
+			return nil, &CallError{Code: "invalid_arguments", Message: "invalid supervision filter"}
+		}
+		result, err := s.Hub.JobsSummary(ctx, args)
+		return result, hubErr(err)
+	case "approvals_summary":
+		var args struct {
+			Window string `json:"window"`
+		}
+		if err := decodeSupervisionArgs(raw, &args); err != nil {
+			return nil, err
+		}
+		if err := operator.ValidateSupervisionFilter(operator.SupervisionFilter{Window: args.Window}); err != nil {
+			return nil, &CallError{Code: "invalid_arguments", Message: "invalid supervision window"}
+		}
+		result, err := s.Hub.ApprovalsSummary(ctx, args.Window)
+		return result, hubErr(err)
+	case "loops_list":
+		var args struct {
+			MachineID string `json:"machine_id"`
+		}
+		if err := decodeSupervisionArgs(raw, &args); err != nil {
+			return nil, err
+		}
+		if len(args.MachineID) > 256 {
+			return nil, &CallError{Code: "invalid_arguments", Message: "invalid machine filter"}
+		}
+		result, err := s.Hub.Loops(ctx, args.MachineID)
+		return result, hubErr(err)
+	case "hub_status":
+		if err := decodeSupervisionArgs(raw, &struct{}{}); err != nil {
+			return nil, err
+		}
+		result, err := s.Hub.HubStatus(ctx)
+		return result, hubErr(err)
 	case "fleet_overview":
 		return s.fleetOverview(ctx, raw)
+	case "signins_list":
+		return s.signinsList(ctx, raw)
 	case "machines_list":
 		return s.machinesList(ctx, raw)
 	case "machine_get":
 		return s.machineGet(ctx, raw)
+	case "machine_disks":
+		return s.machineDisks(ctx, raw)
+	case "host_profile_get":
+		return s.hostProfileGet(ctx, raw)
+	case "machine_readiness":
+		return s.machineReadiness(ctx, raw)
+	case "machine_safe_detail":
+		return s.machineSafeDetail(ctx, raw)
+	case "machine_oom_kills":
+		return s.machineOOMKills(ctx, raw)
 	case "machine_evidence":
 		return s.machineEvidence(ctx, raw)
 	case "jobs_list":
@@ -206,6 +272,23 @@ func (s *Service) machineGet(ctx context.Context, raw json.RawMessage) (any, err
 		return nil, err
 	}
 	result, err := s.Hub.Machine(ctx, args.MachineID)
+	if err != nil {
+		return nil, hubErr(err)
+	}
+	return result, nil
+}
+
+func (s *Service) machineSafeDetail(ctx context.Context, raw json.RawMessage) (any, error) {
+	var args struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return nil, err
+	}
+	if err := requireID("machine_id", args.MachineID); err != nil {
+		return nil, err
+	}
+	result, err := s.Hub.MachineSafe(ctx, args.MachineID)
 	if err != nil {
 		return nil, hubErr(err)
 	}
@@ -945,4 +1028,26 @@ func hubErr(err error) error {
 		return &CallError{Code: api.Code, Message: api.Message}
 	}
 	return &CallError{Code: "hub_error", Message: err.Error()}
+}
+
+// Supervision's closed schemas reject null objects/fields and explicit empty
+// optional strings. Return a fixed error without echoing caller-provided keys.
+func decodeSupervisionArgs(raw json.RawMessage, dst any) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	invalid := &CallError{Code: "invalid_arguments", Message: "invalid supervision arguments"}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return invalid
+	}
+	for _, v := range fields {
+		if bytes.Equal(bytes.TrimSpace(v), []byte("null")) || bytes.Equal(bytes.TrimSpace(v), []byte(`""`)) {
+			return invalid
+		}
+	}
+	if err := decodeArgs(raw, dst); err != nil {
+		return invalid
+	}
+	return nil
 }

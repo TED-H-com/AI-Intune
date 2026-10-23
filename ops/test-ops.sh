@@ -811,7 +811,8 @@ install_ancestor_symlink_fixture() {
 }
 
 agent_installer_complete_fixture() (
-	local fixture="$TMP/agent-installer-complete" mock home token tailscale_key log install_agent system_unit_dir
+	local fixture="$TMP/agent-installer-complete-${1:-account}" mock home token tailscale_key log install_agent system_unit_dir
+	local install_flags=()
 	unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy
 	export CLAWCTL_ETC_ENVIRONMENT="$TMP/agent-installer-environment"
 	: >"$CLAWCTL_ETC_ENVIRONMENT"
@@ -830,6 +831,7 @@ agent_installer_complete_fixture() (
 
 	printf '%s\n' '#!/usr/bin/env bash' \
 		'printf "sudo %s\n" "$*" >>"$AGENT_TEST_LOG"' \
+		'if [[ "$1" == "-H" && "$2" == "-u" ]]; then shift 3; exec "$@"; fi' \
 		'if [[ "$1" == "-n" && "$2" == true ]]; then exit "${FAIL_SUDO_NONINTERACTIVE:-0}"; fi' \
 		'if [[ "$1" == "-v" ]]; then exit 0; fi' \
 		'if [[ "$1" == install ]]; then shift; args=(); while [[ $# -gt 0 ]]; do case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac; done; exec install "${args[@]}"; fi'  \
@@ -898,16 +900,26 @@ agent_installer_complete_fixture() (
 	install_agent="$fixture/install-agent.sh"
 	sed -e "s#/usr/bin/podman#$mock/podman#g" -e "s#/sys/fs/selinux/enforce#$fixture/selinux-enforce#g" "$INSTALL_AGENT" >"$install_agent"
 	chmod 0755 "$install_agent"
+	if [[ ${1:-} == root ]]; then
+		# Exercise root dispatch without requiring root or touching a host account.
+		sed -i 's/\[\[ $EUID == 0 \&\&/[[ 0 == 0 \&\&/' "$install_agent"
+		printf '#!/usr/bin/env bash\nprintf "fixture:x:%%s:%%s::%%s:/bin/bash\\n" "$(id -u)" "$(id -g)" "$AGENT_TEST_HOME"\n' >"$mock/getent"
+		printf '%s\n' '#!/usr/bin/env bash' 'args=(); while (($#)); do case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac; done; exec /usr/bin/install "${args[@]}"' >"$mock/install"
+		printf '%s\n' '#!/usr/bin/env bash' 'if [[ ${1:-} == TARGET_USER=* ]]; then exit 0; fi; exec /usr/bin/env "$@"' >"$mock/env"
+		chmod 0755 "$mock/getent" "$mock/install" "$mock/env"
+		export AGENT_TEST_HOME="$home"
+		install_flags=(--user "$(id -un)")
+	fi
 
 	HOME="$home" USER="fixture-user" AGENT_TEST_LOG="$log" TAILSCALE_TEST_LOG="$log" \
 		TAILSCALE_TEST_STATE="$fixture/tailscale-state" PATH="$mock:$PATH" \
 		CLAWCTL_SYSTEM_BIN_DIR="$fixture/system-bin" CLAWCTL_SYSTEM_UNIT_DIR="$system_unit_dir" AGENT_TEST_SYSTEM_UNIT="$system_unit_dir" \
 		AGENT_TEST_USER="$(id -un)" AGENT_TEST_UID="$EUID" \
-		"$install_agent" --hub http://100.64.0.1:8787 --token-file "$token" \
+		"$install_agent" "${install_flags[@]}" --hub http://100.64.0.1:8787 --token-file "$token" \
 		--tailscale-auth-key-file "$tailscale_key" --binary "$fixture/clawctl-agent" || return
 	[[ -f "$system_unit_dir/clawctl-agent.service" ]] || return 91
 	grep -Fxq "ExecStart=$fixture/system-bin/clawctl-agent" "$system_unit_dir/clawctl-agent.service" || return 91
-	grep -Fxq 'sudo -n true' "$log" || return 91
+	if [[ ${1:-} != root ]]; then grep -Fxq 'sudo -n true' "$log" || return 91; fi
 	! grep -q restorecon "$log" || return 91
 	[[ "$(cat "$home/.local/bin/clawctl-agent")" == legacy-binary ]] || return 91
 	[[ ! -e "$home/.config/systemd/user/clawctl-agent.service" ]] || return 98
@@ -920,6 +932,14 @@ agent_installer_complete_fixture() (
 	grep -Fq 'enroll --hub http://100.64.0.1:8787 --token-file' "$log" || return 93
 	grep -Fq 'verify --hub http://100.64.0.1:8787 --since ' "$log" || return 94
 	grep -Fxq 'tailscale-up' "$log" || return 95
+
+	if [[ ${1:-} == root ]]; then
+		grep -Fq 'sudo -H -u' "$log" || return 96
+		local delivered_token
+		delivered_token=$(sed -n 's/^enroll .*--token-file //p' "$log" | head -1)
+		[[ -n "$delivered_token" && ! -e "$delivered_token" ]] || return 97
+		return 0
+	fi
 
 	# Re-enrollment Case 1: existing config same hub -> skip enroll
 	rm -f "$log"
@@ -1587,10 +1607,10 @@ expect 'agent install enables persistence before service start' 0 is_silent
 run appears_in_order3 'sudo systemctl reset-failed clawctl-agent.service' 'sudo systemctl restart clawctl-agent.service' '"$BIN_FILE" verify --hub "$HUB" --since "$SERVICE_STARTED_AT" --timeout 2m' "$INSTALL_AGENT"
 expect 'agent install resets the restart gate before start and requires a fresh Hub receipt' 0 is_silent
 
-run appears_before '"$BIN_FILE" verify --hub' 'echo "Managed:' "$INSTALL_AGENT"
+run appears_before '"$BIN_FILE" verify --hub' 'echo "Installed:' "$INSTALL_AGENT"
 expect 'agent install loads the system unit before retiring the legacy user service' 0 is_silent
 
-run appears_before '[[ "$AGENT_COUNT" == "1" ]]' 'echo "Managed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active jobs=enabled"' "$INSTALL_AGENT"
+run appears_before '[[ "$AGENT_COUNT" == "1" ]]' 'echo "Installed: agent=$AGENT_VERSION tailscale=$TAILSCALE_IP service=active; execution follows the enrollment profile."' "$INSTALL_AGENT"
 expect 'agent install publishes success only after exact process validation' 0 is_silent
 
 run grep -E '⚠|temporary|暫時|disclaimer|可能缺少|可能需要' "$INSTALL_AGENT"
@@ -1614,7 +1634,7 @@ home_ancestor_symlink_fixture() {
 	: >"$fixture/data/file"
 	ln -s "$fixture/data/file" "$fixture/home/.file"
 	probe() {
-		bash -c 'set -euo pipefail; fail() { echo "$1" >&2; exit 1; }; source "$1"; ensure_home_ancestor "$2"' _ "$fixture/fn.sh" "$1"
+		bash -c 'set -euo pipefail; AGENT_UID=$EUID; AGENT_USER=$(id -un); as_agent() { "$@"; }; fail() { echo "$1" >&2; exit 1; }; source "$1"; ensure_home_ancestor "$2"' _ "$fixture/fn.sh" "$1"
 	}
 	probe "$fixture/home/.cache" || return 11
 	! probe "$fixture/home/.open" 2>/dev/null || return 12
@@ -1638,8 +1658,10 @@ home_ancestor_symlink_fixture() {
 }
 run home_ancestor_symlink_fixture
 expect "install-agent accepts a symlinked home ancestor only when its target is a private user-owned directory" 0 true
+run agent_installer_complete_fixture root
+expect 'root installer drops privileges for enrollment without password prompts' 0 has 'Installed: agent=test-version'
 run agent_installer_complete_fixture
-expect 'agent installer completes Tailscale, enrollment, service and Hub receipt in one run' 0 has 'Managed: agent=test-version tailscale=100.64.0.77 service=active jobs=enabled'
+expect 'agent installer completes Tailscale, enrollment, service and Hub receipt in one run' 0 has 'Installed: agent=test-version tailscale=100.64.0.77 service=active; execution follows the enrollment profile.'
 
 run macos_agent_installer_complete_fixture
 expect 'macOS install script substitutes all placeholders in launchd plist' 0 true
@@ -1650,7 +1672,149 @@ expect 'macOS install script indicates which script to run on Linux' 1 has 'On L
 run linux_installer_names_macos_fixture
 expect 'Linux install script indicates which script to run on macOS' 1 has 'ops/install-agent-macos.sh'
 
-run appears_in_order3 'got="$(timeout 5 "$bin.new" version' 'sudo mv -f "$system_unit.new" "$system_unit"' 'sudo systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
+upgrade_agent_sudo_fixture() (
+  local mode=$1 fixture="$TMP/upgrade-sudo-$1" script
+  mkdir -p "$fixture/home/.local/bin" "$fixture/home/.local/share/clawctl" "$fixture/home/.config/clawctl" "$fixture/home/.config/systemd/user"
+  export HOME="$fixture/home" UPGRADE_SUDO_LOG="$fixture/sudo.log" UPGRADE_MODE="$mode"
+  unset CLAWCTL_SYSTEM_BIN_DIR CLAWCTL_SYSTEM_UNIT_DIR
+  printf '{}\n' >"$HOME/.config/clawctl/agent.json"
+  chmod 0600 "$HOME/.config/clawctl/agent.json"
+  touch "$HOME/.local/bin/clawctl-agent.new" "$HOME/.config/systemd/user/clawctl-hermes.service.new" "$HOME/.config/systemd/user/openclaw-gateway.service.new"
+  cp "$AGENT_UNIT" "$HOME/.local/share/clawctl/clawctl-agent.service.new"
+  eval "$(sed -n '/^remote_script() {$/,/^upgrade_local() {$/p' "$UPGRADE_AGENT" | sed '$d')"
+  # Run the actual remote body, which the local path also uses. Stop after the
+  # service restart: the remaining checks concern Hub readiness, not sudo.
+  script="$(remote_script)"
+  # Isolate the host SELinux filesystem fallback as well as selinuxenabled.
+  script="${script//\/sys\/fs\/selinux\/enforce/$fixture/selinux-enforce}"
+  script="${script%%systemctl is-active --quiet clawctl-agent.service*}"
+  sudo() {
+    printf '%s\n' "$*" >>"$UPGRADE_SUDO_LOG"
+    [[ $1 == -n ]] || return 90
+    shift
+    case "$*" in
+      "true"|"install -d -m 0755 /usr/local/bin /etc/systemd/system"| \
+      "install -m 0755 -o root -g root $HOME/.local/bin/clawctl-agent.new /usr/local/bin/clawctl-agent.new"| \
+      "mv -f /usr/local/bin/clawctl-agent.new /usr/local/bin/clawctl-agent"| \
+      "systemctl daemon-reload"|"systemctl enable clawctl-agent.service"| \
+      "systemctl reset-failed clawctl-agent.service"|"systemctl restart clawctl-agent.service"| \
+      "systemctl status clawctl-agent.service") return 0 ;;
+      "install -m 0644 $HOME/.local/share/clawctl/clawctl-agent.service.rendered /etc/systemd/system/clawctl-agent.service.new"| \
+      "mv -f /etc/systemd/system/clawctl-agent.service.new /etc/systemd/system/clawctl-agent.service")
+        [[ $UPGRADE_MODE != identical && $UPGRADE_MODE != disabled && $UPGRADE_MODE != denied ]] ;;
+      *) touch "$UPGRADE_SUDO_LOG.unexpected"; echo "Unexpected sudo arguments: $*" >&2; return 90 ;;
+    esac
+  }
+  cmp() {
+    [[ $# == 3 && $1 == -s && $2 == "$HOME/.local/share/clawctl/clawctl-agent.service.rendered" && $3 == /etc/systemd/system/clawctl-agent.service ]] || return 90
+    [[ $UPGRADE_MODE == identical || $UPGRADE_MODE == disabled ]]
+  }
+  systemctl() {
+    case "$*" in
+      "is-enabled clawctl-agent.service")
+        if [[ $UPGRADE_MODE == disabled ]]; then echo disabled; return 1; else echo enabled; fi ;;
+      "show clawctl-agent.service -p LoadState --value") echo loaded ;;
+      "show clawctl-agent.service -p FragmentPath --value") echo /etc/systemd/system/clawctl-agent.service ;;
+      "show clawctl-agent.service -p User --value") echo agenttest ;;
+      "show clawctl-agent.service -p ProtectSystem --value") echo strict ;;
+      "show clawctl-agent.service -p ProtectHome --value") echo read-only ;;
+      *) echo "Unexpected systemctl arguments: $*" >&2; return 90 ;;
+    esac
+  }
+  id() { case "$*" in -un) echo agenttest ;; -u) echo 1001 ;; *) return 90 ;; esac; }
+  timeout() { [[ $# == 3 && $1 == 5 && $2 == "$HOME/.local/bin/clawctl-agent.new" && $3 == version ]] || return 90; echo test-version; }
+  selinuxenabled() { return 1; }
+  restorecon() { echo 'Unexpected restorecon' >&2; return 90; }
+  export -f sudo cmp systemctl id timeout selinuxenabled restorecon
+  local result=0
+  bash -s test-version <<<"$script" >"$fixture/output" 2>&1 || result=$?
+  [[ ! -e "$UPGRADE_SUDO_LOG.unexpected" ]] || return 90
+  if [[ $mode == denied ]]; then
+    [[ $result != 0 ]] || return 91
+    grep -Fq 'rerun interactively' "$fixture/output" || return 92
+    ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 93
+    return 0
+  fi
+  [[ $result == 0 ]] || { cat "$fixture/output"; return 94; }
+  if [[ $mode == changed ]]; then
+    grep -Fxq -- "-n install -m 0644 $HOME/.local/share/clawctl/clawctl-agent.service.rendered /etc/systemd/system/clawctl-agent.service.new" "$UPGRADE_SUDO_LOG" || return 95
+    grep -Fxq -- '-n mv -f /etc/systemd/system/clawctl-agent.service.new /etc/systemd/system/clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 96
+    grep -Fxq -- '-n systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 97
+    grep -Fq 'full sudo password' "$fixture/output" || return 98
+  else
+    ! grep -Fq 'install -m 0644' "$UPGRADE_SUDO_LOG" || return 99
+    ! grep -Fq '/etc/systemd/system/clawctl-agent.service.new' "$UPGRADE_SUDO_LOG" || return 100
+    ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 101
+  fi
+  if [[ $mode == disabled ]]; then
+    grep -Fxq -- '-n systemctl enable clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 102
+  else
+    ! grep -Fq 'systemctl enable' "$UPGRADE_SUDO_LOG" || return 103
+  fi
+  grep -Fxq -- '-n systemctl restart clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 104
+)
+for upgrade_mode in identical changed disabled denied; do
+  run upgrade_agent_sudo_fixture "$upgrade_mode"
+  expect "agent upgrade narrow sudo contract: $upgrade_mode" 0 is_silent
+done
+
+# Proxy variables are assigned dynamically by the extracted loader.
+# shellcheck disable=SC2153,SC2154
+upgrade_agent_proxy_fixture() (
+  set -Eeuo pipefail
+  local fixture="$TMP/upgrade-proxy" parser original_path
+  mkdir -p "$fixture/bin"
+  parser="$fixture/parser.sh"
+  sed -n '/^load_agent_proxy_env() {$/,/^}$/p' "$UPGRADE_AGENT" >"$parser"
+  [[ -s "$parser" ]] || return 1
+  # This sources only the function extracted from repository code, never data.
+  # shellcheck disable=SC1090
+  source "$parser"
+  cat >"$fixture/environment" <<EOF
+# ignored comment
+  http_proxy = 'http://file.example:8080' # ignored trailing comment
+HTTPS_PROXY="http://file.example:8443"
+NO_PROXY=localhost,127.0.0.1 # ignored trailing comment
+PATH=/untrusted
+FOO=untrusted
+HTTP_PROXY=\$(touch $fixture/injected-file)
+EOF
+  cat >"$fixture/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == 'show -p Environment --value clawctl-agent.service' ]] || exit 90
+if [[ -f "$PROXY_FIXTURE/service" ]]; then cat "$PROXY_FIXTURE/service"; else exit 1; fi
+EOF
+  chmod +x "$fixture/bin/systemctl"
+  export PROXY_FIXTURE="$fixture" PATH="$fixture/bin:$PATH"
+  original_path=$PATH
+  unset FOO http_proxy https_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY
+  export no_proxy=existing all_proxy=existing-all
+  load_agent_proxy_env "$fixture/environment"
+  [[ "$http_proxy" == http://file.example:8080 && "$HTTPS_PROXY" == http://file.example:8443 ]] || return 1
+  [[ "$NO_PROXY" == localhost,127.0.0.1 && "$no_proxy" == existing && "$all_proxy" == existing-all ]] || return 1
+  [[ "$HTTP_PROXY" == "\$(touch $fixture/injected-file)" && ! -e "$fixture/injected-file" ]] || return 1
+  [[ "$PATH" == "$original_path" && ! ${FOO+x} ]] || return 1
+  cat >"$fixture/service" <<EOF
+"http_proxy=http://service.example:8080" HTTPS_PROXY="http://service.example:8443" 'NO_PROXY=localhost, service.example' https_proxy=http://service.example:443 ALL_PROXY=http://all.example:1080 PATH=/untrusted FOO=untrusted "HTTP_PROXY=\$(touch $fixture/injected-service)" "no_proxy=escaped\ space"
+EOF
+  load_agent_proxy_env "$fixture/environment"
+  [[ "$http_proxy" == http://service.example:8080 && "$HTTPS_PROXY" == http://service.example:8443 ]] || return 1
+  [[ "$NO_PROXY" == 'localhost, service.example' && "$no_proxy" == 'escaped space' ]] || return 1
+  [[ "$https_proxy" == http://service.example:443 && "$ALL_PROXY" == http://all.example:1080 ]] || return 1
+  [[ "$HTTP_PROXY" == "\$(touch $fixture/injected-service)" && ! -e "$fixture/injected-service" ]] || return 1
+  [[ ! -e "$fixture/injected-file" && "$PATH" == "$original_path" && ! ${FOO+x} ]] || return 1
+  rm "$fixture/service"
+  load_agent_proxy_env "$fixture/missing"
+  [[ "$http_proxy" == http://service.example:8080 && "$all_proxy" == existing-all ]] || return 1
+)
+
+run upgrade_agent_proxy_fixture
+expect 'agent upgrade safely imports only proxies with service precedence and preserves missing values' 0 is_silent
+
+run appears_in_order3 'sudo -n systemctl restart clawctl-agent.service' 'load_agent_proxy_env' '"$system_bin" verify --since "$started_at" --timeout 2m' "$UPGRADE_AGENT"
+expect 'agent upgrade loads proxies after restart and before readiness verification' 0 is_silent
+
+run appears_in_order3 'got="$(timeout 5 "$bin.new" version' 'sudo -n mv -f "$system_unit.new" "$system_unit"' 'sudo -n systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
 expect 'agent upgrade validates binary before publishing unit and restarting' 0 is_silent
 
 run appears_before 'Managed agent preflight failed: $target' 'scp -q -o BatchMode=yes "$source"' "$UPGRADE_AGENT"
@@ -1659,10 +1823,10 @@ expect 'agent upgrade validates the enrolled service account before transfer' 0 
 run grep -Fq 'writable_roots="$(systemctl show clawctl-agent.service -p ReadWritePaths --value)"' "$UPGRADE_AGENT"
 expect 'agent upgrade verifies the live writable-root contract' 0 is_silent
 
-run appears_in_order3 'sudo systemctl reset-failed clawctl-agent.service' 'sudo systemctl restart clawctl-agent.service' '"$system_bin" verify --since "$started_at" --timeout 2m' "$UPGRADE_AGENT"
+run appears_in_order3 'sudo -n systemctl reset-failed clawctl-agent.service' 'sudo -n systemctl restart clawctl-agent.service' '"$system_bin" verify --since "$started_at" --timeout 2m' "$UPGRADE_AGENT"
 expect 'agent upgrade requires a fresh Hub readiness receipt' 0 is_silent
 
-run appears_in_order3 'sudo systemctl daemon-reload' 'systemctl --user disable --now clawctl-agent.service' 'sudo systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
+run appears_in_order3 'sudo -n systemctl daemon-reload' 'systemctl --user disable --now clawctl-agent.service' 'sudo -n systemctl restart clawctl-agent.service' "$UPGRADE_AGENT"
 expect 'agent upgrade migrates from the user manager without overlapping agents' 0 is_silent
 
 run appears_before '[[ "$restarts" == "0" ]]' 'echo "Managed: agent=$running_version service=active jobs=enabled processes=1 restarts=0"' "$UPGRADE_AGENT"
@@ -2514,10 +2678,24 @@ else
 	failed=$((failed + 1))
 fi
 
+if bash "$ROOT/ops/test-gcp.sh"; then
+	passed=$((passed + 1))
+else
+	failed=$((failed + 1))
+fi
+
 if bash "$ROOT/ops/test-disk-clean.sh"; then
 	passed=$((passed + 1))
 else
 	failed=$((failed + 1))
+fi
+
+# Includes the root applier fixture suite in ops/fleet/applier/test.sh.
+
+if bash "$ROOT/ops/join/test.sh"; then
+ passed=$((passed + 1))
+else
+ failed=$((failed + 1))
 fi
 
 for fleet_test in "$ROOT"/ops/fleet/*/test.sh; do

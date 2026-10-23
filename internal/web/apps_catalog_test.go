@@ -262,6 +262,47 @@ func TestCatalogWebStandardStoreProfileAndAssignment(t *testing.T) {
 	}
 }
 
+func TestEmptyCatalogTaskPagesLinkToPrerequisitesAndReport(t *testing.T) {
+	s, _ := newServer(t)
+
+	checks := map[string][]string{
+		"/apps?view=store": {
+			`href="/apps?view=fetch"`, "取得支援的 artifact", "發布 package",
+		},
+		"/apps?view=profiles": {
+			`href="/apps?view=store"`, `href="/apps?view=assignments"`,
+			`href="/reports/profile"`, "發布 Profile", "核對發佈、指派與觀測",
+		},
+		"/apps?view=assignments": {
+			`href="/machines"`, `href="/apps?view=profiles"`,
+			`href="/reports/profile"`, "發布 Profile", "回來指派",
+		},
+		"/apps?view=artifacts": {
+			`href="/apps?view=fetch"`, "取得支援的 artifact",
+		},
+		"/apps?view=operations": {
+			`href="/apps?view=fetch"`, "預覽 artifact 下載",
+		},
+	}
+	for path, wants := range checks {
+		body := get(t, s, path)
+		for _, want := range wants {
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s empty state missing %q", path, want)
+			}
+		}
+	}
+
+	report := get(t, s, "/reports/profile")
+	for _, want := range []string{
+		"唯讀報告", `href="/apps?view=profiles"`, `href="/apps?view=assignments"`,
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("profile report does not distinguish review from action: missing %q", want)
+		}
+	}
+}
+
 // ⚠⚠ 這一頁原本只列得出「可以指派給誰」。一張列著五台機器的表看起來像五台都被指派了，
 // 而帳本上一列指派都沒有——這兩件事在畫面上長得一模一樣，所以「現在誰有」必須是自己的
 // 一欄，而「還沒有被指派過」必須是一個講出來的答案，不是一個空格。

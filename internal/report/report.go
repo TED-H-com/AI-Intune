@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/scheduledcheck"
 	"github.com/teddashh/AI-Intune/internal/state"
 )
 
@@ -34,7 +35,9 @@ const StaleAfter = 7 * 24 * time.Hour
 // Input 是產生早報需要的一切。刻意跟 store 解耦 —— 早報的措辭是產品決策，
 // 不該被資料層的形狀綁住。
 type Input struct {
-	Now time.Time
+	ScheduledChecks    []scheduledcheck.Schedule
+	UntargetedMachines []string
+	Now                time.Time
 	// Since 是上一則早報的時間。變化以此為基準。
 	Since time.Time
 
@@ -150,6 +153,7 @@ func Render(in Input) string {
 	b.WriteString(header(in))
 
 	lines := collect(in)
+	checks := scheduledChecksSection(in)
 	sort.SliceStable(lines, func(i, j int) bool {
 		if lines[i].rank != lines[j].rank {
 			return lines[i].rank < lines[j].rank
@@ -157,7 +161,7 @@ func Render(in Input) string {
 		return lines[i].tiebreak < lines[j].tiebreak
 	})
 
-	if len(lines) == 0 {
+	if len(lines) == 0 && checks == "" {
 		// ⚠ 這一行是整個產品的死人之鐘。
 		// 沒事也要說話，否則「沒收到」就同時代表「今天沒事」與「Hub 死了」，
 		// 而那兩件事需要完全相反的反應。
@@ -177,6 +181,7 @@ func Render(in Input) string {
 	if n := len(lines) - len(shown); n > 0 {
 		fmt.Fprintf(&b, "+%d more in hub\n", n)
 	}
+	b.WriteString(checks)
 	// ⚠ 一行，放在最後，而且只有在有話要說的時候才放。
 	//
 	// 這一行是 PHASES.md「≤ 兩次點擊 + 一次 Connect」的第一次點擊：
@@ -737,4 +742,51 @@ func earliest(ms []Machine) time.Time {
 		}
 	}
 	return t
+}
+
+// Scheduled checks have their own short section so fleet-state truncation can
+// never hide a failed target. Free text uses the same bounded disclosure policy
+// as the Checks page.
+func scheduledChecksSection(in Input) string {
+	var b strings.Builder
+	for _, schedule := range in.ScheduledChecks {
+		passed, due := 0, 0
+		for _, target := range schedule.Targets {
+			if !target.InWindow {
+				continue
+			}
+			due++
+			if target.Status == "passed" {
+				passed++
+				continue
+			}
+			status := map[string]string{"failed": "failed", "not_run": "not run", "pending": "awaiting result"}[target.Status]
+			if status == "" {
+				status = "not run"
+			}
+			fmt.Fprintf(&b, "%s — %s: %s (%s)", scheduledcheck.Text(target.DisplayName, 100), scheduledcheck.Text(schedule.Name, 100), status, target.At.In(in.Now.Location()).Format("2006-01-02 15:04 MST"))
+			if target.ConsecutiveFailures >= scheduledcheck.HistoryLimit {
+				fmt.Fprintf(&b, "; failed at least %d runs in a row", target.ConsecutiveFailures)
+			} else if target.ConsecutiveFailures > 1 {
+				fmt.Fprintf(&b, "; failed %d runs in a row", target.ConsecutiveFailures)
+			}
+			if reason := scheduledcheck.Reason(target.Reason); reason != "" {
+				fmt.Fprintf(&b, ": %s", reason)
+			}
+			b.WriteByte('\n')
+		}
+		if due == 0 {
+			fmt.Fprintf(&b, "%s: no runs due in this report window\n", scheduledcheck.Text(schedule.Name, 100))
+		}
+		if due > 0 && passed == due {
+			fmt.Fprintf(&b, "%s: all %d targets passed\n", scheduledcheck.Text(schedule.Name, 100), passed)
+		}
+	}
+	for _, name := range in.UntargetedMachines {
+		fmt.Fprintf(&b, "%s: not targeted by any enabled schedule\n", scheduledcheck.Text(name, 100))
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "Scheduled checks\n" + b.String()
 }

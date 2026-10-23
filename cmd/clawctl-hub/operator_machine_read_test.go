@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
@@ -290,4 +291,25 @@ func assertNoSensitiveMachineReadKeys(t *testing.T, document any, detail bool) {
 		}
 	}
 	walk(document)
+}
+
+// The UI label must never change the existing capitalized wire enum.
+func TestOperatorMachineAPIPreservesDegraded(t *testing.T) {
+	f := observedOperatorFixture(t)
+	now := time.Now().UTC()
+	if err := f.store.RecordCheckin(f.machine.id, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: now}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.RecordObservation(f.machine.id, model.ObservationBatch{SchemaVersion: model.SchemaVersion, MeasuredAt: now, OpenClaw: model.OpenClaw{Present: true}}, now); err != nil {
+		t.Fatal(err)
+	}
+	response := operatorRequest(t, f.mux, http.MethodGet, "/v1/operator/machines/"+f.machine.id, "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	doc := decodeMachineReadDocument(t, response.Body.Bytes())
+	judgement := doc["judgement"].(map[string]any)
+	if judgement["state"] != "Degraded" {
+		t.Fatalf("API state = %v, want Degraded", judgement["state"])
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"io"
 	"math"
 	"strings"
@@ -249,6 +250,13 @@ func OperatorPruneSemanticDigest(req OperatorPruneRequest) string {
 }
 
 func (s *Store) ApplyOperatorPrune(req OperatorPruneRequest) (OperatorPruneResult, error) {
+	if strings.TrimSpace(req.Reason) != "" {
+		var reasonErr error
+		req.Reason, reasonErr = boundedtext.Reason(req.Reason)
+		if reasonErr != nil {
+			return OperatorPruneResult{}, operatorError(OperatorCodeReasonRequired, reasonErr.Error())
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) != req.IdempotencyKey || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 200 {
 		return OperatorPruneResult{}, operatorError(OperatorCodeIdempotencyKeyRequired,
 			"Idempotency-Key 不可省略且最多 200 bytes")
@@ -277,7 +285,7 @@ func (s *Store) ApplyOperatorPrune(req OperatorPruneRequest) (OperatorPruneResul
 	reject := func(code string) (OperatorPruneResult, error) {
 		return s.rejectOperatorPruneTx(tx, req, audit, code, s.now().UTC().Truncate(time.Second))
 	}
-	if strings.TrimSpace(req.Reason) == "" || req.Reason != strings.TrimSpace(req.Reason) || len(req.Reason) > auditMaxReason {
+	if strings.TrimSpace(req.Reason) == "" || req.Reason != strings.TrimSpace(req.Reason) || len([]rune(req.Reason)) > boundedtext.MaxReasonRunes {
 		return reject(OperatorCodeReasonRequired)
 	}
 	policy, err := req.Policy.RetentionPolicy()
@@ -508,10 +516,20 @@ func validOperatorRetentionReceipt(receipt operatorRetentionReceipt, req Operato
 }
 
 func validOperatorRetentionCounts(counts []PruneCount, evaluatedAt time.Time, policy RetentionPolicy) bool {
-	if len(counts) != len(pruneJobs) {
+	usageJobs := usageJobsForPolicy(DefaultUsagePolicy())
+	// Replay validates historical horizons against the logged receipt, not a
+	// usage policy that may have changed since the original prune.
+	if len(counts) != len(pruneJobs)+len(usageJobs) {
 		return false
 	}
 	for index, item := range counts {
+		if index >= len(pruneJobs) {
+			horizon := evaluatedAt.Sub(item.Older)
+			if item.Table != usageJobs[index-len(pruneJobs)].table || item.Deleted < 0 || item.Kept < 0 || horizon < 24*time.Hour || horizon%(24*time.Hour) != 0 {
+				return false
+			}
+			continue
+		}
 		job := pruneJobs[index]
 		if item.Table != job.table || item.Deleted < 0 || item.Kept < 0 ||
 			!item.Older.Equal(evaluatedAt.Add(-job.class.horizon(policy))) {

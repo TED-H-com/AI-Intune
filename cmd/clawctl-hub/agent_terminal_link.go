@@ -91,7 +91,7 @@ func (l *wsLink) Send(frame agentrelay.Downstream) error {
 	// is the only Send path that closes the link.
 	overFrames := len(l.queue) >= agentTerminalInputQueueFrames
 	overBytes := int64(l.queuedBytes)+int64(payloadBytes) > int64(agentTerminalQueueByteBudget)
-	if (frame.Type == agentrelay.DownstreamInput && (overFrames || overBytes)) ||
+	if ((frame.Type == agentrelay.DownstreamInput || frame.Type == agentrelay.DownstreamSignin) && (overFrames || overBytes)) ||
 		(frame.Type == agentrelay.DownstreamResize && overFrames) {
 		l.mu.Unlock()
 		return agentlink.ErrLinkBusy
@@ -398,7 +398,7 @@ func (h *hub) agentTerminalCredentialLoop(ctx context.Context, link *wsLink, mac
 			continue
 		}
 		reported = false
-		if !current {
+		if !current || h.store.MachineExecutionAllowed(machineID) != nil {
 			log.Printf("terminal connection closed: agent token for this machine has changed or machine was retired machine=%s", machineID)
 			link.closeWithStatus(websocket.StatusPolicyViolation, "agent token is no longer current")
 			return

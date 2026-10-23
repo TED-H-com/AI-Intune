@@ -558,7 +558,7 @@ Next steps:
 
        # Preferred: built-in Telegram/webhook channels (ops/notify.env.example).
        CLAWCTL_NOTIFY_ENV=\$HOME/.config/clawctl/notify.env
-       # Legacy command (built-in channels in that file are then unused):
+       # Alternative command (built-in channels in that file are then unused):
        # CLAWCTL_NOTIFY_CMD=\$HOME/.local/libexec/clawctl/notify-telegram.sh
        # ops/notify-telegram.sh stays for ops/deadman.sh and Alertmanager.
 

@@ -131,6 +131,10 @@ expect 'stale reason' contains 'summary stale'
 fixture
 run env DISK_PCT=96 bash "$CHECK" --json
 expect '96 percent critical' exit_is 2
+run env DISK_PCT=92 bash "$CHECK" --json
+expect '92 percent warning' exit_is 1
+run env DISK_PCT=93 bash "$CHECK" --json
+expect '93 percent critical migration' exit_is 2
 run env DISK_PCT=85 bash "$CHECK"
 expect '85 percent warns' exit_is 1
 run env FAILED_UNITS=1 bash "$CHECK"

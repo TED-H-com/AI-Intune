@@ -1,0 +1,38 @@
+{{define "disk_policies.html"}}{{template "head" .}}
+{{$p := .DiskPolicies}}
+<div class="page-heading"><div><h1>Disk policies</h1><p>Review immutable revisions and configure safe disk maintenance. Everything on this page works without an agent or notifier integration.</p></div></div>
+{{if not $p.WritesEnabled}}<div class="panel"><strong>Disk writes are disabled.</strong><p>You can inspect and preview policies. An administrator must enable disk writes in Hub configuration before applying a change.</p></div>{{end}}
+<div class="panel"><h2>Policy revisions</h2><p class="small">Up to 500 revisions, newest first within each policy. Existing revisions remain available after replacement.</p>
+<table><thead><tr><th>Policy</th><th>Revision</th><th>Status</th><th>Created by</th><th>Created</th></tr></thead><tbody>
+{{range $p.Items}}<tr><td><a href="/tenant/disk-policies/{{.ID}}?revision={{.Revision}}">{{.ID}}</a></td><td>{{.Revision}}</td><td>{{if .SupersededAt}}Superseded{{else}}Current{{end}}</td><td>{{.CreatedBy}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04 UTC"}}</td></tr>{{else}}<tr><td colspan="5">No disk policies yet. Create a policy using the safe defaults below.</td></tr>{{end}}
+</tbody></table></div>
+{{if $p.Selected}}<div class="panel"><h2>Canonical policy · {{$p.Selected.ID}} · revision {{$p.Selected.Revision}}</h2><p class="mono small" style="overflow-wrap:anywhere">{{$p.Selected.Digest}}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{$p.Canonical}}</pre>
+{{if $p.Selected.SupersededAt}}<p>This is an immutable historical revision. <a href="/tenant/disk-policies/{{$p.ID}}">Edit the current revision</a>.</p>{{end}}</div>{{end}}
+{{if or (not $p.Selected) (not $p.Selected.SupersededAt)}}
+<div class="panel"><h2>{{if $p.Selected}}Edit policy{{else}}Create policy{{end}}</h2>
+<p>Native garbage collection only. Open descriptors, locks, credentials and backups, generated images, active models, user data, and all repository roots remain protected. The protection list below can only add protections.</p>
+<form method="post" action="/tenant/disk-policies/preview">
+<input type="hidden" name="expected_revision" value="{{$p.ExpectedRevision}}">
+<label><span class="field-label">Policy ID</span><input name="id" required maxlength="128" value="{{$p.ID}}" {{if $p.Selected}}readonly{{end}}></label>
+<h3>Safe tier</h3><div class="form-grid disk-form-grid">
+<label><span class="field-label">User temporary files · minimum age (days)</span><input type="number" name="user_tmp_min_days" min="10" max="3650" required value="{{$p.Edit.SafeTier.UserTmpMinDays}}"></label>
+<label><span class="field-label">System temporary files · minimum age (days)</span><input type="number" name="var_tmp_min_days" min="14" max="3650" required value="{{$p.Edit.SafeTier.VarTmpMinDays}}"></label>
+<label><span class="field-label">Docker dangling images/build cache · minimum age (hours)</span><input type="number" name="docker_min_hours" min="168" max="87600" required value="{{$p.Edit.SafeTier.DockerMinHours}}"></label>
+<label><span class="field-label">Journal size cap (MiB)</span><input type="number" name="journald_max_mib" min="500" max="1048576" required value="{{$p.Edit.SafeTier.JournaldMaxMiB}}"></label>
+<label><span class="field-label">Cargo native GC · minimum age (days)</span><input type="number" name="cargo_min_days" min="30" max="3650" required value="{{$p.Edit.SafeTier.CargoMinDays}}"></label></div>
+<p class="small">uv uses lock-aware prune; npm uses cache verification only. Containers and volumes are excluded. Quarantine retention is fixed at 7 days.</p>
+<label><span class="field-label">Additional protected absolute paths · one per line</span><textarea name="protect_paths" rows="3" maxlength="65500" style="width:100%">{{$p.ProtectPaths}}</textarea></label>
+<h3>Observed data mounts</h3><p>Root is always observed through agent check-ins. Declare additional mount paths for authenticated observation previews.</p><div class="form-grid disk-form-grid"><label><span class="field-label">Data mounts · one absolute path per line</span><textarea name="data_mounts" rows="3" style="width:100%">{{range $p.Edit.DataMounts}}{{.}}
+{{end}}</textarea></label><label><span class="field-label">Canary days (0 uses Hub default)</span><input type="number" name="canary_days" min="0" max="90" value="{{$p.Edit.CanaryDays}}"></label></div><h3>Growth alerts</h3><p>Optional override of Hub defaults (factory defaults: 10 GB/hour over 30 minutes). Leave blank to use Hub configuration. Requires at least three samples and 80% window coverage.</p><div class="form-grid disk-form-grid"><label><span class="field-label">GB/hour</span><input type="number" name="growth_gb_per_hour" min="1" max="1000000" value="{{with $p.Edit.Growth}}{{.GBPerHour}}{{end}}"></label><label><span class="field-label">Window minutes</span><input type="number" name="growth_window_minutes" min="10" max="1440" value="{{with $p.Edit.Growth}}{{.WindowMinutes}}{{end}}"></label></div><h3>Usage thresholds</h3><div class="form-grid disk-form-grid">
+<label><span class="field-label">Warning (%)</span><input type="number" name="warn_percent" min="2" max="99" required value="{{$p.Edit.Thresholds.WarnPercent}}"></label>
+<label><span class="field-label">Critical (%)</span><input type="number" name="critical_percent" min="3" max="100" required value="{{$p.Edit.Thresholds.CriticalPercent}}"></label>
+<label><span class="field-label">Deep report triggered strictly above (%)</span><input type="number" name="deep_report_above_percent" min="1" max="98" required value="{{$p.Edit.Thresholds.DeepReportAbovePercent}}"></label></div>
+<p class="small">Deep-report threshold must be below warning; warning must be below critical.</p>
+<h3>Scan budgets</h3><div class="form-grid disk-form-grid">
+<label><span class="field-label">Maximum items</span><input type="number" name="max_items" min="1" max="500" required value="{{$p.Edit.ScanBudgets.MaxItems}}"></label>
+<label><span class="field-label">Maximum filesystem entries</span><input type="number" name="max_entries" min="1" max="200000" required value="{{$p.Edit.ScanBudgets.MaxEntries}}"></label>
+<label><span class="field-label">Maximum scan time (seconds)</span><input type="number" name="max_seconds" min="1" max="600" required value="{{$p.Edit.ScanBudgets.MaxSeconds}}"></label></div>
+<label><span class="field-label">Reason for this change</span><input name="reason" required maxlength="500" style="width:100%"></label>
+<div class="command-bar" style="margin-top:14px"><button type="submit">Preview changes</button></div>
+</form></div>{{end}}
+{{template "foot" .}}{{end}}
