@@ -335,7 +335,7 @@ You can tune replication parameters by setting these Fly secrets (using the `sec
 
 | Variable | Default | Description | Tradeoff |
 |---|---|---|---|
-| `LITESTREAM_SYNC_INTERVAL` | `10s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
+| `LITESTREAM_SYNC_INTERVAL` | `60s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
 | `LITESTREAM_SNAPSHOT_INTERVAL` | `24h` | How often a full database snapshot is written. | Lower = faster restore time, but uses more R2 storage and PUTs. |
 | `LITESTREAM_RETENTION` | `168h` | How long snapshots and WAL files are kept. | Higher = longer recovery window, but uses more R2 storage. Must be >= snapshot interval. |
 

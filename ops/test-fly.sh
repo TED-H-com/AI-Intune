@@ -64,7 +64,7 @@ en" TELEGRAM_CHAT_ID="chat" /bin/sh ops/fly/notify-env.sh 2>/dev/null; then
 test_r2_env() {
   # 1. defaults
   out=$(env -i /bin/sh -c '. ops/fly/r2-env.sh >/dev/null && echo "$LITESTREAM_SYNC_INTERVAL $LITESTREAM_SNAPSHOT_INTERVAL $LITESTREAM_RETENTION"')
-  if [[ "$out" != "10s 24h 168h" ]]; then echo "fail: bad defaults: $out"; return 1; fi
+  if [[ "$out" != "60s 24h 168h" ]]; then echo "fail: bad defaults: $out"; return 1; fi
 
   # 2. rejects bad durations
   if env -i LITESTREAM_SYNC_INTERVAL="5d" /bin/sh -c '. ops/fly/r2-env.sh' 2>/dev/null; then echo "fail: accepted 5d"; return 1; fi
