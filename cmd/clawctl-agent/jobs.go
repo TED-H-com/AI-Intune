@@ -573,20 +573,25 @@ func startJobs(ctx context.Context, cfg config, nudge chan<- struct{}) {
 	}, runJobs)
 }
 
+var orphanSweepGOOS = runtime.GOOS
+
 // launchJobs 先掃孤兒（最多 orphanStagingSweepTimeout），掃完才起工作單迴圈；兩件事都在背景。
 //
 // ⚠ 不能在呼叫者的 goroutine 裡同步等掃描：startJobs 跑在 runAgent 送 READY=1 之前，
 // 而 unit 是 Type=notify、沒設 TimeoutStartSec（systemd 預設 90 秒）。一個 scope 的 stop
 // 最長就要 90 秒，同步等會讓 agent 在啟動時被 systemd 打死，四台一起進重啟迴圈。
 // 順序（掃完才領單）仍然成立，因為兩步在同一條 goroutine 裡。
+
 func launchJobs(ctx context.Context, sweep func(context.Context) []string, opts jobsOptions,
 	run func(context.Context, jobsOptions)) {
 	go func() {
-		sweepCtx, cancel := context.WithTimeout(ctx, orphanStagingSweepTimeout)
-		for _, report := range sweep(sweepCtx) {
-			log.Printf("%s", report)
+		if orphanSweepGOOS == "linux" {
+			sweepCtx, cancel := context.WithTimeout(ctx, orphanStagingSweepTimeout)
+			for _, report := range sweep(sweepCtx) {
+				log.Printf("%s", report)
+			}
+			cancel()
 		}
-		cancel()
 		run(ctx, opts)
 	}()
 }
