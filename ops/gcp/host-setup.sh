@@ -4,14 +4,14 @@ set +x
 set -euo pipefail
 case ${1:---dry-run} in
   --dry-run)
-    echo 'apt-get install docker.io ca-certificates curl sqlite3'
+    echo 'apt-get install docker.io docker-buildx ca-certificates curl sqlite3'
     if [[ ${GCP_SKIP_TAILSCALE:-0} == 1 ]]; then
       echo 'SKIPPED: Tailscale'
     else
       echo 'Install Tailscale from its Ubuntu noble apt repository; enable tailscaled'
       echo 'Join Tailscale using a private auth-key file (only when not already joined)'
     fi
-    echo 'docker build --file ops/docker/Dockerfile --target hub-fly --tag clawctl-hub:gcp .'
+    echo 'DOCKER_BUILDKIT=1 docker buildx build --load --file ops/docker/Dockerfile --target hub-fly --tag clawctl-hub:gcp .'
     echo 'Write root-only hub.env with CLAWCTL_AUTH_MODE=local (values suppressed)'
     echo "docker run --restart unless-stopped --publish 127.0.0.1:8787:8787 --health-cmd 'sqlite3 -readonly /var/lib/clawctl/clawctl.sqlite \"SELECT 1\"' ..."
     if [[ ${GCP_SKIP_TUNNEL:-0} == 1 ]]; then
@@ -58,7 +58,7 @@ exec 9>"$config/setup.lock"
 flock -n 9
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y docker.io ca-certificates curl sqlite3
+apt-get install -y docker.io docker-buildx ca-certificates curl sqlite3
 systemctl enable --now docker
 if [[ ${GCP_SKIP_TAILSCALE:-0} == 1 ]]; then
   echo 'SKIPPED: Tailscale'
@@ -111,7 +111,7 @@ if [[ ${GCP_SKIP_TUNNEL:-0} != 1 ]]; then
   write_env TUNNEL_TOKEN > "$config/tunnel.env"
 fi
 image=${GCP_HUB_IMAGE:-clawctl-hub:gcp}
-docker build --file "$root/ops/docker/Dockerfile" --target hub-fly --build-arg "CLAWCTL_VERSION=$(git -C "$root" rev-parse --short HEAD)" --tag "$image" "$root"
+DOCKER_BUILDKIT=1 docker buildx build --load --file "$root/ops/docker/Dockerfile" --target hub-fly --build-arg "CLAWCTL_VERSION=$(git -C "$root" rev-parse --short HEAD)" --tag "$image" "$root"
 # Reconcile containers on repeated setup; preserve the data bind mount.
 docker rm -f clawctl-hub >/dev/null 2>&1 || true
 docker run -d --name clawctl-hub --restart unless-stopped --stop-timeout 60 --env-file "$config/hub.env" --publish 127.0.0.1:8787:8787 --mount "type=bind,src=$state,dst=/var/lib/clawctl" --health-cmd 'sqlite3 -readonly /var/lib/clawctl/clawctl.sqlite "SELECT 1"' --health-interval 30s --health-start-period 60s "$image" >/dev/null

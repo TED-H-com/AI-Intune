@@ -21,7 +21,7 @@ print() { printf '%q ' "$@"; printf '\n'; }
 ensure() {
   # Describe failure is followed by create; permission/API failures stop creation
   # without changing or deleting existing resources.
-  local split=0
+  local split=0 kind name i
   local -a probe=() create=()
   for arg in "$@"; do
     if [[ $arg == :: ]]; then split=1
@@ -29,7 +29,17 @@ ensure() {
     else probe+=("$arg"); fi
   done
   if (( apply )); then
-    if ! gcloud "${probe[@]}" --project="$project" >/dev/null; then
+    for i in "${!probe[@]}"; do
+      if [[ ${probe[i]} == describe ]]; then
+        kind=${probe[i-1]}
+        name=${probe[i+1]}
+        break
+      fi
+    done
+    if gcloud "${probe[@]}" --project="$project" >/dev/null 2>/dev/null; then
+      printf 'exists: %s\n' "$name"
+    else
+      printf 'creating %s %s\n' "$kind" "$name"
       gcloud "${create[@]}" --project="$project" --quiet
     fi
   else
