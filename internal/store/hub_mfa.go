@@ -213,7 +213,7 @@ func (s *Store) verifySecondFactorTx(tx *writeTx, id, clientIP, code string, all
 		if err == nil {
 			_, err = tx.Exec(`DELETE FROM hub_mfa_failures WHERE account_id=?`, id)
 		}
-	} else if !blocked {
+	} else if !blocked && !codesLocked {
 		if locked.Valid {
 			failed = 0
 		}
