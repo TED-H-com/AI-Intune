@@ -23,6 +23,15 @@ func TestResolve(t *testing.T) {
 		{"fly", "10.0.0.1", "Fly-Client-IP", "10.0.0.1:1", []string{"192.0.2.1"}, "192.0.2.1"},
 		{"fly multiple", "10.0.0.1", "Fly-Client-IP", "10.0.0.1:1", []string{"192.0.2.1", "192.0.2.2"}, "10.0.0.1"},
 		{"fly garbage", "10.0.0.1", "Fly-Client-IP", "10.0.0.1:1", []string{"192.0.2.1, garbage"}, "10.0.0.1"},
+		{"cf trusted", "172.17.0.1/32", "CF-Connecting-IP", "172.17.0.1:1", []string{"192.0.2.1"}, "192.0.2.1"},
+		{"cf untrusted", "172.17.0.1/32", "CF-Connecting-IP", "172.17.0.2:1", []string{"192.0.2.1"}, "172.17.0.2"},
+		{"cf empty trust", "", "CF-Connecting-IP", "172.17.0.1:1", []string{"192.0.2.1"}, "172.17.0.1"},
+		{"cf multiple", "172.17.0.1/32", "CF-Connecting-IP", "172.17.0.1:1", []string{"192.0.2.1", "192.0.2.2"}, "172.17.0.1"},
+		{"cf comma separated", "172.17.0.1/32", "CF-Connecting-IP", "172.17.0.1:1", []string{"192.0.2.1, 192.0.2.2"}, "172.17.0.1"},
+		{"cf invalid", "172.17.0.1/32", "CF-Connecting-IP", "172.17.0.1:1", []string{"garbage"}, "172.17.0.1"},
+		{"cf scoped", "172.17.0.1/32", "CF-Connecting-IP", "172.17.0.1:1", []string{"fe80::1%eth0"}, "172.17.0.1"},
+		{"cf ipv6", "fd00::1/128", "CF-Connecting-IP", "[fd00::1]:1", []string{"2001:db8::1"}, "2001:db8::1"},
+		{"cf mapped", "172.17.0.1/32", "CF-Connecting-IP", "[::ffff:172.17.0.1]:1", []string{"::ffff:192.0.2.1"}, "192.0.2.1"},
 		{"ipv6", "fd00::/16", "", "[fd00::1]:1", []string{"2001:db8::1, fd00::2"}, "2001:db8::1"},
 		{"unmapped", "", "", "[::ffff:192.0.2.1]:1", nil, "192.0.2.1"},
 	} {
@@ -82,7 +91,7 @@ func TestKey(t *testing.T) {
 }
 
 func TestHeaderEdges(t *testing.T) {
-	for _, header := range []string{"X-Forwarded-For", "Fly-Client-IP"} {
+	for _, header := range []string{"X-Forwarded-For", "Fly-Client-IP", "CF-Connecting-IP"} {
 		for _, value := range []string{"", " ", "192.0.2.1:5678", "[2001:db8::1]:443", ",192.0.2.1", "192.0.2.1,", "192.0.2.1, ,10.0.0.2", "fe80::1%eth0"} {
 			// Leading entries before the first untrusted hop cannot influence XFF resolution.
 			want := "10.0.0.1"
@@ -111,5 +120,32 @@ func TestHeaderEdges(t *testing.T) {
 		if got := r.Resolve(req); got != "192.0.2.2" {
 			t.Fatal("untrusted header", got)
 		}
+	}
+}
+
+func TestParseHeader(t *testing.T) {
+	for _, tt := range []struct{ header, want string }{
+		{"", "X-Forwarded-For"},
+		{"X-Forwarded-For", "X-Forwarded-For"},
+		{"x-FORWARDED-for", "X-Forwarded-For"},
+		{"Fly-Client-IP", "Fly-Client-IP"},
+		{"fLY-client-ip", "Fly-Client-IP"},
+		{"CF-Connecting-IP", "CF-Connecting-IP"},
+		{"cf-CONNECTING-ip", "CF-Connecting-IP"},
+		{"X-Real-IP", ""},
+		{"Forwarded", ""},
+	} {
+		t.Run(tt.header, func(t *testing.T) {
+			r, err := Parse("", tt.header)
+			if tt.want == "" {
+				if err == nil {
+					t.Fatal("accepted unknown header")
+				}
+				return
+			}
+			if err != nil || r.Header != tt.want {
+				t.Fatalf("Parse header = %q, %v; want %q", r.Header, err, tt.want)
+			}
+		})
 	}
 }

@@ -1,0 +1,31 @@
+{{define "offline_alerts.html"}}{{template "head" .}}
+{{$v := .OfflineAlerts}}
+<div class="page-heading"><div><h1>離線通知</h1><p>裝置失聯超過門檻後，透過 Hub 現有的通知管道送出一次通知。</p></div></div>
+<div class="panel">
+<h2>通知規則</h2>
+<p>目前門檻：<b>{{$v.Settings.Minutes}} 分鐘</b>（revision {{$v.Settings.Revision}}）。從 Hub 判為 Unreachable 的時刻起算，與心跳寬限期分開。</p>
+<p>包含僅監看的裝置；已退役裝置不通知。同一次失聯只送一次，連續恢復回報 2 分鐘後送一次恢復通知。短暫抖動不重複通知；傳送失敗會退避重試。</p>
+<p>沿用 Hub 已設定的 Telegram／通知指令，未設定管道時不會傳送。每日早報與送達監看維持原有排程。</p>
+{{if $v.Preview}}
+{{$p := $v.Preview}}
+<h2>確認變更</h2>
+<p>失聯門檻：{{$p.Current.Minutes}} → <b>{{$p.Minutes}} 分鐘</b>。套用後，已失聯超過新門檻的裝置會在下一次檢查通知。</p>
+<p>理由：{{$v.Reason}}</p>
+<form method="post" action="/tenant/offline-alerts/apply" class="action-form">
+<input type="hidden" name="minutes" value="{{$p.Minutes}}">
+<input type="hidden" name="expected_revision" value="{{$p.Current.Revision}}">
+<input type="hidden" name="preview_digest" value="{{$p.PreviewDigest}}">
+<input type="hidden" name="idempotency_key" value="{{$v.Key}}">
+<input type="hidden" name="reason" value="{{$v.Reason}}">
+<label><span class="field-label">輸入 OFFLINE ALERTS 確認</span><input name="confirm" required autocomplete="off"></label>
+<div class="command-bar"><button type="submit">套用通知門檻</button><a class="button secondary" href="/tenant/offline-alerts">取消</a></div>
+</form>
+{{else if .Access.CanAdmin}}
+<form method="post" action="/tenant/offline-alerts/preview" class="action-form">
+<label><span class="field-label">失聯超過幾分鐘後通知（1–1440）</span><input type="number" name="minutes" min="1" max="1440" value="{{$v.Settings.Minutes}}" required></label>
+<label><span class="field-label">變更理由</span><input name="reason" maxlength="500" required autocomplete="off"></label>
+<button type="submit">預覽變更</button>
+</form>
+{{end}}
+</div>
+{{template "foot" .}}{{end}}

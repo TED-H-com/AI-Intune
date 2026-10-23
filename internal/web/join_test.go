@@ -108,3 +108,110 @@ func TestJoinStrictJSONAndPublicURL(t *testing.T) {
 		t.Fatal("empty state")
 	}
 }
+
+func TestJoinOSAndArchChooseApprovedBundle(t *testing.T) {
+	for _, osName := range []string{"linux", "windows"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			t.Run(osName+"-"+arch, func(t *testing.T) {
+				s, _, bundles := configuredWindowsAgentBundleServer(t)
+				s.SetHubBase("https://hub.example.com")
+				mux := http.NewServeMux()
+				s.JoinPublicRoutes(mux)
+				res := joinHTTPRequest(mux, "POST", "/v1/join/start", `{"hostname":"host","os":"`+osName+`","arch":"`+arch+`","user":"operator"}`)
+				var started operator.JoinStarted
+				if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &started) != nil {
+					t.Fatal("start failed")
+				}
+				key := osName + "-" + arch
+				contentsKey := key
+				if osName == "linux" {
+					contentsKey = arch
+				}
+				for _, downloadKey := range []string{"amd64", "arm64", "linux-amd64", "linux-arm64", "windows-amd64", "windows-arm64"} {
+					req := httptest.NewRequest("GET", "/v1/join/bundle/"+downloadKey, nil)
+					req.Header.Set("Authorization", "Bearer "+started.Secret)
+					w := httptest.NewRecorder()
+					mux.ServeHTTP(w, req)
+					allowed := downloadKey == key || osName == "linux" && downloadKey == arch
+					if allowed && (w.Code != 200 || w.Body.String() != string(bundles[contentsKey])) {
+						t.Fatal("wrong bundle delivered")
+					}
+					if !allowed && w.Code != 404 {
+						t.Errorf("cross-platform download allowed: %s", downloadKey)
+					}
+				}
+				page := diskWebRequest(t, s, "GET", "/machines/join", nil, diskWebPrincipal(true, false, ""), false)
+				if !strings.Contains(page.Body.String(), osName+" / "+arch) {
+					t.Fatal("approval page lacks OS and arch")
+				}
+				form := url.Values{"join_id": {started.Code}, "display_name": {"Host"}, "decision": {"approve"}}
+				if w := diskWebRequest(t, s, "POST", "/machines/join/decide", form, diskWebPrincipal(true, false, ""), false); w.Code != 303 {
+					t.Fatal("approval failed")
+				}
+				poll := joinHTTPRequest(mux, "POST", "/v1/join/poll", `{"device_secret":"`+started.Secret+`"}`)
+				var payload operator.JoinPayload
+				if poll.Code != 200 || json.Unmarshal(poll.Body.Bytes(), &payload) != nil {
+					t.Fatal("poll failed")
+				}
+				if payload.Bundle.URL != "https://hub.example.com/v1/join/bundle/"+key || payload.Bundle.SHA256 != s.agentBundles.items[key].SHA256 {
+					t.Fatal("approval selected wrong platform digest")
+				}
+			})
+		}
+	}
+}
+
+func TestPublicPowerShellBootstrap(t *testing.T) {
+	s, _, _ := configuredAgentBundleServer(t)
+	s.SetHubBase("https://hub.example.com")
+	mux := http.NewServeMux()
+	s.JoinPublicRoutes(mux)
+	res := joinHTTPRequest(mux, "GET", "/join.ps1", "")
+	script := res.Body.String()
+	if res.Code != 200 || res.Header().Get("Cache-Control") != "no-store" || strings.Contains(script, "@@CLAWCTL_PUBLIC_URL@@") || !strings.Contains(script, "$Hub = 'https://hub.example.com'") {
+		t.Fatal("public script not templated")
+	}
+	for _, term := range []string{
+		"[switch]$JobsEnabled", "$jobs = 'false'", "--token-file $TokenFile", "--jobs-enabled $Jobs",
+		"Join code:", "/machines/join", "expires_at", "Get-FileHash", "SHA256", "Expand-JoinBundle",
+		"Unsafe agent archive member.", "Remove-Item -LiteralPath $work", "WindowsBuiltInRole]::Administrator",
+		"function Protect-JoinInstallerOutput", "$Text.Replace($secret,", `(?:token|secret)`, `\bbearer`,
+		"Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1')",
+		"@($approved.enroll_token, $started.device_secret)", "*>&1", "$LASTEXITCODE -ne 0",
+		"$line = Protect-JoinInstallerOutput ([string]$_) $Secrets",
+		"Add-Content -LiteralPath $LogFile -Value $line", "Last redacted output lines:",
+	} {
+		if !strings.Contains(script, term) {
+			t.Errorf("bootstrap missing %q", term)
+		}
+	}
+	if strings.Contains(script, "operator_token") || strings.Contains(script, "Write-Host $started") || strings.Contains(script, "Write-Host $approved") {
+		t.Fatal("bootstrap exposes credentials")
+	}
+	if strings.Contains(script, "*> $null") {
+		t.Fatal("bootstrap discards installer diagnostics")
+	}
+	s.SetHubBase("http://hub.example.com")
+	if w := joinHTTPRequest(mux, "GET", "/join.ps1", ""); w.Code != 503 {
+		t.Fatal("script served without HTTPS hub")
+	}
+}
+
+func TestJoinRejectsUnknownOSAndMissingWindowsRelease(t *testing.T) {
+	s, _, _ := configuredAgentBundleServer(t)
+	s.SetHubBase("https://hub.example.com")
+	mux := http.NewServeMux()
+	s.JoinPublicRoutes(mux)
+	if w := joinHTTPRequest(mux, "POST", "/v1/join/start", `{"hostname":"host","os":"plan9","arch":"amd64","user":"operator"}`); w.Code != 400 {
+		t.Fatal("unknown OS accepted")
+	}
+	w := joinHTTPRequest(mux, "POST", "/v1/join/start", `{"hostname":"host","os":"windows","arch":"amd64","user":"Administrator"}`)
+	var started operator.JoinStarted
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &started) != nil {
+		t.Fatal("Administrator join rejected")
+	}
+	form := url.Values{"join_id": {started.Code}, "display_name": {"Host"}, "decision": {"approve"}}
+	if approved := diskWebRequest(t, s, "POST", "/machines/join/decide", form, diskWebPrincipal(true, false, ""), false); approved.Code != 409 {
+		t.Fatal("missing Windows release fell back to Linux")
+	}
+}

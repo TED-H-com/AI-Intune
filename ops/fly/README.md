@@ -2,7 +2,7 @@
 
 The primary Fly path is **Autopilot over public HTTPS**: local admin, required TOTP MFA, and keyed agent installers. Follow [docs/DEPLOY-FLY.md](../../docs/DEPLOY-FLY.md#autopilot-on-fly-recommended) from app creation through enrollment and backups.
 
-Run `ops/fly/deploy.sh --org <your-org> --app <your-app-name> --region iad --dry-run` to preview, then omit `--dry-run` to deploy. It copies the config outside the tree, keeps one 1024mb Machine and a 3GB volume, and handles the automatic Depot → classic remote → local Docker fallback chain and cleanup of new builder apps. Choose `--builder auto|depot|remote|local` or `FLY_BUILDER` (default `auto`); fallback only applies to builder errors, and local fallback requires `docker info` to succeed. New classic builders are removed before local fallback. See [deployment details](../../docs/DEPLOY-FLY.md) for transport patterns and restricted-egress guidance. Optional secrets use `--secrets-file` with a mode-0600 file; R2 is not required. Never commit or print secrets.
+Run `ops/fly/deploy.sh --org <your-org> --app <your-app-name> --region iad --dry-run` to preview, then omit `--dry-run` to deploy. It copies the config outside the tree, keeps one Machine and a 3GB volume, and handles the automatic Depot → classic remote → local Docker fallback chain and cleanup of new builder apps. Choose `--builder auto|depot|remote|local` or `FLY_BUILDER` (default `auto`); fallback only applies to builder errors, and local fallback requires `docker info` to succeed. New classic builders are removed before local fallback. See [deployment details](../../docs/DEPLOY-FLY.md) for transport patterns and restricted-egress guidance. Optional secrets use `--secrets-file` with a mode-0600 file; R2 is not required. Never commit or print secrets.
 
 For a custom domain, pass `--public-url https://hub.example.com` (or set `FLY_PUBLIC_URL`) to check that origin and show its setup URL. The URL must be HTTPS with a DNS host, an optional port, and no path, query, fragment, or userinfo; a trailing slash is allowed. This selects the checks URL; configure `CLAWCTL_PUBLIC_URL` separately. Without an explicit URL, a fly.dev setup response of HTTP 421 reports the custom domain and leaves the successful deployment intact.
 
@@ -19,3 +19,12 @@ Local validation: `bash ops/test-fly.sh` and `CLAWCTL_SMOKE_STATIC_ONLY=1 bash o
 ## Upgrading an existing Tailscale Fly Hub
 
 Copy `CLAWCTL_AUTH_MODE = "tailscale"` into `[env]` in your out-of-tree `fly.toml` before upgrading. When the mode is unset, the entrypoint also auto-detects non-empty persisted Tailscale state or a set `TS_AUTHKEY`. Explicit mode settings always win; explicit local mode warns and unsets the ignored key. Keep the existing private config and volume.
+
+`deploy.sh` preserves existing machine CPU and memory sizing in its temporary config.
+The checked-in `[[vm]]` is a first-deploy default only. Override CPU with
+`--vm-size shared-cpu-Nx|performance-Nx` (1..64 CPUs) and memory with
+`--vm-memory MEM` (integer `mb` or `gb`, 256..131072mb). Environment alternatives
+are `FLY_VM_SIZE` and `FLY_VM_MEMORY`; flags win, and each override replaces only
+its corresponding field. Machines that disagree require overrides for the differing
+fields. Invalid guest inventory blocks deployment. Dry-run reports the sizing
+policy without contacting Fly; existing sizing is resolved on the real run.

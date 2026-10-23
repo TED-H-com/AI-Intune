@@ -168,3 +168,77 @@ func TestChecksSSRLatestAndRedaction(t *testing.T) {
 		t.Fatal(body)
 	}
 }
+
+func TestChecksScheduledResults(t *testing.T) {
+	for _, tc := range []struct{ name, state, badge string }{
+		{"failure", "failed", "Failed"}, {"rejection", "rejected", "Failed"}, {"expired", "lease_expired", "Failed"}, {"never ran", "", "Not run"}, {"all pass", "succeeded", "Passed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, st := newServer(t)
+			id := onlineMachine(t, st, "Scheduled worker")
+			now := time.Now().UTC().Truncate(time.Second)
+			enabled := true
+			if err := st.RecordCheckin(id, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: now, JobsEnabled: &enabled, ScriptV1: true}, now); err != nil {
+				t.Fatal(err)
+			}
+			entry, _ := scriptcatalog.Lookup("fleet-probe-v1")
+			req := store.ScheduleRequest{Name: "fleet-daily-health", ScriptID: entry.ID, ScriptSHA256: entry.SHA256, Args: json.RawMessage(`{}`), Targets: []string{id}, Cron: "*/5 * * * *", TZ: "UTC", Enabled: true, Reason: "scheduled fixture"}
+			actor := store.AuditEntry{AuthSubject: "test-operator", AuthCapability: "operate"}
+			preview, err := st.ScheduleManage(req, "upsert", false, "", actor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.PreviewDigest = preview.PreviewDigest
+			schedule, err := st.ScheduleManage(req, "upsert", true, "fixture-schedule", actor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			slot := now.Truncate(5 * time.Minute)
+			if _, err := st.DB().Exec(`UPDATE schedules SET updated_at=?,next_run_at=? WHERE id=?`, slot.Add(-time.Hour).Format(time.RFC3339), slot.Format(time.RFC3339), schedule.Schedule.ID); err != nil {
+				t.Fatal(err)
+			}
+			if tc.state != "" {
+				if err := st.TickSchedules(slot); err != nil {
+					t.Fatal(err)
+				}
+				current, err := st.ScheduleGet(schedule.Schedule.ID)
+				if err != nil || len(current.LastJobIDs) != 1 {
+					t.Fatal(err)
+				}
+				job := current.LastJobIDs[0]
+				if _, err := st.DB().Exec(`UPDATE jobs SET state=?,terminal_at=? WHERE job_id=?`, tc.state, slot.Add(time.Second).Format(time.RFC3339), job); err != nil {
+					t.Fatal(err)
+				}
+				if tc.state != "succeeded" {
+					// Synthetic credential-shaped text must never reach rendered HTML.
+					reason := "create private script directory <untrusted> token=synthetic-test-value\nignored line"
+					if _, err := st.DB().Exec(`INSERT INTO verification_results(verification_id,job_id,machine_id,rule_id,command,exit_code,stderr_excerpt,passed,verified_at) VALUES ('scheduled-failure',?,?,'script_v1','',1,?,0,?)`, job, id, reason, slot.Format(time.RFC3339)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			body := get(t, server, "/checks")
+			for _, want := range []string{"Fleet health — fleet-daily-health", ">" + tc.badge + "</span>"} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("missing %q", want)
+				}
+			}
+			if tc.state != "" && tc.state != "succeeded" && !strings.Contains(body, "create private script directory &lt;untrusted&gt;") {
+				t.Fatal("missing escaped reason")
+			}
+			for _, bad := range []string{"synthetic-test-value", "ignored line", "<untrusted>"} {
+				if strings.Contains(body, bad) {
+					t.Fatal("unsafe reason rendered")
+				}
+			}
+			if dir := os.Getenv("CLAWCTL_SCREENSHOT_DIR"); dir != "" && tc.name == "failure" {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "scheduled-checks.html"), []byte(body), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}

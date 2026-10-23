@@ -35,7 +35,8 @@ func (s *Server) ConfigureJoinFromEnv() error {
 }
 func (s *Server) SetJoinClientIP(resolver clientip.Resolver) { s.joinClientIP = resolver }
 func (s *Server) JoinPublicRoutes(mux *http.ServeMux) []string {
-	patterns := []string{"GET /join.sh", "POST /v1/join/start", "POST /v1/join/poll", "GET /v1/join/bundle/{arch}"}
+	patterns := []string{"GET /join.sh", "POST /v1/join/start", "POST /v1/join/poll", "GET /v1/join/bundle/{arch}", "GET /join.ps1"}
+	mux.HandleFunc(patterns[4], s.joinPowerShell)
 	mux.HandleFunc(patterns[0], s.joinScript)
 	mux.HandleFunc(patterns[1], s.joinStart)
 	mux.HandleFunc(patterns[2], s.joinPoll)
@@ -64,6 +65,18 @@ func (s *Server) joinScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.WriteString(w, strings.ReplaceAll(joinscript.Script, "@@CLAWCTL_PUBLIC_URL@@", s.hubBase))
 }
+func (s *Server) joinPowerShell(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !validJoinHub(s.hubBase) {
+		http.Error(w, "Configure a public HTTPS Hub URL first", 503)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Quote for a PowerShell single-quoted string, including valid URL apostrophes.
+	_, _ = io.WriteString(w, strings.ReplaceAll(joinscript.PowerShell, "@@CLAWCTL_PUBLIC_URL@@", strings.ReplaceAll(s.hubBase, "'", "''")))
+}
+
 func joinJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -165,7 +178,8 @@ func (s *Server) joinBundle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	arch := r.PathValue("arch")
 	secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || !s.operator.JoinBundleAuthorized(secret, arch) {
+	spec, found := lookupAgentBundleSpec(arch)
+	if !ok || !found || !s.operator.JoinBundleAuthorized(secret, spec.OS, spec.Arch) {
 		http.Error(w, "Download unavailable", 404)
 		return
 	}
@@ -227,8 +241,9 @@ func (s *Server) joinDecide(w http.ResponseWriter, r *http.Request) {
 		var bundle operator.JoinBundle
 		for _, row := range rows {
 			if row.Code == id && s.agentBundles != nil {
-				b := s.agentBundles.items[row.Arch]
-				bundle = operator.JoinBundle{URL: s.hubBase + "/v1/join/bundle/" + row.Arch, SHA256: b.SHA256}
+				key := row.OS + "-" + row.Arch
+				b := s.agentBundles.items[key]
+				bundle = operator.JoinBundle{URL: s.hubBase + "/v1/join/bundle/" + key, SHA256: b.SHA256}
 			}
 		}
 		if err := s.operator.DecideJoin(r.Context(), id, names[i], r.PostForm.Get("decision") == "approve", s.hubBase, bundle, operator.ActorFromRequest(r, operator.SourceKindWeb), r.PostForm.Get("monitor_only") == "true"); err != nil {

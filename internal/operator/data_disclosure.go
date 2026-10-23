@@ -120,6 +120,7 @@ const (
 	DataCategoryIdentity             DataCategoryKey = "identity"
 	DataCategoryCheckins             DataCategoryKey = "checkins"
 	DataCategoryObservations         DataCategoryKey = "observations"
+	DataCategoryObservedLatest       DataCategoryKey = "observed_latest"
 	DataCategoryTickets              DataCategoryKey = "tickets"
 	DataCategoryCredentials          DataCategoryKey = "credentials"
 	DataCategoryVerifications        DataCategoryKey = "verifications"
@@ -178,7 +179,7 @@ type dataCategoryShape struct {
 // 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var dataCategoryOrder = []DataCategoryKey{
 	DataCategoryRegistry, DataCategoryIdentity,
-	DataCategoryCheckins, DataCategoryObservations, DataCategoryTickets,
+	DataCategoryCheckins, DataCategoryObservations, DataCategoryObservedLatest, DataCategoryTickets,
 	DataCategoryCredentials, DataCategoryVerifications,
 	DataCategoryState, DataCategoryWorkload, DataCategoryCanary,
 	DataCategoryLoops, DataCategoryJobs, DataCategoryDiskClean, DataCategoryAssignments,
@@ -186,6 +187,14 @@ var dataCategoryOrder = []DataCategoryKey{
 }
 
 var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
+	DataCategoryObservedLatest: {
+		title:    "最新觀測",
+		holds:    "每台機器、kind 與 subject 的最新一筆觀測，包含原始 payload 與兩個時鐘。不按時間清除；機器移除時一併移除。",
+		source:   DataSourceMachine,
+		tables:   []string{"observed_latest"},
+		freeText: "最新觀測 payload（機器送上來的原文）。",
+		path:     "/machines",
+	},
 	DataCategoryUsageRecords: {
 		title:  "AI usage records",
 		holds:  "Hashed account membership and session or job identifiers, token and call counts, usage estimates, collection freshness, and upload replay receipts. No credentials, prompts, paths, or task labels are stored.",
@@ -261,9 +270,9 @@ var dataCategoryShapes = map[DataCategoryKey]dataCategoryShape{
 	},
 	DataCategoryState: {
 		title:    "狀態判定",
-		holds:    "Hub 判定這台進入哪一個狀態、什麼時候進去、什麼時候離開。",
+		holds:    "Hub 判定這台進入哪一個狀態、什麼時候進去、什麼時候離開。離線通知每台最多保留一筆事件與送達狀態，直到復原或退役。",
 		source:   DataSourceHub,
-		tables:   []string{"machine_state_history", "machine_state_transition_events"},
+		tables:   []string{"machine_state_history", "machine_state_transition_events", "machine_offline_alerts"},
 		freeText: "判定理由（Hub 自己寫的句子，長度不設上限）。",
 		path:     "/machines",
 	},

@@ -376,7 +376,7 @@ type SigninGroup struct {
 }
 
 func (s *Store) Signins() ([]SigninGroup, error) {
-	rows, e := s.rdb.Query(`SELECT o.machine_id,m.display_name,m.execution_policy<>'managed',o.payload FROM observed_state o JOIN machine_registry m ON m.machine_id=o.machine_id WHERE o.kind='auth_health' AND m.retired_at IS NULL AND o.rowid=(SELECT x.rowid FROM observed_state x WHERE x.machine_id=o.machine_id AND x.kind=o.kind AND x.subject=o.subject ORDER BY x.received_at DESC,x.rowid DESC LIMIT 1) ORDER BY m.display_name`)
+	rows, e := s.rdb.Query(`SELECT o.machine_id,m.display_name,m.execution_policy<>'managed',o.payload FROM observed_latest o JOIN machine_registry m ON m.machine_id=o.machine_id WHERE o.kind='auth_health' AND m.retired_at IS NULL ORDER BY m.display_name`)
 	if e != nil {
 		return nil, e
 	}

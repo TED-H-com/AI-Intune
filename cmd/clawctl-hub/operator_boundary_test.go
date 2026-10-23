@@ -124,16 +124,16 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		t.Fatal(err)
 	}
-	if len(nonOperatorRegistered) != 35 || len(nonOperatorRoutePolicies) != 35 {
-		t.Fatalf("non-operator registered=%d policies=%d, want 35/35",
+	if len(nonOperatorRegistered) != 36 || len(nonOperatorRoutePolicies) != 36 {
+		t.Fatalf("non-operator registered=%d policies=%d, want 36/36",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
-	if len(operatorRegistered) != 319 || len(operatorRoutePolicies) != 319 {
-		t.Fatalf("operator registered=%d policies=%d, want 319/319",
+	if len(operatorRegistered) != 325 || len(operatorRoutePolicies) != 325 {
+		t.Fatalf("operator registered=%d policies=%d, want 325/325",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 354 {
-		t.Fatalf("all registered routes=%d, 預期 354", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 361 {
+		t.Fatalf("all registered routes=%d, 預期 361", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
@@ -143,14 +143,14 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		representations[policy.Representation]++
 		profiles[policy.SecurityProfile]++
 	}
-	if counts[operatorauth.View] != 126 || counts[operatorauth.Operate] != 34 || counts[operatorauth.Admin] != 159 {
-		t.Fatalf("permission counts=%v, want view=126 operate=34 admin=159", counts)
+	if counts[operatorauth.View] != 128 || counts[operatorauth.Operate] != 34 || counts[operatorauth.Admin] != 163 {
+		t.Fatalf("permission counts=%v, want view=128 operate=34 admin=163", counts)
 	}
-	if representations[operatorJSON] != 156 || representations[operatorHTML] != 162 || representations[operatorPlain] != 1 {
-		t.Fatalf("representation counts=%v, want JSON=156 HTML=162 plain=1", representations)
+	if representations[operatorJSON] != 159 || representations[operatorHTML] != 165 || representations[operatorPlain] != 1 {
+		t.Fatalf("representation counts=%v, want JSON=159 HTML=165 plain=1", representations)
 	}
-	if profiles[operatorSecurityLocked] != 318 || profiles[operatorSecurityTerminal] != 1 {
-		t.Fatalf("security profiles=%v, want locked=318 terminal=1", profiles)
+	if profiles[operatorSecurityLocked] != 324 || profiles[operatorSecurityTerminal] != 1 {
+		t.Fatalf("security profiles=%v, want locked=324 terminal=1", profiles)
 	}
 }
 
@@ -354,6 +354,12 @@ func TestEveryOperatorRouteRequestsItsExactPermission(t *testing.T) {
 		{"GET /v1/operator/software-report", "/v1/operator/software-report", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/install-report", "/v1/operator/install-report", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"GET /v1/operator/profile-report", "/v1/operator/profile-report", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
+		{"GET /v1/operator/offline-alert-settings", "/v1/operator/offline-alert-settings", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/offline-alert-settings/preview", "/v1/operator/offline-alert-settings/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"POST /v1/operator/offline-alert-settings", "/v1/operator/offline-alert-settings", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
+		{"GET /tenant/offline-alerts", "/tenant/offline-alerts", operatorRoutePolicy{operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /tenant/offline-alerts/preview", "/tenant/offline-alerts/preview", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
+		{"POST /tenant/offline-alerts/apply", "/tenant/offline-alerts/apply", operatorRoutePolicy{operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible}},
 		{"GET /v1/operator/enrollment-limit", "/v1/operator/enrollment-limit", operatorRoutePolicy{operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible}},
 		{"POST /v1/operator/enrollment-limit/preview", "/v1/operator/enrollment-limit/preview", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},
 		{"POST /v1/operator/enrollment-limit", "/v1/operator/enrollment-limit", operatorRoutePolicy{operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible}},

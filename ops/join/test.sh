@@ -121,3 +121,95 @@ for mode in approved monitor-only no-tailscale no-fleet rejected expired downloa
   [[ -z $(find "$TEST_DIR/tmp" -mindepth 1 -print -quit) ]]
 done
 printf 'join script: approval, optional installer, private files, argv/output secrecy, rejection, expiry and failure cleanup passed\n'
+
+python3 - "$ROOT" <<'PY'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+s = (root/'ops/join/join.ps1').read_text()
+for text in ("[switch]$JobsEnabled", "$jobs = 'false'", "--jobs-enabled $Jobs", "--token-file $TokenFile", 'WindowsBuiltInRole]::Administrator', 'Join code:', '/machines/join', 'expires_at', 'poll_seconds', 'Get-FileHash', 'SHA256', 'Unsafe agent archive member.', 'Set-JoinPrivate $work $true', 'Remove-Item -LiteralPath $work'):
+    assert text in s, text
+assert s.index('Get-FileHash') < s.index('Expand-JoinBundle $archive')
+assert s.index('bundle/windows-$arch') < s.index('$Hub/v1/join/poll')
+assert '*> $null' not in s, 'installer diagnostics must not be discarded'
+for text in ('function Protect-JoinInstallerOutput', 'function Invoke-JoinInstaller',
+             '$Text.Replace($secret,', '(?:token|secret)', r'\bbearer',
+             '*>&1', '$LASTEXITCODE -ne 0',
+             '$line = Protect-JoinInstallerOutput ([string]$_) $Secrets',
+             'Add-Content -LiteralPath $LogFile -Value $line',
+             'Last redacted output lines:', '$tail.Count -gt 10',
+             '@($approved.enroll_token, $started.device_secret)',
+             "Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1')"):
+    assert text in s, text
+capture = s[s.index('function Invoke-JoinInstaller'):s.index('function Read-JoinBlock')]
+assert capture.index('Protect-JoinInstallerOutput ([string]$_)') < capture.index('Add-Content')
+assert 'Write-Host' not in capture and '[Console]' not in capture.split('$engine =', 1)[1]
+assert "[string]$Proxy = ''" in s
+assert 'if ($Proxy) { Set-JoinProxyConfig' in s
+helper = s[s.index('function Set-JoinProxyConfig'):s.index('function Write-JoinProgress')]
+assert 'if (-not $Proxy) { return }' in helper
+assert '-NotePropertyName proxy_url -NotePropertyValue $Proxy' in helper
+assert 'Text.UTF8Encoding($false)' in helper and 'Set-JoinPrivate $Path $false' in helper
+assert s.index('Invoke-JoinInstaller (Join-Path $stage') < s.index('if ($Proxy) { Set-JoinProxyConfig')
+assert '$env:HTTP_PROXY = $Proxy' in s and '$env:HTTPS_PROXY = $Proxy' in s
+assert '$proxyOptions.Proxy = $Proxy' in s
+assert s.count('@proxyOptions') == 3
+import xml.etree.ElementTree as ET
+task = ET.fromstring((root/'ops/clawctl-agent.task.xml').read_text())
+ns = {'t': 'http://schemas.microsoft.com/windows/2004/02/mit/task'}
+assert task.find('t:Settings/t:Hidden', ns).text == 'true'
+assert task.find('t:Actions/t:Exec/t:Command', ns).text == '@@CLAWCTL_AGENT_BIN@@'
+assert task.find('t:Actions/t:Exec/t:Arguments', ns) is None
+assert 'cmd.exe' not in (root/'ops/clawctl-agent.task.xml').read_text().lower()
+installer = (root/'ops/install-agent-windows.ps1').read_text()
+for text in ('jobs_enabled', '--monitor-only', 'Register-ScheduledTask', 'enroll --hub $Hub --token-file $TokenFile'):
+    assert text in installer, text
+assert installer.index("$TaskXml = $TaskXml -replace") < installer.index('\n  Register-ScheduledTask ')
+assert 'encoding="UTF-16"' in installer
+assert 'Fail "Scheduled task registration failed: $($_.Exception.Message)"' in installer
+print('Windows bootstrap: static encoding, redacted diagnostics, monitor-only, approval, digest, private-file and cleanup checks passed.')
+PY
+if command -v pwsh >/dev/null 2>&1; then
+  mkdir "$TEST_DIR/powershell"
+  python3 - "$TEST_DIR/powershell" <<'PY'
+import io, pathlib, sys, tarfile
+root = pathlib.Path(sys.argv[1])
+files = ['VERSION', 'clawctl-agent.exe', 'install-agent-windows.ps1', 'clawctl-agent.task.xml']
+for mode in ['valid', 'traversal', 'backslash', 'absolute', 'symlink', 'hardlink', 'duplicate', 'missing', 'truncated']:
+    with tarfile.open(root/f'{mode}.tar.gz', 'w:gz', format=tarfile.USTAR_FORMAT) as t:
+        for name in files[:-1] if mode == 'missing' else files:
+            entry = tarfile.TarInfo(name); entry.size = 4
+            t.addfile(entry, io.BytesIO(b'test'))
+        if mode not in ('valid', 'missing', 'truncated'):
+            names = {'traversal':'../escape', 'backslash':'..\\escape', 'absolute':'C:/escape', 'duplicate':'VERSION'}
+            entry = tarfile.TarInfo(names.get(mode, 'link'))
+            if mode in ('symlink', 'hardlink'):
+                entry.type = tarfile.SYMTYPE if mode == 'symlink' else tarfile.LNKTYPE
+                entry.linkname = '../escape'
+            t.addfile(entry)
+    if mode == 'truncated':
+        (root/f'{mode}.tar.gz').write_bytes(b'not gzip')
+PY
+  pwsh -NoProfile -File "$ROOT/ops/join/test-windows.ps1" -Fixtures "$TEST_DIR/powershell"
+else
+  printf 'skip: pwsh is not available; PowerShell parse/extraction/redaction tests not run.\n'
+fi
+
+# The Fly and Compose images share this initializer. Optional OS pairs must
+# survive image-to-volume seeding, including on a rerun of the same release.
+seed="$TEST_DIR/seed/agent-bootstrap/windows-test"
+data="$TEST_DIR/hub-data"
+mkdir -p "$seed"
+for target in linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
+  printf '%s\n' "$target" >"$seed/clawctl-agent-bootstrap-$target.tar.gz"
+done
+printf 'fixture sums\n' >"$seed/SHA256SUMS"
+CLAWCTL_VERSION=windows-test CLAWCTL_DATA="$data" CLAWCTL_SEED="$TEST_DIR/seed" sh "$ROOT/ops/docker/hub-data-init.sh" >"$TEST_DIR/seed-output"
+for target in linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
+  cmp "$seed/clawctl-agent-bootstrap-$target.tar.gz" "$data/agent-bootstrap/windows-test/clawctl-agent-bootstrap-$target.tar.gz"
+done
+CLAWCTL_VERSION=windows-test CLAWCTL_DATA="$data" CLAWCTL_SEED="$TEST_DIR/seed" sh "$ROOT/ops/docker/hub-data-init.sh" >>"$TEST_DIR/seed-output"
+rm "$seed/clawctl-agent-bootstrap-windows-arm64.tar.gz"
+if CLAWCTL_VERSION=windows-test CLAWCTL_DATA="$data" CLAWCTL_SEED="$TEST_DIR/seed" sh "$ROOT/ops/docker/hub-data-init.sh" >"$TEST_DIR/seed-output" 2>&1; then
+  echo 'Incomplete Windows seed accepted' >&2; exit 1
+fi
+printf 'Docker/Fly bootstrap: complete Windows pair is seeded and incomplete pairs are rejected.\n'

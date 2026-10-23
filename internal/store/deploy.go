@@ -791,7 +791,7 @@ func selectNextRunnableJob(tx dbTx, machineID string) (Job, bool, error) {
 	// Revision only orders jobs for the same resource. Revisions from unrelated
 	// resources are independent counters, so creation rowid chooses among their
 	// runnable heads.
-	job, err := scanJob(tx.QueryRow(`
+	rows, err := tx.Query(`
 SELECT j.job_id, j.machine_id, j.desired_id, j.revision, j.state,
        j.lease_token, j.lease_expires_at, j.execution_timeout, j.artifact_digest,
        j.irreversible, j.created_at, j.terminal_at
@@ -815,16 +815,26 @@ SELECT j.job_id, j.machine_id, j.desired_id, j.revision, j.state,
           AND earlier_desired.resource_id = desired.resource_id
           AND earlier.revision < j.revision
    )
- ORDER BY j.rowid ASC
-	LIMIT 1`, machineID, deploy.NotStarted, deploy.Succeeded, deploy.Succeeded,
-		deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Job{}, false, nil
-	}
+ ORDER BY j.rowid ASC`, machineID, deploy.NotStarted, deploy.Succeeded, deploy.Succeeded,
+		deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention)
 	if err != nil {
 		return Job{}, false, fmt.Errorf("store: get next job for machine: %w", err)
 	}
-	return job, true, nil
+	defer rows.Close()
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return Job{}, false, err
+		}
+		allowed, err := jobDispatchAllowedTx(tx, job.JobID, machineID)
+		if err != nil {
+			return Job{}, false, err
+		}
+		if allowed {
+			return job, true, nil
+		}
+	}
+	return Job{}, false, rows.Err()
 }
 
 func rejectDependencyBlockedJobsTx(tx dbTx, machineID string, now time.Time) error {
@@ -905,6 +915,13 @@ func (s *Store) ClaimJob(jobID, machineID string, now time.Time, lease time.Dura
 	var specRaw, kind string
 	err = tx.QueryRow(`SELECT d.spec,d.resource_kind FROM jobs j JOIN desired_state d ON d.desired_id=j.desired_id WHERE j.job_id=? AND j.machine_id=?`, jobID, machineID).Scan(&specRaw, &kind)
 	if err != nil {
+		return "", ErrJobNotFound
+	}
+	allowed, err := jobDispatchAllowedTx(tx, jobID, machineID)
+	if err != nil {
+		return "", err
+	}
+	if !allowed {
 		return "", ErrJobNotFound
 	}
 	if kind == scriptcatalog.Kind {

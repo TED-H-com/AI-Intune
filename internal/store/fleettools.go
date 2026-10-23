@@ -35,12 +35,9 @@ type FleetToolRow struct {
 func (s *Store) FleetTools() ([]FleetToolRow, error) {
 	rows, err := s.rdb.Query(`
 SELECT o.machine_id, o.subject, o.payload, o.measured_at, o.received_at
-  FROM observed_state o
+  FROM observed_latest o
  WHERE o.kind = ?
-   AND o.received_at = (SELECT MAX(o2.received_at) FROM observed_state o2
-                         WHERE o2.machine_id = o.machine_id AND o2.kind = o.kind
-                           AND o2.subject = o.subject)
- ORDER BY o.machine_id ASC, o.subject ASC, o.measured_at DESC, o.rowid DESC`,
+ ORDER BY o.machine_id ASC, o.subject ASC`,
 		KindCLITool)
 	if err != nil {
 		return nil, fmt.Errorf("store: read fleet tools: %w", err)

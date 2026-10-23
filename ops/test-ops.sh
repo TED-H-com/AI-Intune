@@ -2678,6 +2678,12 @@ else
 	failed=$((failed + 1))
 fi
 
+if bash "$ROOT/ops/test-gcp.sh"; then
+	passed=$((passed + 1))
+else
+	failed=$((failed + 1))
+fi
+
 if bash "$ROOT/ops/test-disk-clean.sh"; then
 	passed=$((passed + 1))
 else

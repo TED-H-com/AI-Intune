@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 354 個 HTTP operations（35 non-operator＋319 operator；156 條 operator JSON）、
+> 逐一對照 361 個 HTTP operations（36 non-operator＋325 operator；159 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,13 +12,13 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 354-operation tally above (35 non-operator + 319 operator). The inventory/contract excludes these six public account operations and totals 348. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 361-operation tally above (36 non-operator + 325 operator). The inventory/contract excludes these six public account operations and totals 355. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
 | `GET`, `POST` | `/setup` | First account only; POST requires setup code, username and password, creates a session, and redirects to automatic TOTP enrollment. Returns 404 after an admin exists. |
 | `GET`, `POST` | `/login` | Form and password authentication; creates a local session, or a five-minute source-bound pending login when MFA is enabled. Login/setup POSTs share resolved client-key limit 10/minute, burst 5. |
-| `POST` | `/login/mfa` | Requires pending login cookie plus authenticator or unused recovery code; same resolved client-key limiter and per-(account, client key) lockout as password login. |
+| `POST` | `/login/mfa` | Requires pending login cookie plus authenticator or unused recovery code; same resolved client-key limiter and per-(account, client key) lockout as password login. 10 consecutive second-factor failures across all client keys lock authenticator codes for the account for one hour; recovery codes still complete login. |
 | `POST` | `/logout` | Revokes the presented session, clears cookie, redirects to login. |
 
 | Method | Operator download route | Authority / behavior |
@@ -1344,7 +1344,20 @@ the same read. Linux check-in responses add `host_profile` and
 `host_profile_digest`; observations add `host_profile_apply`. No operator write
 API or write MCP is introduced. See [HOST-PROFILE](HOST-PROFILE.md).
 
-## One-command Linux join
+## One-command Linux and Windows join
+
+Windows `amd64` and `arm64` endpoints can run `irm https://hub.example.com/join.ps1 | iex`
+in an elevated PowerShell session under the intended agent account. The public
+`GET /join.ps1` script templates the same HTTPS Hub URL and prints the join code,
+approval page and expiry. Download it first to pass `-Hub`, `-LogFile` (default
+`%ProgramData%\clawctl\join.log`) or `-JobsEnabled`. Windows defaults to
+monitor-only (`jobs_enabled=false`) and installs a user logon scheduled task.
+It uses the approval's one-time enrollment token, verifies the approved SHA-256,
+rejects archive traversal/links, and deletes temporary secrets. Windows joins
+use public HTTPS without configuring Tailscale; Linux-only jobs remain blocked
+at server dispatch and claim even when jobs are enabled. See the Windows
+commands in [README](../README.md#4-enroll-an-endpoint).
+
 
 Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
 non-root agent account, then match its code at `/machines/join`. The public
@@ -1364,11 +1377,14 @@ requests globally. IPs use the existing trusted-proxy resolver. Join codes and
 atomically marking the request redeemed. All join responses use no-store.
 The script downloads the bundle while pending, then checks its SHA-256 from
 the approved payload before extraction. Bundle access requires the matching
-pending/approved, unexpired device secret and architecture; redemption ends
+pending/approved, unexpired device secret, OS and architecture; redemption ends
 that authority. Secrets stay out of URLs, argv, logs and operator reads.
+Windows bundle keys are `windows-amd64` and `windows-arm64`; `linux-amd64`
+and `linux-arm64` select Linux, as do the legacy `amd64` and `arm64` keys.
+Approval selects the digest by OS and architecture; cross-OS downloads fail.
 
 Enrollment tickets use the canonical operator service, are single-use and
-last 600 seconds. Optional Hub-issued Tailscale keys are single-use,
+last 600 seconds. Optional Hub-issued Tailscale keys for Linux joins are single-use,
 non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
 OAuth client configuration is optional; without it the machine joins without
 Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,
@@ -1474,3 +1490,25 @@ machines, preserving their current Hub behavior. Older agents receive no new
 check-in policy field unless they opt in. Profile data contains only the two
 allowlisted modes, revision, support and acknowledgment state; raw configuration,
 credentials and host command output are never projected into profile HTML.
+
+## Immediate offline alert settings
+
+Six operator operations add three JSON and three HTML routes. These routes
+remain human-only and use the shared Host/CrossOriginProtection/locked-CSP
+boundary. Read requires view; all writes, including previews, require admin.
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/v1/operator/offline-alert-settings` | No-store `{minutes,revision}`, default 10 minutes, no query parameters |
+| POST | `/v1/operator/offline-alert-settings/preview` | Closed `{minutes}` (1..1440); read-only current/next threshold and digest |
+| POST | `/v1/operator/offline-alert-settings` | Closed `{minutes,expected_revision,preview_digest,reason,confirm}`; exact `OFFLINE ALERTS` confirmation and `Idempotency-Key`; settings, receipt and audit commit atomically; revision conflict 409, stale preview 412; replay 200 with replay header |
+| GET | `/tenant/offline-alerts` | Discoverable tenant settings page with current threshold and delivery semantics |
+| POST | `/tenant/offline-alerts/preview` | Shared canonical preview |
+| POST | `/tenant/offline-alerts/apply` | Shared canonical apply and typed confirmation; redirects to current settings |
+
+`clawctl-hub offline-alerts` read/preview/apply uses the same HTTP DTOs and strict
+client. No new service-token eligibility or notification-channel configuration.
+The per-machine durable latch `machine_offline_alerts` retains only episode and
+Hub-clock delivery/dedupe metadata, is disclosed with state records, and
+has no agent-controlled text or secret fields. See [Hub reliability](HUB-RELIABILITY.md#immediate-machine-offline-notifications)
+for recovery hold, backoff, lifecycle handling and ambiguous-delivery limits.

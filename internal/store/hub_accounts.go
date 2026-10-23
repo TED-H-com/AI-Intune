@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -49,6 +50,11 @@ func passwordHash(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
+	release, err := acquirePasswordHash(context.Background())
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	hash := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, 32)
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", argonMemory, argonTime, argonThreads, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(hash)), nil
 }
@@ -68,6 +74,11 @@ func checkPassword(encoded, password string) bool {
 	if e1 != nil || e2 != nil || len(salt) != 16 || len(want) != 32 {
 		return false
 	}
+	release, err := acquirePasswordHash(context.Background())
+	if err != nil {
+		return false
+	}
+	defer release()
 	got := argon2.IDKey([]byte(password), salt, t, m, p, 32)
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
@@ -137,92 +148,127 @@ func (s *Store) VerifyPassword(username, password, clientIP string, metadata ...
 	if strings.Contains(username, "@") {
 		column = "email"
 	}
-	err := s.rdb.QueryRow(`SELECT account_id,username,password_hash,role,auth_generation FROM hub_accounts WHERE `+column+`=?`, username).Scan(&a.AccountID, &a.Username, &a.passwordHash, &a.Role, &a.authGeneration)
+	var snapshotDisabled sql.NullString
+	err := s.rdb.QueryRow(`SELECT account_id,username,password_hash,role,auth_generation,disabled_at,COALESCE((SELECT totp_secret FROM hub_account_mfa WHERE account_id=hub_accounts.account_id AND enabled_at IS NOT NULL),'') FROM hub_accounts WHERE `+column+`=?`, username).Scan(&a.AccountID, &a.Username, &a.passwordHash, &a.Role, &a.authGeneration, &snapshotDisabled, &a.mfaSecret)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return a, err
 	}
+	unknown := errors.Is(err, sql.ErrNoRows)
+	if unknown {
+		a.AccountID = "unknown"
+	}
+	var snapshotLocked sql.NullString
+	var snapshotFailed int
+	if e := s.rdb.QueryRow(`SELECT failed_attempts,locked_until FROM hub_login_failures WHERE account_id=? AND client_ip=?`, a.AccountID, clientIP).Scan(&snapshotFailed, &snapshotLocked); e != nil && !errors.Is(e, sql.ErrNoRows) {
+		return HubAccount{}, e
+	}
+	snapshotUntil, _ := time.Parse(time.RFC3339, snapshotLocked.String)
 	validLength := len(password) <= 256
 	if !validLength {
 		password = ""
 	}
 	valid := false
-	if errors.Is(err, sql.ErrNoRows) {
+	if unknown {
 		// Outside the UUID account ID namespace; never creates an account row.
 		a.AccountID = "unknown"
 		// Same KDF cost for unknown users; no persistent dummy secret is needed.
-		dummy := argon2.IDKey([]byte(password), make([]byte, 16), argonTime, argonMemory, argonThreads, 32)
-		_ = subtle.ConstantTimeCompare(dummy, make([]byte, 32))
+		release, hashErr := acquirePasswordHash(context.Background())
+		if hashErr == nil {
+			dummy := argon2.IDKey([]byte(password), make([]byte, 16), argonTime, argonMemory, argonThreads, 32)
+			_ = subtle.ConstantTimeCompare(dummy, make([]byte, 32))
+			release()
+		}
 	} else {
 		valid = checkPassword(a.passwordHash, password) && validLength
 	}
-	tx, err := s.beginWrite(context.Background(), "verify_hub_password")
-	if err != nil {
-		return HubAccount{}, err
-	}
-	defer tx.Rollback()
-	now := s.nowFn()
-	// Legacy hub_accounts.failed_attempts/locked_until remain for compatibility only.
-	if _, err = tx.Exec(`DELETE FROM hub_login_failures WHERE last_failed_at<?`, fmtTime(now.Add(-24*time.Hour))); err != nil {
-		return HubAccount{}, err
-	}
-	var disabled sql.NullString
-	var currentHash string
-	var currentGeneration int64
-	err = tx.QueryRow(`SELECT password_hash,disabled_at,auth_generation,COALESCE((SELECT totp_secret FROM hub_account_mfa WHERE account_id=hub_accounts.account_id AND enabled_at IS NOT NULL),'') FROM hub_accounts WHERE account_id=?`, a.AccountID).Scan(&currentHash, &disabled, &currentGeneration, &a.mfaSecret)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return HubAccount{}, err
-	}
-	blocked := disabled.Valid || err != nil || currentHash != a.passwordHash || currentGeneration != a.authGeneration
-	failed := 0
-	var locked sql.NullString
-	// Unknown identifiers run the same lookup (no rows) to keep the read path uniform.
-	if e := tx.QueryRow(`SELECT failed_attempts,locked_until FROM hub_login_failures WHERE account_id=? AND client_ip=?`, a.AccountID, clientIP).Scan(&failed, &locked); e != nil && !errors.Is(e, sql.ErrNoRows) {
-		return HubAccount{}, e
-	}
-	until, _ := time.Parse(time.RFC3339, locked.String)
-	blocked = blocked || now.Before(until)
-	action := AuditAction(AuditHubLoginFailed)
-	if valid && !blocked {
-		// With MFA, completion of the second factor clears login failures.
-		_, err = tx.Exec(`DELETE FROM hub_login_failures WHERE account_id=? AND client_ip=? AND NOT EXISTS (SELECT 1 FROM hub_account_mfa WHERE account_id=? AND enabled_at IS NOT NULL)`, a.AccountID, clientIP, a.AccountID)
-		action = AuditHubLoginOK
-	} else if !blocked {
-		if locked.Valid {
-			failed = 0
+	rejected := !valid || unknown || snapshotDisabled.Valid || s.nowFn().Before(snapshotUntil)
+	persist := func(bulk bool) (HubAccount, error) {
+		begin := s.beginWriteInteractive
+		if bulk {
+			begin = s.beginWrite
 		}
-		failed++
-		var lock any
-		if failed >= 5 {
-			lock = fmtTime(now.Add(15 * time.Minute))
-			action = AuditHubLockout
-		}
-		_, err = tx.Exec(`INSERT INTO hub_login_failures(account_id,client_ip,failed_attempts,locked_until,last_failed_at) VALUES(?,?,?,?,?) ON CONFLICT(account_id,client_ip) DO UPDATE SET failed_attempts=excluded.failed_attempts,locked_until=excluded.locked_until,last_failed_at=excluded.last_failed_at`, a.AccountID, clientIP, failed, lock, fmtTime(now))
-	} else {
-		err = nil
-	}
-	if err != nil {
-		return HubAccount{}, err
-	}
-	if err = s.recordAuditTx(tx, accountAudit(action, a, valid && !blocked, metadata...)); err != nil {
-		return HubAccount{}, err
-	}
-	if action == AuditHubLockout {
-		if err = s.recordAuditTx(tx, accountAudit(AuditHubLoginFailed, a, false, metadata...)); err != nil {
+		tx, err := begin(context.Background(), "verify_hub_password")
+		if err != nil {
 			return HubAccount{}, err
 		}
-	}
-	if !valid || blocked {
-		if err = s.auditHubGuessingTx(tx, a, metadata...); err != nil {
+		defer tx.Rollback()
+		now := s.nowFn()
+		// Legacy hub_accounts.failed_attempts/locked_until remain for compatibility only.
+		if _, err = tx.Exec(`DELETE FROM hub_login_failures WHERE last_failed_at<?`, fmtTime(now.Add(-24*time.Hour))); err != nil {
 			return HubAccount{}, err
 		}
+		var disabled sql.NullString
+		var currentHash string
+		var currentGeneration int64
+		err = tx.QueryRow(`SELECT password_hash,disabled_at,auth_generation,COALESCE((SELECT totp_secret FROM hub_account_mfa WHERE account_id=hub_accounts.account_id AND enabled_at IS NOT NULL),'') FROM hub_accounts WHERE account_id=?`, a.AccountID).Scan(&currentHash, &disabled, &currentGeneration, &a.mfaSecret)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return HubAccount{}, err
+		}
+		blocked := disabled.Valid || err != nil || currentHash != a.passwordHash || currentGeneration != a.authGeneration
+		failed := 0
+		var locked sql.NullString
+		// Unknown identifiers run the same lookup (no rows) to keep the read path uniform.
+		if e := tx.QueryRow(`SELECT failed_attempts,locked_until FROM hub_login_failures WHERE account_id=? AND client_ip=?`, a.AccountID, clientIP).Scan(&failed, &locked); e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return HubAccount{}, e
+		}
+		until, _ := time.Parse(time.RFC3339, locked.String)
+		blocked = blocked || now.Before(until)
+		// Once rejected, a bulk persistence retry cannot turn into a successful login.
+		blocked = blocked || (bulk && valid && rejected)
+		rejected = rejected || !valid || blocked
+		action := AuditAction(AuditHubLoginFailed)
+		if valid && !blocked {
+			// With MFA, completion of the second factor clears login failures.
+			_, err = tx.Exec(`DELETE FROM hub_login_failures WHERE account_id=? AND client_ip=? AND NOT EXISTS (SELECT 1 FROM hub_account_mfa WHERE account_id=? AND enabled_at IS NOT NULL)`, a.AccountID, clientIP, a.AccountID)
+			action = AuditHubLoginOK
+		} else if !blocked {
+			if locked.Valid {
+				failed = 0
+			}
+			failed++
+			var lock any
+			if failed >= 5 {
+				lock = fmtTime(now.Add(15 * time.Minute))
+				action = AuditHubLockout
+			}
+			_, err = tx.Exec(`INSERT INTO hub_login_failures(account_id,client_ip,failed_attempts,locked_until,last_failed_at) VALUES(?,?,?,?,?) ON CONFLICT(account_id,client_ip) DO UPDATE SET failed_attempts=excluded.failed_attempts,locked_until=excluded.locked_until,last_failed_at=excluded.last_failed_at`, a.AccountID, clientIP, failed, lock, fmtTime(now))
+		} else {
+			err = nil
+		}
+		if err != nil {
+			return HubAccount{}, err
+		}
+		if err = s.recordAuditTx(tx, accountAudit(action, a, valid && !blocked, metadata...)); err != nil {
+			return HubAccount{}, err
+		}
+		if action == AuditHubLockout {
+			if err = s.recordAuditTx(tx, accountAudit(AuditHubLoginFailed, a, false, metadata...)); err != nil {
+				return HubAccount{}, err
+			}
+		}
+		if !valid || blocked {
+			if err = s.auditHubGuessingTx(tx, a, metadata...); err != nil {
+				return HubAccount{}, err
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return HubAccount{}, err
+		}
+		if !valid || blocked {
+			return HubAccount{}, ErrAccountAuth
+		}
+		return a, nil
 	}
-	if err = tx.Commit(); err != nil {
-		return HubAccount{}, err
+	result, writeErr := persist(false)
+	if rejected && (errors.Is(writeErr, ErrWriterBusy) || errors.Is(writeErr, context.DeadlineExceeded) || errors.Is(writeErr, sql.ErrTxDone)) {
+		result, writeErr = persist(true)
 	}
-	if !valid || blocked {
+	// A successful login always requires the interactive transaction to commit.
+	if writeErr != nil && !errors.Is(writeErr, ErrAccountAuth) && rejected {
+		log.Printf("WARN hub login failure persistence failed: %v", writeErr)
 		return HubAccount{}, ErrAccountAuth
 	}
-	return a, nil
+	return result, writeErr
 }
 
 func sessionHash(token string) string {
@@ -339,6 +385,9 @@ func (s *Store) ChangePassword(accountID, password, keepToken string) error {
 	if _, err = tx.Exec(`DELETE FROM hub_login_failures WHERE account_id=?`, accountID); err != nil {
 		return err
 	}
+	if _, err = tx.Exec(`DELETE FROM hub_mfa_failures WHERE account_id=?`, accountID); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`UPDATE hub_sessions SET revoked_at=? WHERE account_id=? AND session_hash<>? AND revoked_at IS NULL`, fmtTime(s.nowFn()), accountID, sessionHash(keepToken)); err != nil {
 		return err
 	}
@@ -362,7 +411,8 @@ func (s *Store) LocalAccountLogin(accountID string) (string, error) {
 }
 
 // Password and second-factor failures contribute to one rolling audit signal.
-// This observes distributed guessing without locking the account globally.
+// The signal never locks; verifySecondFactorTx separately limits consecutive
+// second-factor failures per account.
 func (s *Store) auditHubGuessingTx(tx *writeTx, a HubAccount, metadata ...AuditEntry) error {
 	var failures, signals int
 	since := fmtTime(s.nowFn().Add(-time.Hour))

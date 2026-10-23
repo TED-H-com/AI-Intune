@@ -479,8 +479,8 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-348（29 non-operator＋319 operator；156 operator JSON＋163 HTML/BFF/CSV/download），exact auth tally 是
-`view=126`／`operate=34`／`admin=159`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
+355（30 non-operator＋325 operator；159 operator JSON＋166 HTML/BFF/CSV/download），exact auth tally 是
+`view=128`／`operate=34`／`admin=163`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form
 `POST /preferences/navigation-language`，只接受 `zh-Hant`／`en`，以 HttpOnly、SameSite=Lax、
@@ -1205,7 +1205,20 @@ observations relay `host_profile_apply`. This is not an arbitrary job executor,
 and does not relax the observer's privilege boundary or enable root Hub jobs.
 See [HOST-PROFILE](HOST-PROFILE.md) for ownership, validation and evidence limits.
 
-## One-command Linux join
+## One-command Linux and Windows join
+
+Windows `amd64` and `arm64` endpoints can run `irm https://hub.example.com/join.ps1 | iex`
+in an elevated PowerShell session under the intended agent account. The public
+`GET /join.ps1` script templates the same HTTPS Hub URL and prints the join code,
+approval page and expiry. Download it first to pass `-Hub`, `-LogFile` (default
+`%ProgramData%\clawctl\join.log`) or `-JobsEnabled`. Windows defaults to
+monitor-only (`jobs_enabled=false`) and installs a user logon scheduled task.
+It uses the approval's one-time enrollment token, verifies the approved SHA-256,
+rejects archive traversal/links, and deletes temporary secrets. Windows joins
+use public HTTPS without configuring Tailscale; Linux-only jobs remain blocked
+at server dispatch and claim even when jobs are enabled. See the Windows
+commands in [README](../README.md#4-enroll-an-endpoint).
+
 
 Run `curl -fsSL https://hub.example.com/join.sh | sudo bash` from the intended
 non-root agent account, then match its code at `/machines/join`. The public
@@ -1225,11 +1238,14 @@ requests globally. IPs use the existing trusted-proxy resolver. Join codes and
 atomically marking the request redeemed. All join responses use no-store.
 The script downloads the bundle while pending, then checks its SHA-256 from
 the approved payload before extraction. Bundle access requires the matching
-pending/approved, unexpired device secret and architecture; redemption ends
+pending/approved, unexpired device secret, OS and architecture; redemption ends
 that authority. Secrets stay out of URLs, argv, logs and operator reads.
+Windows bundle keys are `windows-amd64` and `windows-arm64`; `linux-amd64`
+and `linux-arm64` select Linux, as do the legacy `amd64` and `arm64` keys.
+Approval selects the digest by OS and architecture; cross-OS downloads fail.
 
 Enrollment tickets use the canonical operator service, are single-use and
-last 600 seconds. Optional Hub-issued Tailscale keys are single-use,
+last 600 seconds. Optional Hub-issued Tailscale keys for Linux joins are single-use,
 non-ephemeral, pre-authorised, tagged (default `tag:fleet`) and last 600 seconds.
 OAuth client configuration is optional; without it the machine joins without
 Tailscale. Deployment env names are `CLAWCTL_TAILSCALE_OAUTH_CLIENT_ID`,

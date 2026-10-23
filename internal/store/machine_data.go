@@ -27,6 +27,7 @@ type MachineDataTable struct {
 
 // machineDataTables 依「先名冊、再機器自己送的、再 Hub 推出來的、最後人留下的」排。
 var machineDataTables = []MachineDataTable{
+	{Table: "machine_offline_alerts", TimeCol: "unreachable_since"},
 	{Table: "fleet_host_profile", TimeCol: ""},
 	{Table: "signin_sessions", TimeCol: "created_at"},
 	{Table: "signin_notification_state", TimeCol: ""},
@@ -45,6 +46,7 @@ var machineDataTables = []MachineDataTable{
 	// capability 沒有自己的 Hub 時刻；它跟 exact check-in 同生同滅，保留期由 FK cascade 繼承。
 	{Table: "machine_job_capabilities", TimeCol: ""},
 	{Table: "observed_state", TimeCol: "received_at"},
+	{Table: "observed_latest", TimeCol: "received_at"},
 	{Table: "ticket_occupancy_observation", TimeCol: "received_at"},
 	{Table: "credential_on_machine", TimeCol: "updated_at"},
 	{Table: "verification_results", TimeCol: "received_at"},

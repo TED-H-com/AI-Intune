@@ -59,6 +59,20 @@ var forbiddenInterfaceCopy = []string{
 	"request guard",
 	"legacy ledger",
 	"再升級",
+	"not guaranteed",
+	"no guarantee",
+	"fail-closed",
+	"cannot prove",
+	"does not prove",
+	"not yet implemented",
+	"coming soon",
+	"disclaimer",
+	"contact your administrator",
+	"use your own judgment",
+	"legacy command",
+	"legacy machine filter",
+	"canonical filters",
+	"installer placeholder",
 }
 
 func TestTemplatesExcludeDefensiveInterfaceCopy(t *testing.T) {

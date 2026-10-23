@@ -131,6 +131,7 @@ type nonOperatorRoutePolicy struct {
 // public account traffic. In particular, /v1/operator/* can never be classified as
 // a machine route.
 var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
+	"GET /join.ps1":                  {nonOperatorAgent},
 	"GET /join.sh":                   {nonOperatorAgent},
 	"POST /v1/join/start":            {nonOperatorAgent},
 	"POST /v1/join/poll":             {nonOperatorAgent},
@@ -361,6 +362,12 @@ var operatorRoutePolicies = map[string]operatorRoutePolicy{
 	"GET /v1/operator/software-report":                                    {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/install-report":                                     {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"GET /v1/operator/profile-report":                                     {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
+	"GET /v1/operator/offline-alert-settings":                             {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /v1/operator/offline-alert-settings/preview":                    {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"POST /v1/operator/offline-alert-settings":                            {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
+	"GET /tenant/offline-alerts":                                          {operatorauth.View, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/offline-alerts/preview":                                 {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
+	"POST /tenant/offline-alerts/apply":                                   {operatorauth.Admin, operatorHTML, operator.SourceKindWeb, operatorSecurityLocked, serviceIneligible},
 	"GET /v1/operator/enrollment-limit":                                   {operatorauth.View, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceEligible},
 	"POST /v1/operator/enrollment-limit/preview":                          {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
 	"POST /v1/operator/enrollment-limit":                                  {operatorauth.Admin, operatorJSON, operator.SourceKindOperatorAPI, operatorSecurityLocked, serviceIneligible},
@@ -585,7 +592,14 @@ func newHubHTTPHandler(h *hub, ui *web.Server, authorizer operatorRequestAuthori
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		return nil, err
 	}
-	boundary := newOperatorBoundary(operatorMux, authorizer, h.store, operatorRoutePolicies, authority, cloud...)
+	policies := make(map[string]operatorRoutePolicy, len(operatorRoutePolicies)+1)
+	for pattern, policy := range operatorRoutePolicies {
+		policies[pattern] = policy
+	}
+	if h.pprofEnabled {
+		registerPprof(operatorMux, policies)
+	}
+	boundary := newOperatorBoundary(operatorMux, authorizer, h.store, policies, authority, cloud...)
 	boundary.clientIP = h.clientIP
 	root.Handle("/", boundary)
 	return root, nil
@@ -626,7 +640,7 @@ func validateNonOperatorRoutePolicies(registered []string, policies map[string]n
 		}
 		switch policy.Class {
 		case nonOperatorAgent:
-			if pattern == "GET /join.sh" {
+			if pattern == "GET /join.sh" || pattern == "GET /join.ps1" {
 				break
 			}
 			if !strings.HasPrefix(path, "/v1/") {
@@ -733,6 +747,7 @@ func validateOperatorRoutePolicies(registered []string, policies map[string]oper
 
 func (b *operatorBoundary) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, pattern := b.next.Handler(r)
+	r.Pattern = pattern
 	if pattern == "" {
 		// No registered control route matched. Preserve ServeMux's canonical
 		// 404/405 response; there is no handler here that could mutate state.

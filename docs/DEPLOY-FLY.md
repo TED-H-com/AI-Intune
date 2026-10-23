@@ -12,7 +12,7 @@ ops/fly/deploy.sh --org <your-org> --app <your-app-name> --region iad
 # Optional: add --secrets-file ~/clawctl-fly/secrets.env (regular file, mode 0600).
 ```
 
-The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one 1024mb Machine, and verifies HTTPS `/healthz`, `/version`, and `/setup` with bounded retries. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
+The flags also accept `FLY_ORG`, `FLY_APP`, `FLY_REGION` (default `iad`), `FLY_SECRETS_FILE`, and `FLY_PUBLIC_URL` (`--public-url https://hub.example.com` for custom-domain checks). Dry-run prints the plan without calling Fly or making network requests. The script copies the config outside the repository, creates only missing resources, deploys with `--yes --ha=false`, scales to one Machine, and verifies HTTPS `/healthz`, `/version`, and `/setup` with bounded retries. It keeps the 3GB `clawctl_data` volume and never allocates a dedicated IPv4 or creates Postgres. R2 and Telegram are optional; unset `R2_*` / `LITESTREAM_*` is valid. The caller's secrets file is retained.
 
 Before every deploy, the wrapper creates a Fly snapshot for **each `clawctl_data` volume**, including newly provisioned volumes. It polls `flyctl volumes snapshots list --json` until a new ID (absent from the pre-request inventory) has status `created`, a creation time after the request, and age at most 300 seconds. It prints the verified ID and volume. Creation, inventory, or verification failure blocks deployment. Polling defaults to 180 seconds per volume (`FLY_SNAPSHOT_TIMEOUT=1..9999`); each snapshot CLI call also has a 15-second timeout. GNU coreutils `timeout` is required. Dry-run prints the gate without calling Fly.
 
@@ -183,6 +183,10 @@ Check `https://<your-app-name>.fly.dev/healthz` (or your custom domain), then fo
 
 Public mode defaults to `CLAWCTL_TRUSTED_PROXIES=172.16.0.0/12` (fly-proxy egress) and `CLAWCTL_CLIENT_IP_HEADER=Fly-Client-IP`. On Fly the rightmost X-Forwarded-For entry is the app's edge IP. 6PN uses IPv6 `fdaa::/16` and is not trusted. Explicit proxy/header settings, including empty trust, are respected; see [client IP configuration](AUTOPILOT.md#client-ip-and-reverse-proxies).
 
+### Cloudflare Tunnel alternative
+
+The allowed `CLAWCTL_CLIENT_IP_HEADER` values are `X-Forwarded-For` (default), `Fly-Client-IP`, and `CF-Connecting-IP`, case-insensitively. For `cloudflared` on the host with Hub in Docker bridge networking, the peer is the bridge gateway (for example, `172.17.0.1`). Set `CLAWCTL_CLIENT_IP_HEADER=CF-Connecting-IP` and `CLAWCTL_TRUSTED_PROXIES=<gateway>/32` using the actual gateway. Never trust broad ranges; see [Cloudflare Tunnel configuration](AUTOPILOT.md#cloudflare-tunnel).
+
 ## Advanced: Tailscale-only Hub on Fly
 
 This private pack preserves the existing Tailscale behavior: no public HTTP service; operators and agents reach the literal Tailscale IPv4. Use `ops/fly/fly.tailscale.toml`. Its `[env]` explicitly sets `CLAWCTL_AUTH_MODE = "tailscale"`. Do not add a public service to its config.
@@ -335,9 +339,25 @@ You can tune replication parameters by setting these Fly secrets (using the `sec
 
 | Variable | Default | Description | Tradeoff |
 |---|---|---|---|
-| `LITESTREAM_SYNC_INTERVAL` | `10s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
+| `LITESTREAM_SYNC_INTERVAL` | `60s` | How often WAL changes sync to R2. | Lower = smaller RPO (data loss window) but higher R2 Class A API costs. |
 | `LITESTREAM_SNAPSHOT_INTERVAL` | `24h` | How often a full database snapshot is written. | Lower = faster restore time, but uses more R2 storage and PUTs. |
 | `LITESTREAM_RETENTION` | `168h` | How long snapshots and WAL files are kept. | Higher = longer recovery window, but uses more R2 storage. Must be >= snapshot interval. |
+| `LITESTREAM_L0_RETENTION_CHECK_INTERVAL` | `5m` | How often Litestream checks for expired, already-compacted L0 files. | Longer intervals reduce R2 LIST requests but leave eligible L0 files in local and remote storage longer. |
+
+Litestream 0.5.17's L0 cleanup scans the retained L1 file history on every pass.
+Its upstream `15s` default repeats that scan 5,760 times per day, with more LIST
+pages as history grows. This image uses `5m` (288 passes per day). This changes
+cleanup scheduling only: the `60s` sync interval, compaction intervals, `24h`
+snapshot interval, and `168h` snapshot retention remain unchanged. Expired L0
+files can remain until the next cleanup pass; they are still removed only after
+compaction and the L0 retention period. Set the new variable to `15s` to restore
+the previous cadence. Changing the sync interval alone does not change cleanup
+polling. Total request savings depend on the backup history and other operations.
+
+After an upgrade, verify the `starting L0 retention monitor` log reports
+`interval=5m0s`, run the restore drill above, and compare the bucket's hourly
+`ListObjects` counts. The setting requires this version of the image; setting
+the environment variable alone on an older image does not change its config.
 
 ## Volume layout and Litestream
 
@@ -431,3 +451,18 @@ Exit 2 means **deploy succeeded, verification failed**; exit 1 covers earlier
 configuration/provision/build failures. Inspect the deployed app and public
 origin, and recheck health and commit before deciding whether another deploy is
 needed. Setup logs are read only after all endpoint checks pass.
+
+`deploy.sh` preserves existing machine CPU and memory sizing in its temporary config.
+The checked-in `[[vm]]` is a first-deploy default only. Override CPU with
+`--vm-size shared-cpu-Nx|performance-Nx` (1..64 CPUs) and memory with
+`--vm-memory MEM` (integer `mb` or `gb`, 256..131072mb). Environment alternatives
+are `FLY_VM_SIZE` and `FLY_VM_MEMORY`; flags win, and each override replaces only
+its corresponding field. Machines that disagree require overrides for the differing
+fields. Invalid guest inventory blocks deployment. Dry-run reports the sizing
+policy without contacting Fly; existing sizing is resolved on the real run.
+
+## GCP alternative
+
+Fly remains the cheaper default. If you have GCP free credits, see
+[Deploy on a GCE VM](DEPLOY-GCP.md) for IAP-only SSH, Cloudflare Tunnel,
+R2 replication, and the migration and rollback runbook.

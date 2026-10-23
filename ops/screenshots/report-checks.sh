@@ -6,7 +6,7 @@ output_dir="${1:-$repo_dir/docs/screenshots/checks}"
 mkdir -p "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
 cd "$repo_dir"
-CLAWCTL_SCREENSHOT_DIR="$output_dir" go test ./internal/web -run '^TestChecks(PreviewFiveDisabledSchedules|SSRLatestAndRedaction)$' -count=1
+CLAWCTL_SCREENSHOT_DIR="$output_dir" go test ./internal/web -run '^TestChecks(PreviewFiveDisabledSchedules|SSRLatestAndRedaction|ScheduledResults)$' -count=1
 browser_path="${CLAWCTL_SCREENSHOT_BROWSER:-}"
 if [[ -z "$browser_path" ]]; then
   for candidate in chromium google-chrome chromium-browser; do
