@@ -1,0 +1,27 @@
+# The Docker build context is the tracked tree. Mirrors .gitignore so local
+# secrets, databases and build outputs never reach a local or remote builder.
+.git
+/build/
+/dist/
+/clawctl-agent
+/clawctl-hub
+/clawctl-operator
+**/.work/
+**/*.exe
+**/*.test
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.pem
+**/*.key
+**/.env
+**/.env.*
+**/config.local.*
+**/secrets.local.*
+**/node_modules/
+**/__pycache__/
+**/.venv/
+**/.DS_Store
+ops/docker/hub.env
+ops/notify.env
+ops/docker/autopilot.env
