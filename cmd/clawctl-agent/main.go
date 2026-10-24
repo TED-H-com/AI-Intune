@@ -709,15 +709,15 @@ func runAgent() {
 }
 
 func advertiseJobCapabilities(checkin *model.Checkin) {
-	// Foundation support is Linux/non-root; execution adapters still require their
-	// own catalog entries and reviewed runtime profiles.
+	// Script support is non-root on Linux and Darwin; catalog entries constrain
+	// the platforms allowed for each script.
 	checkin.DiskActionKey, _ = scriptcatalog.DiskActionReadiness()
 	checkin.DiskOpsV2 = runtime.GOOS == "linux" && os.Geteuid() != 0
 	if checkin.DiskOpsV2 {
 		checkin.DiskTimers = observeDiskTimers(time.Now().UTC())
 	}
 	checkin.DeviceSyncV1 = true
-	checkin.ScriptV1 = runtime.GOOS == "linux" && os.Geteuid() != 0
+	checkin.ScriptV1 = (runtime.GOOS == "linux" || runtime.GOOS == "darwin") && os.Geteuid() != 0
 	checkin.MaintenanceDiskCleanV1 = true
 }
 

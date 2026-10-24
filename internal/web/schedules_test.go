@@ -211,3 +211,40 @@ func TestScriptPreviewErrorKeepsLinesAndEscapesNames(t *testing.T) {
 		t.Fatal(w.Code, body)
 	}
 }
+
+func TestScheduleWebSwitchFleetProbeV2(t *testing.T) {
+	s, st := newServer(t)
+	machine := onlineMachine(t, st, "Probe machine")
+	enabled := true
+	now := time.Now().UTC()
+	if err := st.RecordCheckin(machine, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: now, JobsEnabled: &enabled, ScriptV1: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	p := scheduleWebPrincipal()
+	form := scheduleTestForm(machine)
+	for _, id := range []string{"fleet-probe-v1", "fleet-probe-v2"} {
+		form.Set("script_id", id)
+		if id == "fleet-probe-v2" {
+			form.Set("args", "")
+		}
+		w := diskWebRequest(t, s, "POST", schedulesBack+"/preview", form, p, false)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		apply := diskWebHidden(t, w.Body.String(), "request", "operation", "preview_digest", "idempotency_key", "expected_revision", "confirm")
+		w = diskWebRequest(t, s, "POST", schedulesBack+"/apply", apply, p, false)
+		if w.Code != 303 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		items, err := st.ScheduleList()
+		if err != nil || len(items) != 1 || items[0].ScriptID != id || string(items[0].Args) != "{}" {
+			t.Fatal(items, err)
+		}
+		form.Set("id", items[0].ID)
+		form.Set("expected_revision", "1")
+		w = diskWebRequest(t, s, "GET", w.Header().Get("Location")+"/edit", nil, p, false)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `value="fleet-probe-v2"`) {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+}

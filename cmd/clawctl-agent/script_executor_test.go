@@ -22,11 +22,11 @@ func TestScriptExecutorRejectsHashMismatch(t *testing.T) {
 }
 
 func TestScriptExecutorEvidenceAndValidation(t *testing.T) {
-	e, _ := scriptcatalog.Lookup("fleet-probe-v1")
+	e, _ := scriptcatalog.Lookup("fleet-probe-v2")
 	spec := scriptcatalog.Spec{ExecutionMode: "read", Kind: scriptcatalog.Kind, ScriptID: e.ID, ScriptSHA256: e.SHA256, Args: json.RawMessage(`{}`)}
 	raw, _ := json.Marshal(spec)
 	job := model.JobResponse{Spec: raw, ResourceKind: scriptcatalog.Kind, ResourceID: e.ID, ExecutionTimeout: 15}
-	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
+	if (runtime.GOOS == "linux" || runtime.GOOS == "darwin") && os.Geteuid() != 0 {
 		evidence, err := (scriptExecutor{}).Run(context.Background(), job)
 		if err != nil || len(evidence) != 2 || !evidence[0].Passed {
 			t.Fatalf("evidence %+v %v", evidence, err)

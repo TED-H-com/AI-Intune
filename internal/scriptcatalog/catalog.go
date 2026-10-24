@@ -17,6 +17,9 @@ import (
 
 const Kind = "script_v1"
 
+//go:embed fleet-probe-v2.sh
+var probeV2 []byte
+
 //go:embed fleet-probe-v1.sh
 var probe []byte
 
@@ -100,6 +103,7 @@ func deepSchema() Schema {
 }
 
 var registry = []Entry{
+	{"fleet-probe-v2", "2", "2d3ce73f88e97f126ef94e89e38b9842973299df717183c03d82b34dba12b08c", Schema{Type: "object", Properties: map[string]Property{}}, 15, 60, 64 << 10, "read", "agent-user", []string{"linux", "darwin"}, probeV2},
 	{"oci-cost-report-v1", "1", "0cb9bc5384fce7c59c592db4b5db72810be30c020eb4cb11610da1a5f0df5380", ociCostSchema(), 300, 600, 64 << 10, "read", "agent-user", []string{"linux"}, ociCost},
 	{"network-watch-v1", "1", "3f6a22ab6fd65b9a399643a2ccccba66bbfcae6906d3588be03ac347e1f0cf6a", networkWatchSchema(), 180, 300, 64 << 10, "read", "agent-user", []string{"linux"}, networkWatch},
 	{"bat-release-check-v1", "1", "bc8ac19f948a4b107650e746d1e2826bb21741ee33296035bcf2505677735ffb", Schema{Type: "object", Properties: map[string]Property{}}, 60, 120, 64 << 10, "read", "agent-user", []string{"linux"}, batRelease},

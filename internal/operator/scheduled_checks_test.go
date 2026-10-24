@@ -24,3 +24,10 @@ func TestScheduledCheckBadges(t *testing.T) {
 		})
 	}
 }
+
+func TestFleetProbeV2CheckLabel(t *testing.T) {
+	got := projectScheduledCheck(scheduledcheck.Schedule{ScriptID: "fleet-probe-v2", Name: "fleet-daily-health"}, scheduledcheck.Result{Status: "not_run"})
+	if got.Name != "Fleet health — fleet-daily-health" {
+		t.Fatalf("label: %s", got.Name)
+	}
+}

@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package scriptcatalog
 
@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -100,7 +101,7 @@ func createPrivateScriptDir() (string, error) {
 
 func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy json.RawMessage, sink io.Writer, action *DiskActionRun) (Result, error) {
 	var result Result
-	if os.Geteuid() == 0 || e.RunsAs != "agent-user" || !e.AllowsOS("linux") || timeout < 1 || timeout > e.MaxTimeout || e.OutputCap < 1 || e.OutputCap > 64<<10 || Digest(e.Bytes) != e.SHA256 {
+	if os.Geteuid() == 0 || e.RunsAs != "agent-user" || !e.AllowsOS(runtime.GOOS) || timeout < 1 || timeout > e.MaxTimeout || e.OutputCap < 1 || e.OutputCap > 64<<10 || Digest(e.Bytes) != e.SHA256 {
 		return result, fmt.Errorf("invalid catalog execution constraints")
 	}
 	canonical, err := e.Validate(args)
@@ -163,7 +164,7 @@ func runPolicy(ctx context.Context, e Entry, args []byte, timeout int, policy js
 	}
 	cmd := exec.CommandContext(ctx, interpreter, argv...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + home, "TMPDIR=" + dir, "PYTHONDONTWRITEBYTECODE=1"}
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LANG=C", "LC_ALL=C", "HOME=" + home, "TMPDIR=" + dir, "PYTHONDONTWRITEBYTECODE=1"}
 	cmd.Stdin = bytes.NewReader(canonical)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
