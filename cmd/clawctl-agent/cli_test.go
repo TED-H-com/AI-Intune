@@ -155,6 +155,9 @@ func TestAgentAdvertisesTheFixedDeviceSyncExecutor(t *testing.T) {
 	if checkin.DiskOpsV2 != (runtime.GOOS == "linux" && os.Geteuid() != 0) {
 		t.Fatal("disk_ops_v2 advertised without supported agent runtime")
 	}
+	if checkin.ScriptV1 != ((runtime.GOOS == "linux" || runtime.GOOS == "darwin") && os.Geteuid() != 0) {
+		t.Fatal("script_v1 capability does not match supported user runtime")
+	}
 	if !checkin.DeviceSyncV1 {
 		t.Fatal("agent did not advertise device-sync v1")
 	}

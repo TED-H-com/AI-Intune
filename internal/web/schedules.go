@@ -212,7 +212,7 @@ func (s *Server) scheduleForm(w http.ResponseWriter, r *http.Request) {
 	if !s.scheduleAllowed(w, r, true) {
 		return
 	}
-	req := store.ScheduleRequest{ScriptID: "fleet-probe-v1", Args: json.RawMessage(`{}`), TZ: "America/New_York", Cron: "0 12 * * *", Enabled: true}
+	req := store.ScheduleRequest{ScriptID: "fleet-probe-v2", Args: json.RawMessage(`{}`), TZ: "America/New_York", Cron: "0 12 * * *", Enabled: true}
 	if id := r.PathValue("id"); id != "" {
 		v, err := s.operator.Schedule(id)
 		if err != nil {
@@ -305,7 +305,7 @@ func (s *Server) schedulePreview(w http.ResponseWriter, r *http.Request) {
 		op = "upsert"
 	}
 	if op == "upsert" {
-		if req.ScriptID == "fleet-probe-v1" && len(bytes.TrimSpace(req.Args)) == 0 {
+		if (req.ScriptID == "fleet-probe-v1" || req.ScriptID == "fleet-probe-v2") && len(bytes.TrimSpace(req.Args)) == 0 {
 			req.Args = json.RawMessage(`{}`)
 		}
 		if entry, ok := scriptcatalog.Lookup(req.ScriptID); ok {

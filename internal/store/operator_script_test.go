@@ -511,3 +511,28 @@ func TestScriptReasonsAcceptOperatorProse(t *testing.T) {
 		}
 	}
 }
+
+func TestFleetProbeV2DarwinDispatch(t *testing.T) {
+	st, req, actor, now := scriptFixture(t)
+	machine := req.Targets[0]
+	if _, err := st.db.Exec("UPDATE machine_registry SET os='Darwin' WHERE machine_id=?", machine); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ScriptRun(req, false, "", actor); err == nil {
+		t.Fatal("Linux-only v1 accepted Darwin")
+	}
+	entry, _ := scriptcatalog.Lookup("fleet-probe-v2")
+	req.ScriptID, req.ScriptSHA256 = entry.ID, entry.SHA256
+	preview, err := st.ScriptRun(req, false, "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PreviewDigest = preview.PreviewDigest
+	result, err := st.ScriptRun(req, true, "darwin-probe", actor)
+	if err != nil || len(result.JobIDs) != 1 {
+		t.Fatalf("dispatch: %+v %v", result, err)
+	}
+	if _, err := st.ClaimJob(result.JobIDs[0], machine, now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
