@@ -18,6 +18,8 @@ Wants=user@__CLAWCTL_AGENT_UID__.service
 
 [Service]
 Type=notify
+# Only the main agent may signal readiness or feed the watchdog; helpers must not mask a hung agent.
+NotifyAccess=main
 User=@@CLAWCTL_AGENT_USER@@
 Environment=HOME=@@CLAWCTL_AGENT_HOME@@
 Environment=XDG_RUNTIME_DIR=/run/user/@@CLAWCTL_AGENT_UID@@

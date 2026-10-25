@@ -43,6 +43,7 @@ func TestAgentUnitIsRenderedAsAnUnprivilegedSystemService(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range [][]byte{
+		[]byte("NotifyAccess=main"),
 		[]byte("User=@@CLAWCTL_AGENT_USER@@"),
 		[]byte("ExecStart=@@CLAWCTL_AGENT_BIN@@"),
 		[]byte("Environment=HOME=@@CLAWCTL_AGENT_HOME@@"),
@@ -54,6 +55,9 @@ func TestAgentUnitIsRenderedAsAnUnprivilegedSystemService(t *testing.T) {
 		if !bytes.Contains(raw, want) {
 			t.Fatalf("agent system unit template missing contract: %s", want)
 		}
+	}
+	if bytes.Contains(raw, []byte("NotifyAccess=all")) {
+		t.Fatal("child processes must not be allowed to feed the agent watchdog")
 	}
 	if bytes.Contains(raw, []byte("WantedBy=default.target")) {
 		t.Fatal("agent must not be installed as a user-manager service")
@@ -201,11 +205,17 @@ func TestWatchdogStopsWhenTheHeartbeatLoopWedges(t *testing.T) {
 
 // 沒有 systemd 的時候（手跑、測試、容器裡）不該有任何看門狗行為。
 func TestNoSystemdMeansNoWatchdog(t *testing.T) {
+	saved := agentNotify
+	t.Cleanup(func() { agentNotify = saved })
+	t.Setenv("WATCHDOG_PID", "")
+	t.Setenv("MAINPID", "")
 	t.Setenv("WATCHDOG_USEC", "")
+	captureNotifyEnvironment()
 	if d := watchdogFromEnv(); d != 0 {
 		t.Errorf("systemd 沒開看門狗時算出了 %s，應該是 0", d)
 	}
 	t.Setenv("WATCHDOG_USEC", "90000000")
+	captureNotifyEnvironment()
 	if d := watchdogFromEnv(); d != 90*time.Second {
 		t.Errorf("WATCHDOG_USEC=90000000 應該是 90s，得到 %s", d)
 	}
