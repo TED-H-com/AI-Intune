@@ -182,6 +182,29 @@ if [[ "$system_bin_dir" != /usr/local/bin || "$(dirname "$system_unit")" != /etc
   echo "Custom system directories: a narrow sudoers drop-in for the default paths will not match." >&2
 fi
 sudo -n install -d -m 0755 "$system_bin_dir" "$(dirname "$system_unit")"
+# Validate the unit transition before replacing the binary or managed runtime
+# units. A narrow sudo grant can update the binary but cannot install a unit.
+unit_changed=0
+if ! cmp -s "$rendered_unit" "$system_unit"; then
+  unit_changed=1
+  echo "Agent service unit update requires sudo authorization." >&2
+  if ! sudo -n install -m 0644 "$rendered_unit" "$system_unit.new" ||
+     ! sudo -n mv -f "$system_unit.new" "$system_unit"; then
+    echo "Agent service unit update failed. Run sudo -v, then rerun this command." >&2
+    exit 1
+  fi
+fi
+# An interrupted reload can leave the desired file on disk; retry the reload
+# even when that file now compares equal.
+if [[ $unit_changed -eq 1 || "$(systemctl show clawctl-agent.service -p NeedDaemonReload --value)" == yes ]]; then
+  sudo -n systemctl daemon-reload
+fi
+[[ "$(systemctl show clawctl-agent.service -p LoadState --value)" == "loaded" ]] || { echo "Agent system unit did not load" >&2; exit 1; }
+[[ "$(systemctl show clawctl-agent.service -p FragmentPath --value)" == "$system_unit" ]] || { echo "Agent system unit path mismatch before upgrade" >&2; exit 1; }
+[[ "$(systemctl show clawctl-agent.service -p User --value)" == "$agent_user" ]] || { echo "Agent systemd User contract mismatch before upgrade" >&2; exit 1; }
+[[ "$(systemctl show clawctl-agent.service -p ProtectSystem --value)" == "strict" ]] || { echo "ProtectSystem sandbox is not loaded before upgrade" >&2; exit 1; }
+[[ "$(systemctl show clawctl-agent.service -p ProtectHome --value)" == "read-only" ]] || { echo "ProtectHome sandbox is not loaded before upgrade" >&2; exit 1; }
+
 sudo -n install -m 0755 -o root -g root "$bin.new" "$system_bin.new"
 sudo -n mv -f "$system_bin.new" "$system_bin"
 if command -v restorecon >/dev/null &&
@@ -195,16 +218,6 @@ fi
 rm -f -- "$bin.new"
 if [[ -f "$bin" ]]; then echo "Legacy binary $bin retained; no longer used by the system unit."; fi
 chmod 0644 "$hermes_unit.new" "$openclaw_unit.new"
-unit_changed=0
-if ! cmp -s "$rendered_unit" "$system_unit"; then
-  unit_changed=1
-  echo "Agent unit changed: installing it is outside the narrow sudoers rule and needs a full sudo password." >&2
-  if ! sudo -n install -m 0644 "$rendered_unit" "$system_unit.new" ||
-     ! sudo -n mv -f "$system_unit.new" "$system_unit"; then
-    echo "Agent unit install failed; rerun interactively with full sudo password authorization." >&2
-    exit 1
-  fi
-fi
 rm -f -- "$raw_unit"
 mv -f "$hermes_unit.new" "$hermes_unit"
 if [[ ! -e "$openclaw_unit" && ! -L "$openclaw_unit" ]] ||
@@ -213,14 +226,6 @@ if [[ ! -e "$openclaw_unit" && ! -L "$openclaw_unit" ]] ||
 else
   rm -f -- "$openclaw_unit.new"
 fi
-if [[ $unit_changed -eq 1 ]]; then
-  sudo -n systemctl daemon-reload
-fi
-[[ "$(systemctl show clawctl-agent.service -p LoadState --value)" == "loaded" ]] || { echo "Agent system unit did not load" >&2; exit 1; }
-[[ "$(systemctl show clawctl-agent.service -p FragmentPath --value)" == "$system_unit" ]] || { echo "Agent system unit path mismatch before migration" >&2; exit 1; }
-[[ "$(systemctl show clawctl-agent.service -p User --value)" == "$agent_user" ]] || { echo "Agent systemd User contract mismatch before migration" >&2; exit 1; }
-[[ "$(systemctl show clawctl-agent.service -p ProtectSystem --value)" == "strict" ]] || { echo "ProtectSystem sandbox is not loaded before migration" >&2; exit 1; }
-[[ "$(systemctl show clawctl-agent.service -p ProtectHome --value)" == "read-only" ]] || { echo "ProtectHome sandbox is not loaded before migration" >&2; exit 1; }
 if [[ "$(systemctl is-enabled clawctl-agent.service 2>/dev/null || true)" != enabled ]]; then
   sudo -n systemctl enable clawctl-agent.service
 fi

@@ -1696,26 +1696,31 @@ upgrade_agent_sudo_fixture() (
       "true"|"install -d -m 0755 /usr/local/bin /etc/systemd/system"| \
       "install -m 0755 -o root -g root $HOME/.local/bin/clawctl-agent.new /usr/local/bin/clawctl-agent.new"| \
       "mv -f /usr/local/bin/clawctl-agent.new /usr/local/bin/clawctl-agent"| \
-      "systemctl daemon-reload"|"systemctl enable clawctl-agent.service"| \
+      "systemctl enable clawctl-agent.service"| \
       "systemctl reset-failed clawctl-agent.service"|"systemctl restart clawctl-agent.service"| \
       "systemctl status clawctl-agent.service") return 0 ;;
-      "install -m 0644 $HOME/.local/share/clawctl/clawctl-agent.service.rendered /etc/systemd/system/clawctl-agent.service.new"| \
+      "systemctl daemon-reload") [[ $UPGRADE_MODE != reload-failed ]] ;;
+      "install -m 0644 $HOME/.local/share/clawctl/clawctl-agent.service.rendered /etc/systemd/system/clawctl-agent.service.new")
+        [[ $UPGRADE_MODE != identical && $UPGRADE_MODE != disabled && $UPGRADE_MODE != pending-reload && $UPGRADE_MODE != denied ]] ;;
       "mv -f /etc/systemd/system/clawctl-agent.service.new /etc/systemd/system/clawctl-agent.service")
-        [[ $UPGRADE_MODE != identical && $UPGRADE_MODE != disabled && $UPGRADE_MODE != denied ]] ;;
+        [[ $UPGRADE_MODE != mv-denied ]] ;;
       *) touch "$UPGRADE_SUDO_LOG.unexpected"; echo "Unexpected sudo arguments: $*" >&2; return 90 ;;
     esac
   }
   cmp() {
     [[ $# == 3 && $1 == -s && $2 == "$HOME/.local/share/clawctl/clawctl-agent.service.rendered" && $3 == /etc/systemd/system/clawctl-agent.service ]] || return 90
-    [[ $UPGRADE_MODE == identical || $UPGRADE_MODE == disabled ]]
+    [[ $UPGRADE_MODE == identical || $UPGRADE_MODE == disabled || $UPGRADE_MODE == pending-reload ]]
   }
   systemctl() {
     case "$*" in
       "is-enabled clawctl-agent.service")
         if [[ $UPGRADE_MODE == disabled ]]; then echo disabled; return 1; else echo enabled; fi ;;
       "show clawctl-agent.service -p LoadState --value") echo loaded ;;
+      "show clawctl-agent.service -p NeedDaemonReload --value")
+        if [[ $UPGRADE_MODE == pending-reload ]]; then echo yes; else echo no; fi ;;
       "show clawctl-agent.service -p FragmentPath --value") echo /etc/systemd/system/clawctl-agent.service ;;
-      "show clawctl-agent.service -p User --value") echo agenttest ;;
+      "show clawctl-agent.service -p User --value")
+        if [[ $UPGRADE_MODE == load-mismatch ]]; then echo wrong-user; else echo agenttest; fi ;;
       "show clawctl-agent.service -p ProtectSystem --value") echo strict ;;
       "show clawctl-agent.service -p ProtectHome --value") echo read-only ;;
       *) echo "Unexpected systemctl arguments: $*" >&2; return 90 ;;
@@ -1729,10 +1734,19 @@ upgrade_agent_sudo_fixture() (
   local result=0
   bash -s test-version <<<"$script" >"$fixture/output" 2>&1 || result=$?
   [[ ! -e "$UPGRADE_SUDO_LOG.unexpected" ]] || return 90
-  if [[ $mode == denied ]]; then
+  if [[ $mode == denied || $mode == mv-denied || $mode == reload-failed || $mode == load-mismatch ]]; then
     [[ $result != 0 ]] || return 91
-    grep -Fq 'rerun interactively' "$fixture/output" || return 92
-    ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 93
+    # A refused/failed unit transition must leave the installed agent and the
+    # running service untouched, including both binary staging and publication.
+    ! grep -Fq 'install -m 0755 -o root -g root' "$UPGRADE_SUDO_LOG" || return 92
+    ! grep -Fq 'mv -f /usr/local/bin/clawctl-agent.new' "$UPGRADE_SUDO_LOG" || return 93
+    ! grep -Fq 'systemctl restart' "$UPGRADE_SUDO_LOG" || return 105
+    [[ -f "$HOME/.local/bin/clawctl-agent.new" ]] || return 106
+    [[ -f "$HOME/.config/systemd/user/clawctl-hermes.service.new" ]] || return 107
+    if [[ $mode == denied || $mode == mv-denied ]]; then
+      grep -Fq 'rerun' "$fixture/output" || return 108
+      ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 109
+    fi
     return 0
   fi
   [[ $result == 0 ]] || { cat "$fixture/output"; return 94; }
@@ -1740,11 +1754,17 @@ upgrade_agent_sudo_fixture() (
     grep -Fxq -- "-n install -m 0644 $HOME/.local/share/clawctl/clawctl-agent.service.rendered /etc/systemd/system/clawctl-agent.service.new" "$UPGRADE_SUDO_LOG" || return 95
     grep -Fxq -- '-n mv -f /etc/systemd/system/clawctl-agent.service.new /etc/systemd/system/clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 96
     grep -Fxq -- '-n systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 97
-    grep -Fq 'full sudo password' "$fixture/output" || return 98
+    grep -Fq 'requires sudo authorization' "$fixture/output" || return 98
+    appears_before '-n systemctl daemon-reload' '-n install -m 0755 -o root -g root' "$UPGRADE_SUDO_LOG" || return 110
   else
     ! grep -Fq 'install -m 0644' "$UPGRADE_SUDO_LOG" || return 99
     ! grep -Fq '/etc/systemd/system/clawctl-agent.service.new' "$UPGRADE_SUDO_LOG" || return 100
-    ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 101
+    if [[ $mode == pending-reload ]]; then
+      grep -Fxq -- '-n systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 111
+      appears_before '-n systemctl daemon-reload' '-n install -m 0755 -o root -g root' "$UPGRADE_SUDO_LOG" || return 112
+    else
+      ! grep -Fq 'systemctl daemon-reload' "$UPGRADE_SUDO_LOG" || return 101
+    fi
   fi
   if [[ $mode == disabled ]]; then
     grep -Fxq -- '-n systemctl enable clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 102
@@ -1753,7 +1773,7 @@ upgrade_agent_sudo_fixture() (
   fi
   grep -Fxq -- '-n systemctl restart clawctl-agent.service' "$UPGRADE_SUDO_LOG" || return 104
 )
-for upgrade_mode in identical changed disabled denied; do
+for upgrade_mode in identical changed disabled denied mv-denied reload-failed load-mismatch pending-reload; do
   run upgrade_agent_sudo_fixture "$upgrade_mode"
   expect "agent upgrade narrow sudo contract: $upgrade_mode" 0 is_silent
 done

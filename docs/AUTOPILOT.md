@@ -265,14 +265,19 @@ Agent upgrades with `ops/upgrade-agent.sh` (local or SSH) use non-interactive
 `sudo -n`. A narrow sudoers drop-in can authorize the default
 `/usr/local/bin` binary publication and specific service commands. The rendered
 unit is compared with `/etc/systemd/system/clawctl-agent.service` without sudo;
-identical units skip unit installation and daemon reload. Already enabled
-services skip enable.
+identical units skip installation. A unit update and its loaded service contract
+are checked before the installed agent binary or managed runtime units change.
+Already enabled services skip enable.
 
 Changed units require full sudo password authorization for installing the unit
 and moving it into place; these commands are intentionally outside the narrow
 rule. If authorization fails, rerun interactively after authenticating full sudo
 access on the target (for example, `sudo -v` in the operator's terminal). The
-upgrade itself never prompts. SELinux relabeling runs only when SELinux is active
+upgrade itself never prompts. A refused unit install, failed rename or reload,
+or loaded-contract mismatch leaves the installed agent binary and running process
+unchanged. If the unit file was already replaced, it remains on disk; a retry
+reloads systemd when `NeedDaemonReload=yes`, even when the file compares equal.
+SELinux relabeling runs only when SELinux is active
 and also requires authorization outside the narrow rule. Non-default
 `CLAWCTL_SYSTEM_BIN_DIR` or `CLAWCTL_SYSTEM_UNIT_DIR` values still work with
 suitable sudo access, but the default-path narrow sudoers rule will not match.
