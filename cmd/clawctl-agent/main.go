@@ -588,6 +588,7 @@ func runAgent() {
 			hb.SettingsDigest = now.digest
 
 			var resp model.CheckinResponse
+			reportExecutionChange := false
 			// SentAt and the RTT sample share one clock reading so the skew
 			// estimate can subtract half the postJSON round trip.
 			callStart := time.Now()
@@ -602,6 +603,11 @@ func runAgent() {
 				if policyErr != nil {
 					log.Print("Execution remains blocked: policy could not be accepted")
 				}
+				// The first check-in starts blocked. Confirm an accepted policy
+				// and its effective jobs state before the normal check-in delay,
+				// so Hub readiness reflects the current process promptly.
+				reportExecutionChange = jobsEnabled != (cfg.JobsEnabled && cfg.executionAllowed()) ||
+					currentExecutionPolicy != cfg.execution.Snapshot()
 				if cfg.executionAllowed() {
 					if err := adoptHostProfile(resp); err != nil {
 						log.Print("Host setup profile could not be saved")
@@ -632,6 +638,9 @@ func runAgent() {
 				}
 			}
 			wait := jitter(now.checkin)
+			if reportExecutionChange {
+				wait = min(wait, time.Second)
+			}
 			if postErr != nil {
 				if honored, _, busy := hubBusyWait(wait, postErr); busy {
 					// The systemd watchdog treats a heartbeat turn longer than

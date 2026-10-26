@@ -269,6 +269,12 @@ identical units skip installation. A unit update and its loaded service contract
 are checked before the installed agent binary or managed runtime units change.
 Already enabled services skip enable.
 
+At startup the agent reports jobs blocked until it accepts and saves the Hub's
+execution policy. A changed policy or effective jobs state schedules a follow-up
+check-in within one second, so readiness verification can observe the accepted
+state without waiting for the normal heartbeat interval. Unchanged policies and
+unsuccessful check-ins retain the regular interval and retry handling.
+
 Changed units require full sudo password authorization for installing the unit
 and moving it into place; these commands are intentionally outside the narrow
 rule. If authorization fails, rerun interactively after authenticating full sudo
