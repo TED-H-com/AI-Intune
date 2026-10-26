@@ -103,6 +103,7 @@ func statePath() string {
 }
 
 func main() {
+	captureNotifyEnvironment()
 	log.SetFlags(log.LstdFlags | log.LUTC)
 	log.SetPrefix("clawctl-agent: ")
 
@@ -422,16 +423,13 @@ func runVerify(args []string) {
 		var receipt model.AgentReadinessResponse
 		if err := doJSON(ctx, http.MethodGet, cfg.HubURL+"/v1/agent/readiness", cfg.AgentToken, nil, &receipt); err != nil {
 			last = err.Error()
-		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence); pending == "" {
+		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence, *monitorOnly); pending == "" {
 			jobsLabel := "enabled"
-			if receipt.ExecutionPolicy != nil && receipt.ExecutionPolicy.Mode == model.ExecutionMonitorOnly {
+			if *monitorOnly || (receipt.ExecutionPolicy != nil && receipt.ExecutionPolicy.Mode == model.ExecutionMonitorOnly) {
 				jobsLabel = "monitor-only"
 			}
 			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=%s agent=%s",
 				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), jobsLabel, receipt.AgentVersion)
-		} else if pending := readinessPending(receipt, cfg.MachineID, version, since, *requirePlatformEvidence, *monitorOnly); pending == "" {
-			fmt.Printf("Hub ready: machine_id=%s checkin=%s jobs=%t agent=%s",
-				receipt.MachineID, receipt.LastCheckinReceivedAt.UTC().Format(time.RFC3339), *receipt.JobsEnabled, receipt.AgentVersion)
 			if *requirePlatformEvidence {
 				fmt.Printf(" evidence=%s/%s received=%s", runtime.GOOS, runtime.GOARCH,
 					receipt.IdentityReceivedAt.UTC().Format(time.RFC3339))
@@ -1032,8 +1030,44 @@ func saveState(s agentState) {
 // systemd 的 Type=notify 與 WatchdogSec 只需要往 $NOTIFY_SOCKET 送幾個字，
 // 不值得為它引入一個相依。
 
+// Captured before startup can launch any helpers. Children must never inherit
+// systemd's notification endpoint or watchdog ownership.
+var agentNotify struct {
+	socket, watchdogPID, mainPID, watchdogUsec string
+	ownerPID                                   int
+}
+
+func captureNotifyEnvironment() {
+	agentNotify.socket = os.Getenv("NOTIFY_SOCKET")
+	agentNotify.watchdogPID = os.Getenv("WATCHDOG_PID")
+	agentNotify.mainPID = os.Getenv("MAINPID")
+	agentNotify.watchdogUsec = os.Getenv("WATCHDOG_USEC")
+	agentNotify.ownerPID = os.Getpid()
+	for _, key := range []string{"NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC", "MAINPID"} {
+		_ = os.Unsetenv(key)
+	}
+}
+
+func notifyOwnedByCurrentProcess() bool {
+	if os.Getpid() != agentNotify.ownerPID {
+		return false
+	}
+	for _, raw := range []string{agentNotify.watchdogPID, agentNotify.mainPID} {
+		if raw != "" {
+			pid, err := strconv.Atoi(raw)
+			if err != nil || pid != os.Getpid() {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func sdNotify(msg string) {
-	sock := os.Getenv("NOTIFY_SOCKET")
+	if !notifyOwnedByCurrentProcess() {
+		return
+	}
+	sock := agentNotify.socket
 	if sock == "" {
 		return
 	}
@@ -1071,7 +1105,10 @@ func notifyWatchdog() { sdNotify("WATCHDOG=1") }
 
 // watchdogFromEnv 讀 systemd 設的 WATCHDOG_USEC。沒有就回 0（代表不啟用）。
 func watchdogFromEnv() time.Duration {
-	us, err := strconv.ParseInt(os.Getenv("WATCHDOG_USEC"), 10, 64)
+	if !notifyOwnedByCurrentProcess() {
+		return 0
+	}
+	us, err := strconv.ParseInt(agentNotify.watchdogUsec, 10, 64)
 	if err != nil || us <= 0 {
 		return 0
 	}
