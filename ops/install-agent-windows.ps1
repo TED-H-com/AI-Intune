@@ -230,7 +230,8 @@ function New-ManagedDirectory([string]$Path) {
 $Step = 'agent install'
 New-ManagedDirectory $BinDir
 New-ManagedDirectory $ConfigDir
-$AgentVersion = (& $BinSrc version)
+$AgentVersion = (& $BinSrc version | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { Fail "Agent version failed" }
 if ([string]::IsNullOrWhiteSpace($AgentVersion)) { Fail "Agent version is empty" }
 Copy-Item -LiteralPath $BinSrc -Destination ($BinFile + '.new') -Force
 Move-Item -LiteralPath ($BinFile + '.new') -Destination $BinFile -Force
@@ -257,7 +258,7 @@ try {
       Set-PrivateFile $CreatedTokenFile
       $TokenFile = $CreatedTokenFile
     }
-    & $BinFile enroll --hub $Hub --token-file $TokenFile
+    & $BinFile enroll --hub $Hub --token-file $TokenFile | Out-Host
     if ($LASTEXITCODE -ne 0) { Fail "Enrollment failed" }
     if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {
       Fail "Enrollment did not create a regular config file: $ConfigFile"
@@ -305,7 +306,7 @@ Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 $Step = 'Hub readiness'
 $VerifyOptions = @()
 if ($JobsEnabled -eq $false) { $VerifyOptions += '--monitor-only' }
-& $BinFile verify --hub $Hub --since $ServiceStartedAt --timeout 2m --require-platform-evidence @VerifyOptions
+& $BinFile verify --hub $Hub --since $ServiceStartedAt --timeout 2m --require-platform-evidence @VerifyOptions | Out-Host
 if ($LASTEXITCODE -ne 0) { Fail "Hub readiness verification failed" }
 
 Write-Output "Managed: agent=$AgentVersion service=$TaskPath$TaskName config=$ConfigFile"
