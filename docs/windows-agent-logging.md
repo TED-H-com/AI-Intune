@@ -28,9 +28,10 @@ PowerShell `Start-Process -Wait` or the call operator with output capture when
 waiting for completion; actual Windows console behavior needs Windows runtime
 validation. Linux and macOS retain their existing stderr logging.
 
-Optional join `-Proxy` and proxy configuration are unchanged. Without `-Proxy`,
-join writes no `proxy_url`; an empty proxy configuration preserves the existing
-transport/environment proxy behavior.
+Join `-Proxy` saves `proxy_url` before the scheduled task starts. The configured
+proxy takes precedence over environment proxies and survives reinstall or upgrade.
+Without `-Proxy`, join writes no `proxy_url`; an empty proxy configuration uses
+the environment proxy settings. See [proxy setup](WINDOWS-AGENT-VALIDATION.md#corporate-proxy).
 
 To roll back, first retain the previous agent binary, exported scheduled-task
 XML and `agent.json`. Restore those three artifacts and restart the task or log

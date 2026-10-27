@@ -243,6 +243,9 @@ To enable supported Windows jobs, download and run with options instead:
 ```powershell
 Invoke-WebRequest https://hub.example.com/join.ps1 -OutFile .\join.ps1
 .\join.ps1 -Hub https://hub.example.com -JobsEnabled -LogFile "$env:ProgramData\clawctl\join.log"
+# Corporate proxy (also use it to download the script):
+Invoke-WebRequest https://hub.example.com/join.ps1 -Proxy http://fuhqlxsc.fpcusa.com:8080 -OutFile .\join.ps1
+.\join.ps1 -Hub https://hub.example.com -Proxy http://fuhqlxsc.fpcusa.com:8080
 ```
 
 `-Hub` overrides the templated Hub URL. `-LogFile` defaults to `%ProgramData%\clawctl\join.log`; progress, code and expiry are written there for detached runs, with credentials excluded. Temporary enrollment secrets are deleted on success and failure. Existing enrolled accounts are preserved; the join command refuses to replace their configuration. Linux-only jobs are blocked server-side even with `-JobsEnabled`.

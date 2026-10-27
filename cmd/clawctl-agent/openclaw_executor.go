@@ -119,7 +119,8 @@ func defaultOpenClawExecutor(hubURL, token string) openclawExecutor {
 		if d.token != "" && strings.HasPrefix(rawURL, d.hubURL+"/") {
 			req.Header.Set("Authorization", "Bearer "+d.token)
 		}
-		return httpClient.Do(req)
+		resp, err := httpClient.Do(req)
+		return resp, redactProxyError(err)
 	}
 	return openclawExecutor{deps: d}
 }
@@ -390,7 +391,8 @@ func (e openclawExecutor) withDefaults() execDeps {
 			if d.token != "" && strings.HasPrefix(rawURL, strings.TrimRight(d.hubURL, "/")+"/") {
 				req.Header.Set("Authorization", "Bearer "+d.token)
 			}
-			return httpClient.Do(req)
+			resp, err := httpClient.Do(req)
+			return resp, redactProxyError(err)
 		}
 	}
 	d.hubURL = strings.TrimRight(d.hubURL, "/")

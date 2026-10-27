@@ -144,12 +144,11 @@ capture = s[s.index('function Invoke-JoinInstaller'):s.index('function Read-Join
 assert capture.index('Protect-JoinInstallerOutput ([string]$_)') < capture.index('Add-Content')
 assert 'Write-Host' not in capture and '[Console]' not in capture.split('$engine =', 1)[1]
 assert "[string]$Proxy = ''" in s
-assert 'if ($Proxy) { Set-JoinProxyConfig' in s
-helper = s[s.index('function Set-JoinProxyConfig'):s.index('function Write-JoinProgress')]
-assert 'if (-not $Proxy) { return }' in helper
-assert '-NotePropertyName proxy_url -NotePropertyValue $Proxy' in helper
-assert 'Text.UTF8Encoding($false)' in helper and 'Set-JoinPrivate $Path $false' in helper
-assert s.index('Invoke-JoinInstaller (Join-Path $stage') < s.index('if ($Proxy) { Set-JoinProxyConfig')
+assert '--jobs-enabled $Jobs @proxyArgs' in s
+assert "@('--proxy', $Proxy)" in s
+installer = (root / 'ops/install-agent-windows.ps1').read_text()
+assert installer.index('Set-AgentConfig $ConfigFile $JobsEnabled $Proxy') < installer.index('Start-ScheduledTask')
+assert '-NotePropertyName proxy_url -NotePropertyValue $Proxy' in installer
 assert '$env:HTTP_PROXY = $Proxy' in s and '$env:HTTPS_PROXY = $Proxy' in s
 assert '$proxyOptions.Proxy = $Proxy' in s
 assert s.count('@proxyOptions') == 3

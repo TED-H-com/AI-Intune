@@ -148,3 +148,18 @@ func TestWindowsScheduledTaskHiddenDirectExec(t *testing.T) {
 		t.Fatal("scheduled task must launch agent directly without a wrapper")
 	}
 }
+
+func TestWindowsTaskBindsInstallingUserAndDelaysLogon(t *testing.T) {
+	task := readOpsFile(t, "clawctl-agent.task.xml")
+	if strings.Count(task, "<UserId>@@CLAWCTL_AGENT_USER_SID@@</UserId>") != 2 ||
+		!strings.Contains(task, "<Delay>PT30S</Delay>") {
+		t.Fatal("logon trigger and principal must bind the installing user with a startup delay")
+	}
+	installer := readOpsFile(t, "install-agent-windows.ps1")
+	if !strings.Contains(installer, "(XmlEscape $identity.User.Value)") {
+		t.Fatal("installer must use its current user SID")
+	}
+	if strings.Index(installer, "Set-AgentConfig $ConfigFile $JobsEnabled $Proxy") > strings.Index(installer, "Start-ScheduledTask") {
+		t.Fatal("proxy config must be persisted before task startup")
+	}
+}

@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -150,6 +153,10 @@ func TestHubRetryReasons(t *testing.T) {
 		err  error
 		want string
 	}{
+		{&url.Error{Op: "Get", URL: "https://hub.example", Err: &net.OpError{Op: "proxyconnect", Err: &net.DNSError{Err: "no such host", Name: "proxy.example", IsNotFound: true}}}, "DNS"},
+		{redactProxyError(&net.OpError{Op: "proxyconnect", Err: errors.New("network unavailable")}), "connection"},
+		{&net.OpError{Op: "dial", Err: errors.New("network unreachable")}, "connection"},
+		{errors.New("proxy authentication required"), ""},
 		{io.EOF, "EOF"}, {io.ErrUnexpectedEOF, "EOF"},
 		{context.DeadlineExceeded, "timeout"}, {context.Canceled, ""},
 		{&hubHTTPError{StatusCode: 502}, "HTTP_502"},
@@ -238,5 +245,28 @@ func TestHubRetryFinalAttemptBoundedByBudget(t *testing.T) {
 	}
 	if elapsed < budget || elapsed > budget+200*time.Millisecond {
 		t.Fatalf("elapsed=%s want budget=%s", elapsed, budget)
+	}
+}
+
+type proxyFailureTransport struct{ calls int }
+
+func (tr *proxyFailureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	tr.calls++
+	if tr.calls == 1 {
+		return nil, &net.OpError{Op: "proxyconnect", Err: &net.DNSError{Err: "no such host", Name: "proxy.example", IsNotFound: true}}
+	}
+	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}")), Request: req}, nil
+}
+
+func TestHubRetryProxyDNSAtStartup(t *testing.T) {
+	old := httpClient
+	defer func() { httpClient = old }()
+	tr := &proxyFailureTransport{}
+	httpClient = &http.Client{Transport: tr}
+	sleeps := 0
+	p := hubRetryPolicy{time.Now, func(context.Context, time.Duration) error { sleeps++; return nil }, func(int) time.Duration { return time.Second }}
+	_, err := p.do(context.Background(), http.MethodPost, "https://hub.example/v1/checkins", "", nil, nil, false)
+	if err != nil || tr.calls != 2 || sleeps != 1 {
+		t.Fatalf("calls=%d sleeps=%d err=%v", tr.calls, sleeps, err)
 	}
 }

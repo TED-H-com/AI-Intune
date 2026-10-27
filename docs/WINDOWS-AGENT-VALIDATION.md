@@ -75,3 +75,25 @@ scheduled task，最後驗證 Hub readiness。無需新的 enrollment token。
 核對 target 為 windows、套件版本與 artifact digest 固定。指派後核對工作單
 回報的 Node／npm 執行驗證（`bin/node.exe`）。這仍需 Windows 實機結果，Linux
 上的打包與交叉編譯不構成實機驗收。
+
+## Corporate proxy
+
+Download and run join with the proxy from an Administrator PowerShell session:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://hub.example.com/join.ps1 -Proxy http://fuhqlxsc.fpcusa.com:8080 -OutFile .\join.ps1
+.\join.ps1 -Hub https://hub.example.com -Proxy http://fuhqlxsc.fpcusa.com:8080
+```
+
+Join saves `proxy_url` in `%APPDATA%\clawctl\agent.json` before starting the
+agent. It takes precedence over environment proxies, including `NO_PROXY`.
+HTTP and HTTPS proxy URLs without credentials, query strings or fragments are
+accepted. Omitting `-Proxy` leaves the existing environment proxy behavior in place.
+
+Reinstall or upgrade with `install-agent-windows.ps1` preserves `proxy_url`
+and other existing configuration fields. Use `--proxy URL` on that installer
+to set or replace it. The task launches the GUI-subsystem agent executable
+directly as the installing user, with least privilege, at that user's logon
+after a 30-second delay. It needs no `cmd` wrapper or machine-wide environment
+changes. DNS and proxy connection failures use the bounded Hub retry backoff;
+the agent continues its normal polling after that budget expires.

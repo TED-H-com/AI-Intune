@@ -895,7 +895,7 @@ func doJSONStatusOnce(ctx context.Context, method, url, token string, body, out 
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, redactProxyError(err)
 	}
 	defer resp.Body.Close()
 

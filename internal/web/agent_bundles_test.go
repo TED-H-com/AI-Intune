@@ -82,7 +82,7 @@ func windowsAgentBinary(arch string) []byte {
 }
 
 func windowsInstallerFixture() []byte {
-	return []byte("This installer requires Windows.\nRegister-ScheduledTask -Xml clawctl-agent.task.xml\n# clawctl-agent --hub --require-platform-evidence\n")
+	return []byte("This installer requires Windows.\nRegister-ScheduledTask -Xml clawctl-agent.task.xml\n# clawctl-agent --hub --require-platform-evidence --proxy proxy_url\n")
 }
 
 func windowsTaskFixture() []byte {
@@ -91,6 +91,7 @@ func windowsTaskFixture() []byte {
   <RegistrationInfo><URI>\clawctl\clawctl-agent</URI></RegistrationInfo>
   <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
   <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings><Hidden>true</Hidden></Settings>
   <Actions><Exec><Command>@@CLAWCTL_AGENT_BIN@@</Command></Exec></Actions>
 </Task>
 `)
@@ -802,5 +803,25 @@ func TestFleetApplierBundleExtension(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestWindowsBundleRequiresProxyInstallerAndHiddenDirectTask(t *testing.T) {
+	installer := string(windowsInstallerFixture())
+	if err := validateWindowsInstaller(strings.NewReader(installer), int64(len(installer))); err != nil {
+		t.Fatal(err)
+	}
+	withoutProxy := strings.ReplaceAll(installer, "proxy_url", "")
+	if validateWindowsInstaller(strings.NewReader(withoutProxy), int64(len(withoutProxy))) == nil {
+		t.Fatal("installer without persistent proxy support accepted")
+	}
+	task := string(windowsTaskFixture())
+	for _, invalid := range []string{
+		strings.ReplaceAll(task, "<Hidden>true</Hidden>", "<Hidden>false</Hidden>"),
+		strings.ReplaceAll(task, "<Command>@@CLAWCTL_AGENT_BIN@@</Command>", "<Command>cmd.exe</Command><Arguments>/c @@CLAWCTL_AGENT_BIN@@</Arguments>"),
+	} {
+		if validateWindowsTaskXML(strings.NewReader(invalid), int64(len(invalid))) == nil {
+			t.Fatal("visible or wrapped task accepted")
+		}
 	}
 }
