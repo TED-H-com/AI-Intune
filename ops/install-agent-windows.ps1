@@ -39,6 +39,7 @@ $Token = ''
 $TokenFile = ''
 $BinSrc = ''
 $JobsEnabled = $null
+$Proxy = ''
 for ($i = 0; $i -lt $args.Count; ) {
   switch ($args[$i]) {
     '--hub' {
@@ -61,13 +62,18 @@ for ($i = 0; $i -lt $args.Count; ) {
       $JobsEnabled = $args[$i + 1] -eq 'true'
       $i += 2
     }
+    '--proxy' {
+      if ($i + 1 -ge $args.Count) { Fail "--proxy requires a URL" }
+      $Proxy = [string]$args[$i + 1]
+      $i += 2
+    }
     '--binary' {
       if ($i + 1 -ge $args.Count) { Fail "--binary requires a file" }
       $BinSrc = [string]$args[$i + 1]
       $i += 2
     }
     '--help' {
-      Write-Output "Usage: $($MyInvocation.MyCommand.Name) --hub URL [--token TOKEN | --token-file FILE] [--binary FILE] [--jobs-enabled true|false]"
+      Write-Output "Usage: $($MyInvocation.MyCommand.Name) --hub URL [--token TOKEN | --token-file FILE] [--binary FILE] [--jobs-enabled true|false] [--proxy URL]"
       Write-Output "  --hub http://<tailscale-ipv4>:<port>  (same address as the operator UI)"
       Write-Output "  --hub https://<hostname>[:port]       (experimental Cloudflare Tunnel; agent check-in only)"
       exit 0
@@ -137,6 +143,15 @@ function ConvertTo-AgentHubUrl([string]$Raw) {
 }
 
 $Step = 'preflight'
+if ($Proxy) {
+  $proxyUri = $null
+  if (-not [uri]::TryCreate($Proxy, [UriKind]::Absolute, [ref]$proxyUri) -or $proxyUri.Scheme -notin @('http', 'https') -or -not $proxyUri.Host -or $proxyUri.UserInfo -or $proxyUri.Query -or $proxyUri.Fragment -or $Proxy -match '\s') {
+    Fail '--proxy requires an absolute HTTP or HTTPS URL without credentials, query or fragment'
+  }
+  # Enrollment runs before agent.json exists.
+  $env:HTTP_PROXY = $Proxy
+  $env:HTTPS_PROXY = $Proxy
+}
 if ([string]::IsNullOrWhiteSpace($Hub)) { Fail "--hub URL is required" }
 $Hub = ConvertTo-AgentHubUrl $Hub
 # Ops test hook: validate --hub and stop. Not an operator feature.
@@ -256,17 +271,25 @@ try {
   }
 }
 
-if ($null -ne $JobsEnabled) {
-  $cfg = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
-  $cfg | Add-Member -NotePropertyName jobs_enabled -NotePropertyValue ([bool]$JobsEnabled) -Force
-  [IO.File]::WriteAllText($ConfigFile, ($cfg | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
-  Set-PrivateFile $ConfigFile
+function Set-AgentConfig([string]$Path, $JobsEnabled, [string]$Proxy) {
+  if ($null -eq $JobsEnabled -and -not $Proxy) { return }
+  $cfg = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+  if ($null -ne $JobsEnabled) {
+    $cfg | Add-Member -NotePropertyName jobs_enabled -NotePropertyValue ([bool]$JobsEnabled) -Force
+  }
+  if ($Proxy) {
+    $cfg | Add-Member -NotePropertyName proxy_url -NotePropertyValue $Proxy -Force
+  }
+  [IO.File]::WriteAllText($Path, ($cfg | ConvertTo-Json -Depth 100), (New-Object Text.UTF8Encoding($false)))
+  Set-PrivateFile $Path
   $cfg = $null
 }
+Set-AgentConfig $ConfigFile $JobsEnabled $Proxy
 
 $Step = 'scheduled task'
 $TaskXml = [IO.File]::ReadAllText($TaskTemplate)
 $TaskXml = $TaskXml.Replace('@@CLAWCTL_AGENT_BIN@@', (XmlEscape $BinFile))
+$TaskXml = $TaskXml.Replace('@@CLAWCTL_AGENT_USER_SID@@', (XmlEscape $identity.User.Value))
 if ($TaskXml.Contains('@@')) { Fail "Scheduled task XML contains an unresolved placeholder" }
 # Register-ScheduledTask receives a UTF-16 .NET string, not the UTF-8 file bytes.
 $TaskXml = $TaskXml -replace '^<\?xml[^?]*\?>', '<?xml version="1.0" encoding="UTF-16"?>'

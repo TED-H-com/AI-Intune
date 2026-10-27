@@ -7,26 +7,32 @@ $tokens = $null
 $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'join.ps1'), [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw 'join.ps1 has PowerShell parse errors.' }
-$null = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\install-agent-windows.ps1'), [ref]$tokens, [ref]$parseErrors)
+$installerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\install-agent-windows.ps1'), [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw 'Windows installer has PowerShell parse errors.' }
-foreach ($name in @('Set-JoinProxyConfig', 'Read-JoinBlock', 'Expand-JoinBundle', 'Protect-JoinInstallerOutput', 'Invoke-JoinInstaller')) {
+foreach ($name in @('Read-JoinBlock', 'Expand-JoinBundle', 'Protect-JoinInstallerOutput', 'Invoke-JoinInstaller')) {
   $function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name}, $true)
   Invoke-Expression $function.Extent.Text
 }
+$function = $installerAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-AgentConfig'}, $true)
+Invoke-Expression $function.Extent.Text
 # Stub Windows ACL/reparse operations while exercising config serialization.
 function Assert-NoReparsePoint([string]$Path) { }
 $script:privateCalls = 0
-function Set-JoinPrivate([string]$Path, [bool]$Directory) { $script:privateCalls++ }
+function Set-PrivateFile([string]$Path) { $script:privateCalls++ }
+function Set-JoinPrivate([string]$Path, [bool]$Directory) { }
 $configPath = Join-Path $Fixtures 'agent.json'
 $original = '{"agent_token":"fixture-token","jobs_enabled":false,"unknown":{"value":1}}'
 [IO.File]::WriteAllText($configPath, $original)
-Set-JoinProxyConfig $configPath ''
+Set-AgentConfig $configPath $null ''
 if ([IO.File]::ReadAllText($configPath) -cne $original -or $script:privateCalls -ne 0) { throw 'No-proxy config was modified.' }
-Set-JoinProxyConfig $configPath 'http://proxy.example:8080'
+Set-AgentConfig $configPath $false 'http://proxy.example:8080'
 $bytes = [IO.File]::ReadAllBytes($configPath)
 if ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { throw 'Config has a UTF-8 BOM.' }
 $config = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
-if ($config.proxy_url -ne 'http://proxy.example:8080' -or $config.agent_token -ne 'fixture-token' -or $config.jobs_enabled -ne $false -or $config.unknown.value -ne 1 -or $script:privateCalls -ne 2) { throw 'Proxy config did not preserve fields and private ACL calls.' }
+if ($config.proxy_url -ne 'http://proxy.example:8080' -or $config.agent_token -ne 'fixture-token' -or $config.jobs_enabled -ne $false -or $config.unknown.value -ne 1 -or $script:privateCalls -ne 1) { throw 'Proxy config did not preserve fields and private ACL calls.' }
+Set-AgentConfig $configPath $true ''
+$config = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
+if ($config.proxy_url -ne 'http://proxy.example:8080' -or $config.jobs_enabled -ne $true -or $config.unknown.value -ne 1) { throw 'Reinstall did not preserve proxy and unknown fields.' }
 foreach ($mode in @('valid', 'traversal', 'backslash', 'absolute', 'symlink', 'hardlink', 'duplicate', 'missing', 'truncated')) {
   $destination = Join-Path $Fixtures $mode
   [void][IO.Directory]::CreateDirectory($destination)

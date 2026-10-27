@@ -105,6 +105,14 @@ func hubRetryReason(err error) string {
 		}
 		return ""
 	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return "DNS"
+	}
+	var op *net.OpError
+	if errors.As(err, &op) && (op.Op == "proxyconnect" || op.Op == "dial") {
+		return "connection"
+	}
 	var n net.Error
 	if errors.As(err, &n) && n.Timeout() {
 		return "timeout"

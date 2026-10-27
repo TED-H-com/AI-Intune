@@ -17,10 +17,13 @@
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <Delay>PT30S</Delay>
+      <UserId>@@CLAWCTL_AGENT_USER_SID@@</UserId>
     </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
+      <UserId>@@CLAWCTL_AGENT_USER_SID@@</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>

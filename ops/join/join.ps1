@@ -36,15 +36,6 @@ function Set-JoinPrivate([string]$Path, [bool]$Directory) {
   $acl.SetAccessRule($rule)
   Set-Acl -LiteralPath $Path -AclObject $acl
 }
-function Set-JoinProxyConfig([string]$Path, [string]$Proxy) {
-  if (-not $Proxy) { return }
-  Assert-NoReparsePoint $Path
-  $config = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
-  $config | Add-Member -NotePropertyName proxy_url -NotePropertyValue $Proxy -Force
-  Set-JoinPrivate $Path $false
-  [IO.File]::WriteAllText($Path, ($config | ConvertTo-Json -Depth 100), (New-Object Text.UTF8Encoding($false)))
-  Set-JoinPrivate $Path $false
-}
 function Write-JoinProgress([string]$Message) {
   Write-Host $Message
   Add-Content -LiteralPath $LogFile -Value ("{0:u} {1}" -f [DateTime]::UtcNow, $Message)
@@ -59,13 +50,15 @@ function Protect-JoinInstallerOutput([string]$Text, [string[]]$Secrets) {
   $Text = $Text -replace ('(?i)(\bbearer["'']?(?:\s+|\s*[:=]\s*))' + $value), '$1[REDACTED]'
   return $Text
 }
-function Invoke-JoinInstaller([string]$Installer, [string]$Hub, [string]$TokenFile, [string]$Jobs, [string[]]$Secrets) {
+function Invoke-JoinInstaller([string]$Installer, [string]$Hub, [string]$TokenFile, [string]$Jobs, [string[]]$Secrets, [string]$Proxy = '') {
   # A child process captures even the installer's [Console]::Error writes.
   $engine = Join-Path $PSHOME 'powershell.exe'
   if ($PSVersionTable.PSEdition -eq 'Core') {
     $engine = Join-Path $PSHOME 'pwsh'
     if ($env:OS -eq 'Windows_NT') { $engine += '.exe' }
   }
+  $proxyArgs = @()
+  if ($Proxy) { $proxyArgs = @('--proxy', $Proxy) }
   $tail = New-Object 'Collections.Generic.Queue[string]'
   try {
     & {
@@ -75,7 +68,7 @@ function Invoke-JoinInstaller([string]$Installer, [string]$Hub, [string]$TokenFi
       $PSNativeCommandUseErrorActionPreference = $false
       # Native commands update the global variable; a local one would hide it.
       $global:LASTEXITCODE = 1
-      & $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Installer --hub $Hub --token-file $TokenFile --jobs-enabled $Jobs *>&1
+      & $engine -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Installer --hub $Hub --token-file $TokenFile --jobs-enabled $Jobs @proxyArgs *>&1
       if ($LASTEXITCODE -ne 0) { throw 'Agent installer failed.' }
     } | ForEach-Object {
       $line = Protect-JoinInstallerOutput ([string]$_) $Secrets
@@ -230,8 +223,7 @@ try {
   $jobs = 'false'
   if ($JobsEnabled) { $jobs = 'true' }
   # One-time enrollment token from approval, never an operator token or argv secret.
-  Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1') $Hub $tokenFile $jobs @($approved.enroll_token, $started.device_secret)
-  if ($Proxy) { Set-JoinProxyConfig (Join-Path $env:APPDATA 'clawctl\agent.json') $Proxy }
+  Invoke-JoinInstaller (Join-Path $stage 'install-agent-windows.ps1') $Hub $tokenFile $jobs @($approved.enroll_token, $started.device_secret) $Proxy
   Write-JoinProgress "Joined. jobs_enabled=$jobs. Progress: $Hub/readiness"
 } catch {
   # Never serialize exceptions/responses: they may contain device/enrollment secrets.

@@ -655,6 +655,8 @@ func validateWindowsInstaller(reader io.Reader, size int64) error {
 		!strings.Contains(text, "--hub") ||
 		!strings.Contains(text, "clawctl-agent") ||
 		!strings.Contains(text, "--require-platform-evidence") ||
+		!strings.Contains(text, "proxy_url") ||
+		!strings.Contains(text, "--proxy") ||
 		strings.Contains(text, "launchctl") {
 		return errors.New("bundle installer is not the Windows agent installer")
 	}
@@ -671,7 +673,9 @@ func validateWindowsTaskXML(reader io.Reader, size int64) error {
 		!strings.Contains(text, "<LogonTrigger>") ||
 		!strings.Contains(text, "InteractiveToken") ||
 		!strings.Contains(text, "LeastPrivilege") ||
-		!strings.Contains(text, "@@CLAWCTL_AGENT_BIN@@") ||
+		!strings.Contains(text, "<Command>@@CLAWCTL_AGENT_BIN@@</Command>") ||
+		!strings.Contains(text, "<Hidden>true</Hidden>") ||
+		strings.Contains(strings.ToLower(text), "cmd.exe") ||
 		!strings.Contains(text, `\clawctl\clawctl-agent`) ||
 		strings.Contains(text, "[Unit]") || strings.Contains(text, "<plist") {
 		return errors.New("bundle task XML is not the Windows scheduled-task template")
