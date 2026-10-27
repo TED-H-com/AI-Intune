@@ -58,6 +58,7 @@ func TestParseRetryAfter(t *testing.T) {
 }
 
 func TestDoJSONStatusModeStoresRetryAfter(t *testing.T) {
+	disableHubRetries(t)
 	future := time.Now().Add(10 * time.Minute).UTC().Format(http.TimeFormat)
 	past := time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat)
 	busy := `{"code":"HUB_BUSY","message":"writer is busy"}`
@@ -333,6 +334,7 @@ func statusServer(t *testing.T, steps []statusStep) (*httptest.Server, *atomic.I
 
 func backoffRunner(t *testing.T, hubURL string, interval time.Duration, backoff func(int) time.Duration, jitterFn func(time.Duration) time.Duration, sleep func(context.Context, time.Duration) error) *jobsRunner {
 	t.Helper()
+	disableHubRetries(t)
 	r, err := newJobsRunner(jobsOptions{
 		HubURL:       hubURL,
 		Token:        "agent-token",
@@ -732,4 +734,12 @@ func statusServerSteps(t *testing.T, steps []statusStep) *httptest.Server {
 	t.Helper()
 	srv, _ := statusServer(t, steps)
 	return srv
+}
+
+// Outer backoff tests exercise one HTTP attempt per poll.
+func disableHubRetries(t *testing.T) {
+	t.Helper()
+	previous := hubRetries
+	hubRetries.delay = nil
+	t.Cleanup(func() { hubRetries = previous })
 }

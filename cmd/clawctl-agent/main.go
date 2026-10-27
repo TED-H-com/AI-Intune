@@ -593,7 +593,7 @@ func runAgent() {
 			// estimate can subtract half the postJSON round trip.
 			callStart := time.Now()
 			hb.SentAt = callStart.UTC()
-			postErr := postJSON(ctx, cfg.HubURL+"/v1/checkins", cfg.AgentToken, hb, &resp)
+			postErr := postJSON(withHubRetryInterval(ctx, applied.Load().checkin), cfg.HubURL+"/v1/checkins", cfg.AgentToken, hb, &resp)
 			if postErr == nil {
 				syncDiskActionOutbox(ctx, cfg.HubURL, cfg.AgentToken)
 			}
@@ -841,7 +841,9 @@ func dur(seconds int, fallback time.Duration) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+const hubRequestTimeout = 30 * time.Second
+
+var httpClient = &http.Client{Timeout: hubRequestTimeout}
 
 func postJSON(ctx context.Context, url, token string, body, out any) error {
 	return doJSON(ctx, http.MethodPost, url, token, body, out)
@@ -872,7 +874,7 @@ func doJSONStatus(ctx context.Context, method, url, token string, body, out any)
 	return doJSONStatusMode(ctx, method, url, token, body, out, false)
 }
 
-func doJSONStatusMode(ctx context.Context, method, url, token string, body, out any, strict bool) (int, error) {
+func doJSONStatusOnce(ctx context.Context, method, url, token string, body, out any, strict bool) (int, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -902,7 +904,7 @@ func doJSONStatusMode(ctx context.Context, method, url, token string, body, out 
 		var apiErr model.APIError
 		_ = json.Unmarshal(b, &apiErr)
 		httpErr := &hubHTTPError{StatusCode: resp.StatusCode, APIError: apiErr, Body: b}
-		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
+		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout {
 			if d, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
 				httpErr.RetryAfter = d
 				httpErr.HasRetryAfter = true
@@ -911,8 +913,8 @@ func doJSONStatusMode(ctx context.Context, method, url, token string, body, out 
 		return resp.StatusCode, httpErr
 	}
 	if out == nil || resp.StatusCode == http.StatusNoContent {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return resp.StatusCode, nil
+		_, err := io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode, err
 	}
 	if strict {
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20+1))

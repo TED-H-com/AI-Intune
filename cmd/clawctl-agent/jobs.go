@@ -741,7 +741,7 @@ func (r *jobsRunner) next(ctx context.Context) (model.JobResponse, bool, error) 
 		return model.JobResponse{}, false, errExecutionBlocked
 	}
 	var job model.JobResponse
-	status, err := doJSONStatus(ctx, http.MethodGet, r.hubURL+"/v1/jobs/next", r.token, nil, &job)
+	status, err := doJSONStatus(withHubRetryInterval(ctx, r.pollInterval), http.MethodGet, r.hubURL+"/v1/jobs/next", r.token, nil, &job)
 	if err != nil {
 		return job, false, err
 	}
