@@ -20,6 +20,30 @@ func TestWindowsInstallerRendersEveryTaskPlaceholder(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallerWaitsForAgentAndChecksExitCode(t *testing.T) {
+	// PowerShell 5.1 only waits for the GUI-subsystem agent and sets LASTEXITCODE when its output is piped.
+	lines := strings.Split(readOpsFile(t, "install-agent-windows.ps1"), "\n")
+	invocation := regexp.MustCompile(`&\s+\$(BinSrc|BinFile)\b`)
+	pipeline := regexp.MustCompile(`\|\s*Out-(String|Host)\b`)
+	exitCheck := regexp.MustCompile(`^\s*if \(\$LASTEXITCODE -ne 0\) \{ Fail "[^"]+" \}\s*$`)
+	calls := 0
+	for i, line := range lines {
+		if !invocation.MatchString(line) {
+			continue
+		}
+		calls++
+		if !pipeline.MatchString(line) {
+			t.Errorf("line %d: agent invocation must pipe output to Out-String or Out-Host", i+1)
+		}
+		if i+1 >= len(lines) || !exitCheck.MatchString(lines[i+1]) {
+			t.Errorf("line %d: agent invocation must immediately check LASTEXITCODE and fail on non-zero", i+1)
+		}
+	}
+	if calls == 0 {
+		t.Fatal("no agent invocations found")
+	}
+}
+
 func TestWindowsScheduledTaskNameIsTheOneTheInstallerControls(t *testing.T) {
 	task := readOpsFile(t, "clawctl-agent.task.xml")
 	script := readOpsFile(t, "install-agent-windows.ps1")
