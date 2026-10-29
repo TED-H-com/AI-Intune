@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -25,7 +26,7 @@ func withHubRetryInterval(ctx context.Context, interval time.Duration) context.C
 // history IDs on every submission, so they are deliberately excluded.
 func fastRetrySafe(method, path string) bool {
 	return method == http.MethodGet && (path == "/v1/jobs/next" || path == "/v1/agent/readiness") ||
-		method == http.MethodPost && path == "/v1/checkins"
+		method == http.MethodPost && (path == "/v1/checkins" || errorUploadRetryPath(path))
 }
 
 type hubRetryPolicy struct {
@@ -135,4 +136,14 @@ func hubRetrySleep(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// Error ingestion deduplicates by machine, fingerprint and timestamp.
+func errorUploadRetryPath(path string) bool {
+	const prefix = "/api/v1/machines/"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, "/errors") {
+		return false
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), "/errors")
+	return id != "" && !strings.Contains(id, "/")
 }
