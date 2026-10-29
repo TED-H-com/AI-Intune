@@ -57,3 +57,5 @@ Deployment is manual and separate: Hub (GCE VM `ai-intune-hub`, us-east1-b) firs
 
 ## Non-goals
 Full log shipping, metrics, tracing; changing machine credentials.
+
+Implementation notes for the Hub issue filer: [ERROR_ISSUES.md](../ERROR_ISSUES.md).
