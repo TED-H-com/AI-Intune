@@ -44,6 +44,7 @@ func (h *hub) resolveAgentSettings(machineID string) (settingpolicy.Settings, st
 // handleMetrics on their own mux.
 func (h *hub) machineAndPublicRoutes(mux *http.ServeMux) []string {
 	patterns := h.agentRoutes(mux)
+	patterns = append(patterns, h.errorRoutes(mux)...)
 	patterns = append(patterns, "GET /healthz")
 	mux.HandleFunc(patterns[len(patterns)-1], h.handleHealthz)
 	mux.HandleFunc("GET /version", handleVersion)

@@ -124,16 +124,16 @@ func TestOperatorRouteManifestMatchesAllRegisteredRoutes(t *testing.T) {
 		operatorRegistered, operatorRoutePolicies); err != nil {
 		t.Fatal(err)
 	}
-	if len(nonOperatorRegistered) != 36 || len(nonOperatorRoutePolicies) != 36 {
-		t.Fatalf("non-operator registered=%d policies=%d, want 36/36",
+	if len(nonOperatorRegistered) != 39 || len(nonOperatorRoutePolicies) != 39 {
+		t.Fatalf("non-operator registered=%d policies=%d, want 39/39",
 			len(nonOperatorRegistered), len(nonOperatorRoutePolicies))
 	}
 	if len(operatorRegistered) != 325 || len(operatorRoutePolicies) != 325 {
 		t.Fatalf("operator registered=%d policies=%d, want 325/325",
 			len(operatorRegistered), len(operatorRoutePolicies))
 	}
-	if len(nonOperatorRegistered)+len(operatorRegistered) != 361 {
-		t.Fatalf("all registered routes=%d, 預期 361", len(nonOperatorRegistered)+len(operatorRegistered))
+	if len(nonOperatorRegistered)+len(operatorRegistered) != 364 {
+		t.Fatalf("all registered routes=%d, 預期 364", len(nonOperatorRegistered)+len(operatorRegistered))
 	}
 	counts := map[operatorauth.Permission]int{}
 	representations := map[operatorRepresentation]int{}
