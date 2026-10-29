@@ -131,18 +131,21 @@ type nonOperatorRoutePolicy struct {
 // public account traffic. In particular, /v1/operator/* can never be classified as
 // a machine route.
 var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
-	"GET /join.ps1":                  {nonOperatorAgent},
-	"GET /join.sh":                   {nonOperatorAgent},
-	"POST /v1/join/start":            {nonOperatorAgent},
-	"POST /v1/join/poll":             {nonOperatorAgent},
-	"GET /v1/join/bundle/{arch}":     {nonOperatorAgent},
-	"POST /v1/channels/{id}/inbound": {nonOperatorChat},
-	"GET /setup":                     {nonOperatorAccount},
-	"POST /setup":                    {nonOperatorAccount},
-	"GET /login":                     {nonOperatorAccount},
-	"POST /login":                    {nonOperatorAccount},
-	"POST /logout":                   {nonOperatorAccount},
-	"POST /login/mfa":                {nonOperatorAccount},
+	"POST /api/v1/machines/{id}/errors": {nonOperatorAgent},
+	"GET /api/v1/errors":                {nonOperatorAgent},
+	"GET /api/v1/errors/top":            {nonOperatorAgent},
+	"GET /join.ps1":                     {nonOperatorAgent},
+	"GET /join.sh":                      {nonOperatorAgent},
+	"POST /v1/join/start":               {nonOperatorAgent},
+	"POST /v1/join/poll":                {nonOperatorAgent},
+	"GET /v1/join/bundle/{arch}":        {nonOperatorAgent},
+	"POST /v1/channels/{id}/inbound":    {nonOperatorChat},
+	"GET /setup":                        {nonOperatorAccount},
+	"POST /setup":                       {nonOperatorAccount},
+	"GET /login":                        {nonOperatorAccount},
+	"POST /login":                       {nonOperatorAccount},
+	"POST /logout":                      {nonOperatorAccount},
+	"POST /login/mfa":                   {nonOperatorAccount},
 
 	"POST /v1/enrollments":                    {nonOperatorAgent},
 	"POST /v1/checkins":                       {nonOperatorAgent},
@@ -640,6 +643,10 @@ func validateNonOperatorRoutePolicies(registered []string, policies map[string]n
 		}
 		switch policy.Class {
 		case nonOperatorAgent:
+			// Error transport uses machine or scoped read-token authentication.
+			if pattern == "POST /api/v1/machines/{id}/errors" || pattern == "GET /api/v1/errors" || pattern == "GET /api/v1/errors/top" {
+				break
+			}
 			if pattern == "GET /join.sh" || pattern == "GET /join.ps1" {
 				break
 			}

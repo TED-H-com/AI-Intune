@@ -342,10 +342,36 @@ func (s *Store) Prune(now time.Time, p RetentionPolicy, dryRun bool) (PruneRepor
 		return PruneReport{}, err
 	}
 	now = now.UTC()
+	var rep PruneReport
+	var err error
 	if dryRun {
-		return s.pruneCount(now, p)
+		rep, err = s.pruneCount(now, p)
+	} else {
+		rep, err = s.pruneBatched(now, p)
 	}
-	return s.pruneBatched(now, p)
+	if err != nil {
+		return rep, err
+	}
+	c, err := s.pruneErrors(now, dryRun)
+	if err != nil {
+		return rep, err
+	}
+	rep.Counts = append(rep.Counts, c)
+	if !dryRun && c.Deleted > 0 {
+		tx, e := s.beginWrite(context.Background(), "prune_errors_audit")
+		if e != nil {
+			return rep, e
+		}
+		defer tx.Rollback()
+		if e = writeRetentionLogTx(tx, PruneReport{At: now, Counts: []PruneCount{c}}); e != nil {
+			return rep, e
+		}
+		err = tx.Commit()
+		if err == nil {
+			_, _, _, err = s.checkpointPrune()
+		}
+	}
+	return rep, err
 }
 
 // pruneCount is the dry-run. It uses the reader pool and does not write

@@ -479,7 +479,7 @@ Web、operator JSON、strict Go client 與 HTTP CLI 共用同一套 preview/dige
 在 mutation 前建立 private canonical recovery receipt，ambiguous response 以原 request 精確重放。
 
 目前 production surface 固定為
-355（30 non-operator＋325 operator；159 operator JSON＋166 HTML/BFF/CSV/download），exact auth tally 是
+358（33 non-operator＋325 operator；159 operator JSON＋166 HTML/BFF/CSV/download），exact auth tally 是
 `view=128`／`operate=34`／`admin=163`。這是由 manifest 測試固定的 contract；實機紀錄是私人工作筆記，不在這個公開倉庫。
 
 管理中心導覽語言是 browser presentation preference，不是 fleet state。右上角是同源 form

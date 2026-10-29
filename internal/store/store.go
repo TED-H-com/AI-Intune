@@ -371,6 +371,7 @@ type Change struct {
 // ---------------------------------------------------------------- Store
 
 type Store struct {
+	errorsDB           *sql.DB
 	unchangedInterval  atomic.Int64
 	signins            signinMemory
 	usageToolCallLimit atomic.Int64
@@ -692,6 +693,11 @@ func Open(path string) (*Store, error) {
 	st := &Store{
 		db: db, rdb: rdb, nowFn: func() time.Time { return time.Now().UTC() },
 		changeReadSlots: make(chan struct{}, maxConcurrentChangeReads),
+	}
+	st.errorsDB, err = openErrors(path)
+	if err != nil {
+		st.Close()
+		return nil, err
 	}
 	st.gate.stats.init()
 	st.SetObservationUnchangedInterval(30 * time.Minute)
@@ -1102,8 +1108,11 @@ func columnSet(q columnQueryer, table string) (map[string]bool, error) {
 
 func (s *Store) Close() error {
 	var err error
+	if s.errorsDB != nil {
+		err = s.errorsDB.Close()
+	}
 	if s.rdb != nil {
-		err = s.rdb.Close()
+		err = errors.Join(err, s.rdb.Close())
 	}
 	if s.db != nil {
 		err = errors.Join(err, s.db.Close())
