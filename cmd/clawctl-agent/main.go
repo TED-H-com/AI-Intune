@@ -45,6 +45,7 @@ import (
 var version = "dev"
 
 type config struct {
+	ErrorLog                 string                 `json:"error_log,omitempty"`
 	ExecutionPolicy          *model.ExecutionPolicy `json:"execution_policy,omitempty"`
 	execution                *executionGuard
 	ProxyURL                 string `json:"proxy_url,omitempty"`
@@ -501,6 +502,9 @@ func runAgent() {
 	if err != nil {
 		log.Fatalf("cannot read config (has `clawctl-agent enroll` been run?): %v", err)
 	}
+
+	closeErrorLog := setupAgentErrorLog(cfg)
+	defer closeErrorLog()
 
 	if err := configureHTTPClient(httpClient, cfg.ProxyURL); err != nil {
 		log.Fatal(err)

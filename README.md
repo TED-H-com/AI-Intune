@@ -920,3 +920,16 @@ Agent 固定使用 `CGO_ENABLED=0` 建立，確保 management plane 不會與它
 ## 授權
 
 AI-Intune 採用 [Apache License 2.0](LICENSE)。
+
+### Agent local error log
+
+The agent writes redacted JSON Lines diagnostics to `/var/log/ai-intune/errors.jsonl`
+on Linux and macOS, or `%ProgramData%\AI-Intune\logs\errors.jsonl` on Windows.
+Set `error_log` in agent.json to use another path; `AI_INTUNE_ERROR_LOG` takes
+precedence. The directory is created when needed. If it cannot be opened, the
+agent continues using its existing logger.
+
+The log rotates at 10 MiB and retains five files in total (the active file and
+`.1` through `.4`). Identical fingerprints are counted in fixed 60-second windows
+and written when the window ends or the writer closes. Records include the
+machine ID, agent version, severity and stable dotted error code.
