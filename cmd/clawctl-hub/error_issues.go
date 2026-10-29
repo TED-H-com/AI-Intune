@@ -20,7 +20,7 @@ func (h *hub) startErrorIssues(ctx context.Context) error {
 	}
 	client := &errorissues.Client{}
 	if !c.DryRun {
-		client.Token, err = errorissues.ReadToken(c.TokenFile, errorissues.OwnerRoot)
+		client.Token, err = errorissues.ReadToken(c.TokenFile, errorissues.OwnerRootOrSelf)
 		if err != nil {
 			return err
 		}

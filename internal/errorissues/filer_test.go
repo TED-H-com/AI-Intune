@@ -246,6 +246,71 @@ func TestTokenFile(t *testing.T) {
 		t.Fatal("empty accepted")
 	}
 }
+func TestTokenFilePermissions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mode   os.FileMode
+		owner  bool
+		kind   string
+		wantOK bool
+	}{
+		{"0600", 0600, true, "file", true},
+		{"0400", 0400, true, "file", true},
+		{"0640", 0640, true, "file", false},
+		{"0644", 0644, true, "file", false},
+		{"0604", 0604, true, "file", false},
+		{"0660", 0660, true, "file", false},
+		{"0700", 0700, true, "file", false},
+		{"setuid", 0600 | os.ModeSetuid, true, "file", false},
+		{"setgid", 0600 | os.ModeSetgid, true, "file", false},
+		{"sticky", 0600 | os.ModeSticky, true, "file", false},
+		{"owner rejected", 0600, false, "file", false},
+		{"directory", 0600, true, "directory", false},
+		{"non-regular", 0600, true, "device", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "token")
+			switch tc.kind {
+			case "directory":
+				if err := os.Mkdir(path, tc.mode); err != nil {
+					t.Fatal(err)
+				}
+			case "device":
+				path = "/dev/null"
+			default:
+				if err := os.WriteFile(path, []byte("test-credential"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, tc.mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			token, err := ReadToken(path, func(os.FileInfo) bool { return tc.owner })
+			if tc.wantOK {
+				if err != nil || token != "test-credential" {
+					t.Fatalf("valid token rejected: %v", err)
+				}
+			} else if err == nil || err.Error() != "issue token file must be owned by root or the service user with mode 0600 or 0400" {
+				t.Fatalf("expected ownership/mode rejection, got %v", err)
+			}
+		})
+	}
+}
+
+func TestOwnerRootOrSelf(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("test-credential"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !OwnerRootOrSelf(info) {
+		t.Fatal("test process owner rejected")
+	}
+}
+
 func TestRoutingAndThresholds(t *testing.T) {
 	f, g, now := setup(t)
 	insert(t, f, now, "below", 1)

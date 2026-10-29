@@ -47,10 +47,10 @@ func FromEnv(get func(string) string) (Config, error) {
 	return c, nil
 }
 
-// OwnerRoot can be substituted in tests on hosts without uid 0.
-func OwnerRoot(info os.FileInfo) bool {
+// OwnerRootOrSelf accepts root or the Hub service user as the file owner.
+func OwnerRootOrSelf(info os.FileInfo) bool {
 	st, ok := info.Sys().(*syscall.Stat_t)
-	return ok && st.Uid == 0
+	return ok && (st.Uid == 0 || st.Uid == uint32(os.Geteuid()))
 }
 func ReadToken(path string, owner func(os.FileInfo) bool) (string, error) {
 	f, e := os.Open(path)
@@ -59,8 +59,8 @@ func ReadToken(path string, owner func(os.FileInfo) bool) (string, error) {
 	}
 	defer f.Close()
 	info, e := f.Stat()
-	if e != nil || !info.Mode().IsRegular() || info.Mode() != 0600 || !owner(info) {
-		return "", errors.New("issue token file requires root ownership and mode 0600")
+	if e != nil || !info.Mode().IsRegular() || (info.Mode() != 0600 && info.Mode() != 0400) || !owner(info) {
+		return "", errors.New("issue token file must be owned by root or the service user with mode 0600 or 0400")
 	}
 	b, e := io.ReadAll(io.LimitReader(f, 16385))
 	if e != nil || len(b) > 16384 || strings.TrimSpace(string(b)) == "" {
