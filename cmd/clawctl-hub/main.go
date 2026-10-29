@@ -819,6 +819,10 @@ func serve(argv []string) {
 	// 這一筆是早報「三台同時失聯」唯一能拿來對的東西。
 	h.journalStart(time.Now())
 
+	if err := h.startErrorIssues(ctx); err != nil {
+		log.Fatal("error issues: startup rejected; check configuration and token file ownership and mode")
+	}
+
 	go ui.RunSigninNotifications(ctx)
 	go h.reconcileLoop(ctx)
 	go h.agentSessionRevocationLoop(ctx)
