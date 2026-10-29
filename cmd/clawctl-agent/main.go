@@ -45,6 +45,8 @@ import (
 var version = "dev"
 
 type config struct {
+	BATErrorLogs             []string               `json:"bat_error_logs,omitempty"`
+	BATUsers                 []string               `json:"bat_users,omitempty"`
 	ErrorLog                 string                 `json:"error_log,omitempty"`
 	ExecutionPolicy          *model.ExecutionPolicy `json:"execution_policy,omitempty"`
 	execution                *executionGuard
@@ -512,6 +514,7 @@ func runAgent() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go runErrorUploads(ctx, cfg)
 
 	st := loadState()
 	// ⚠ boot 之後 seq 從上次接著跑，這樣 Hub 才看得出中間漏了幾顆心跳。
