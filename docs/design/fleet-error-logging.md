@@ -38,12 +38,12 @@ Remove: Authorization/Bearer values, `token=`/`password=`/`secret=` query and en
 ## Automatic GitHub Issues
 A Hub job (every 15 min) promotes aggregated fingerprints:
 - Threshold: ≥3 occurrences or ≥2 machines in 24 h, level=error.
-- Routing: `intune-*` → TED-H-com/AI-Intune (issues must be enabled) ; BAT components → TED-H-com/bat-agent-connector.
+- Routing: `intune-*` → TED-H-com/AI-Intune (issues must be enabled); BAT components → TED-H-com/bat-agent-connector.
 - Dedup: issue body carries `<!-- fp:FINGERPRINT -->`; search open issues by marker; if found, add a comment at most once per 24 h with updated counts; closed issue + recurrence after a fix version → reopen with label `regression`.
 - Rate limit: ≤5 new issues/hour, ≤20/day per repo; overflow summarized in one digest issue.
 - Content: code, component, versions, machines (IDs only), first/last seen, 5 redacted sample lines. Labels: `auto-filed`, `component:*`.
-- Credential: GitHub App or fine-grained token with Issues:write only, stored as Fly secret.
-- Kill switch: `ERROR_ISSUES_ENABLED=false`.
+- Credential: fine-grained token (Issues:write only). Bitwarden is the source of truth; the operator places it in a root-only 0600 file on the Hub VM, path given by `ERROR_ISSUES_TOKEN_FILE`. The Hub refuses to file if the file is missing, not 0600, or not root-owned. No token in env vars, repo or images.
+- Flag: `ERROR_ISSUES_ENABLED` defaults to false; `ERROR_ISSUES_DRY_RUN=true` logs what would be filed without calling GitHub.
 
 ## Rollout (small PRs)
 1. Shared record schema + redactor + tests (AI-Intune `internal/errlog`).
@@ -53,7 +53,7 @@ A Hub job (every 15 min) promotes aggregated fingerprints:
 5. BAT connector / Fleet Monitor / tunnel / session writers (bat-agent-connector).
 6. bat-server writer (better-agent-terminal).
 7. Issue filer job (dry-run mode first: logs what it would file).
-Deployment is manual and separate: Hub first (flag off), then agents canary on one machine, then fleet.
+Deployment is manual and separate: Hub (GCE VM `ai-intune-hub`, us-east1-b) first (flag off), then agents canary on one machine, then fleet.
 
 ## Non-goals
 Full log shipping, metrics, tracing; changing machine credentials.
