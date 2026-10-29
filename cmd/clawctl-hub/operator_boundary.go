@@ -119,7 +119,6 @@ const (
 	nonOperatorAccount
 	nonOperatorMetrics
 	nonOperatorChat
-	nonOperatorErrors
 )
 
 type nonOperatorRoutePolicy struct {
@@ -132,9 +131,9 @@ type nonOperatorRoutePolicy struct {
 // public account traffic. In particular, /v1/operator/* can never be classified as
 // a machine route.
 var nonOperatorRoutePolicies = map[string]nonOperatorRoutePolicy{
-	"POST /api/v1/machines/{id}/errors": {nonOperatorErrors},
-	"GET /api/v1/errors":                {nonOperatorErrors},
-	"GET /api/v1/errors/top":            {nonOperatorErrors},
+	"POST /api/v1/machines/{id}/errors": {nonOperatorAgent},
+	"GET /api/v1/errors":                {nonOperatorAgent},
+	"GET /api/v1/errors/top":            {nonOperatorAgent},
 	"GET /join.ps1":                     {nonOperatorAgent},
 	"GET /join.sh":                      {nonOperatorAgent},
 	"POST /v1/join/start":               {nonOperatorAgent},
@@ -643,11 +642,11 @@ func validateNonOperatorRoutePolicies(registered []string, policies map[string]n
 			return fmt.Errorf("non-operator route %q is not a method/path pattern", pattern)
 		}
 		switch policy.Class {
-		case nonOperatorErrors:
-			if pattern != "POST /api/v1/machines/{id}/errors" && pattern != "GET /api/v1/errors" && pattern != "GET /api/v1/errors/top" {
-				return fmt.Errorf("invalid error route %q", pattern)
-			}
 		case nonOperatorAgent:
+			// Error transport uses machine or scoped read-token authentication.
+			if pattern == "POST /api/v1/machines/{id}/errors" || pattern == "GET /api/v1/errors" || pattern == "GET /api/v1/errors/top" {
+				break
+			}
 			if pattern == "GET /join.sh" || pattern == "GET /join.ps1" {
 				break
 			}

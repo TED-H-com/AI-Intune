@@ -2476,3 +2476,26 @@ func TestDiskActionRoutesRejectCrossOriginBeforeMutation(t *testing.T) {
 		})
 	}
 }
+
+func TestErrorRoutesUseNonOperatorTokenPolicy(t *testing.T) {
+	for _, route := range []string{
+		"POST /api/v1/machines/{id}/errors",
+		"GET /api/v1/errors",
+		"GET /api/v1/errors/top",
+	} {
+		if policy, ok := nonOperatorRoutePolicies[route]; !ok || policy.Class != nonOperatorAgent {
+			t.Fatalf("error route %q lacks machine/token policy: %+v", route, policy)
+		}
+		if _, ok := operatorRoutePolicies[route]; ok {
+			t.Fatalf("error route %q exposed on operator plane", route)
+		}
+		if err := validateNonOperatorRoutePolicies([]string{route}, map[string]nonOperatorRoutePolicy{route: {nonOperatorAgent}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, route := range []string{"GET /api/v1/errors/{rest...}", "POST /api/v1/errors", "GET /api/v1/operator/errors"} {
+		if err := validateNonOperatorRoutePolicies([]string{route}, map[string]nonOperatorRoutePolicy{route: {nonOperatorAgent}}); err == nil {
+			t.Fatalf("unexpected machine/token path accepted: %q", route)
+		}
+	}
+}
