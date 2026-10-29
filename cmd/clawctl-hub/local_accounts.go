@@ -300,13 +300,14 @@ type ipBucket struct {
 	at     time.Time
 }
 type ipLimiter struct {
+	now              func() time.Time
 	mu               sync.Mutex
 	buckets          map[string]ipBucket
 	perSecond, burst float64
 }
 
 func newIPLimiter(perMinute, burst int) *ipLimiter {
-	return &ipLimiter{buckets: make(map[string]ipBucket), perSecond: float64(perMinute) / 60, burst: float64(burst)}
+	return &ipLimiter{now: time.Now, buckets: make(map[string]ipBucket), perSecond: float64(perMinute) / 60, burst: float64(burst)}
 }
 func (l *ipLimiter) allow(remote string) bool { return l.allowWithCost(remote, true) }
 
@@ -314,7 +315,7 @@ func (l *ipLimiter) allowWithCost(remote string, consume bool) bool {
 	ip := clientip.Key(remote)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := time.Now()
+	now := l.now()
 	b, ok := l.buckets[ip]
 	if !ok {
 		if len(l.buckets) >= 4096 {

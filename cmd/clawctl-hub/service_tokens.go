@@ -153,7 +153,10 @@ func validateServiceTokenForm(r *http.Request) (store.ServiceToken, string) {
 }
 
 func registerServiceTokenRoutes(mux *http.ServeMux, st *store.Store, resolver clientip.Resolver) []string {
-	limiter := newIPLimiter(10, 5)
+	return registerServiceTokenRoutesWithLimiter(mux, st, resolver, newIPLimiter(10, 5))
+}
+
+func registerServiceTokenRoutesWithLimiter(mux *http.ServeMux, st *store.Store, resolver clientip.Resolver, limiter *ipLimiter) []string {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		p, ok := operatorauth.PrincipalFromContext(r.Context())

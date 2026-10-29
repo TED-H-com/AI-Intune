@@ -660,7 +660,12 @@ func managementAuditFixture(t *testing.T, enrolled bool) (*http.ServeMux, *store
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	registerServiceTokenRoutes(mux, st, resolver)
+	// Password verification can take longer than the refill interval under load.
+	// Keep the request budget independent of elapsed wall time.
+	now := time.Now()
+	limiter := newIPLimiter(10, 5)
+	limiter.now = func() time.Time { return now }
+	registerServiceTokenRoutesWithLimiter(mux, st, resolver, limiter)
 	principal := operatorauth.Principal{AuthMethod: operatorauth.AuthMethodLocalAccountSession, TailnetUserID: "local:" + actor.AccountID, TailnetUserLogin: "alice", SourceAddr: "203.0.113.1", GrantedCapabilities: operatorauth.CapabilityNames{Admin: "admin"}}
 	return mux, st, principal, "management-audit-test/1"
 }
