@@ -23,8 +23,9 @@ Future timestamps are excluded. Other levels do not contribute to promotion.
 Components starting with `intune` go to the Intune repository. `bat-connector`,
 `bat-tunnel`, `bat-session`, `fleet-monitor`, and `bat-server` go to the BAT
 repository. Other components are excluded. The GitHub token must be in a regular
-file owned by uid 0 with mode exactly 0600. It is never loaded from an environment
-variable. Grant the token issue read/write access to the configured repositories.
+file owned by root (uid 0) or the Hub service user (effective uid; uid 65532 in
+the container), with mode exactly 0600 or 0400. Group/world permissions and special
+mode bits are rejected. It is never loaded from an environment variable. Grant the token issue read/write access to the configured repositories.
 The filer creates missing labels, requiring permission to manage issue labels.
 Invalid token file configuration prevents Hub startup when filing is enabled.
 The default disabled setting starts no filer job and reads no token file.
@@ -59,6 +60,7 @@ it cannot determine remote issue state. It consumes no budget or update timestam
 Successful external updates have structured `error_issue_updated` Hub audit events.
 
 Enable on the Hub host by setting the variables above in its service environment,
-installing the token file as root with `chmod 0600`, and restarting the Hub. Start
+installing the token file owned by root or the Hub service user with `chmod 0600`
+or `chmod 0400`, and restarting the Hub. Start
 with `ERROR_ISSUES_DRY_RUN=true` to inspect redacted candidates, then switch it to
 `false` and restart. No Web, CLI, or API control is added for this background job.
