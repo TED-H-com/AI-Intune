@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/teddashh/AI-Intune/internal/errlog"
 )
 
 func TestLogRotation(t *testing.T) {
@@ -77,5 +81,63 @@ func TestConsoleGlobalDispatch(t *testing.T) {
 		if console != tc.console || dispatch(args) != tc.action {
 			t.Fatalf("%q: %q, %v", tc.args, dispatch(args), console)
 		}
+	}
+}
+
+func TestAgentErrorLogHook(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "errors.jsonl")
+	t.Setenv("AI_INTUNE_ERROR_LOG", path)
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previous)
+	closeLog := setupAgentErrorLog(config{MachineID: "machine-test", ErrorLog: filepath.Join(t.TempDir(), "ignored.jsonl")})
+	for _, msg := range []string{"cannot send check-in (will retry): token=secret-value", "job abc complete failed: denied", "upgrade failed: denied", "readiness failed: denied", "observation stalled", "applied new settings"} {
+		log.Print(msg)
+	}
+	closeLog()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("records = %d", len(lines))
+	}
+	codes := map[string]bool{}
+	for _, line := range lines {
+		var r errlog.Record
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.MachineID != "machine-test" || r.Component != "intune-agent" {
+			t.Fatalf("metadata: %+v", r)
+		}
+		codes[r.Code] = true
+	}
+	for _, code := range []string{"agent.hub_call.failed", "agent.job.failed", "agent.upgrade.failed", "agent.readiness.failed", "agent.observation.stalled"} {
+		if !codes[code] {
+			t.Errorf("missing %s", code)
+		}
+	}
+	if strings.Contains(string(data), "secret-value") {
+		t.Fatal("unredacted spool")
+	}
+	if !strings.Contains(output.String(), "applied new settings") {
+		t.Fatal("existing output lost")
+	}
+}
+
+func TestAgentErrorLogOpenFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AI_INTUNE_ERROR_LOG", filepath.Join(path, "errors.jsonl"))
+	previous := log.Writer()
+	closeLog := setupAgentErrorLog(config{})
+	defer closeLog()
+	if log.Writer() != previous {
+		t.Fatal("failed open changed logger")
 	}
 }

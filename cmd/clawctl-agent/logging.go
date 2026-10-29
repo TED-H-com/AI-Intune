@@ -2,11 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
+
+	"github.com/teddashh/AI-Intune/internal/errlog"
 )
 
 func consoleArgs(args []string) ([]string, bool) {
@@ -105,4 +109,64 @@ func (r *rotatingLog) Close() error {
 	err := r.file.Close()
 	r.file = nil
 	return err
+}
+
+// agentErrorHook preserves the existing log destination and mirrors diagnostics
+// to the structured local spool. Spool failures never affect agent logging.
+type agentErrorHook struct {
+	output    io.Writer
+	errors    *errlog.Writer
+	machineID string
+}
+
+func (h *agentErrorHook) Write(p []byte) (int, error) {
+	msg := strings.TrimSpace(string(p))
+	if code, level := agentErrorCode(msg); code != "" {
+		_ = h.errors.Write(errlog.Record{MachineID: h.machineID, Component: "intune-agent", Version: version, Level: level, Code: code, Msg: msg})
+	}
+	return h.output.Write(p)
+}
+
+func agentErrorCode(msg string) (string, string) {
+	s := strings.ToLower(msg)
+	failed := false
+	for _, marker := range []string{"failed", "failure", "cannot ", "could not", "timed out", "timeout", "stalled", "stuck", "rejected", "incomplete", "abandoning", "expired", "error:", "panic:", "unexpected state", "finished as failed", "deadline exceeded", "blocked", "not started", "canceling", "canceled"} {
+		if strings.Contains(s, marker) {
+			failed = true
+			break
+		}
+	}
+	if !failed {
+		return "", ""
+	}
+	switch {
+	case strings.Contains(s, "observation") && (strings.Contains(s, "stall") || strings.Contains(s, "stuck") || strings.Contains(s, "deadline exceeded")):
+		return "agent.observation.stalled", "warn"
+	case strings.Contains(s, "upgrade") || strings.Contains(s, "update"):
+		return "agent.upgrade.failed", "error"
+	case strings.Contains(s, "readiness"):
+		return "agent.readiness.failed", "error"
+	case strings.Contains(s, "cannot send") || strings.Contains(s, "failed to fetch") || strings.Contains(s, "failed to claim") || strings.Contains(s, "failed to send"):
+		return "agent.hub_call.failed", "error"
+	case strings.Contains(s, "job ") || strings.Contains(s, "job runner"):
+		return "agent.job.failed", "error"
+	case strings.Contains(s, "observation"):
+		return "agent.observation.failed", "warn"
+	default:
+		return "agent.runtime.failed", "error"
+	}
+}
+
+func setupAgentErrorLog(cfg config) func() {
+	path := os.Getenv("AI_INTUNE_ERROR_LOG")
+	if path == "" {
+		path = cfg.ErrorLog
+	}
+	w, err := errlog.NewWriter(path)
+	if err != nil {
+		return func() {}
+	}
+	previous := log.Writer()
+	log.SetOutput(&agentErrorHook{output: previous, errors: w, machineID: cfg.MachineID})
+	return func() { log.SetOutput(previous); _ = w.Close() }
 }
