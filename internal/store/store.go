@@ -30,6 +30,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "github.com/go-json-experiment/json"
 	"errors"
 	"fmt"
 	"log"
@@ -1199,14 +1200,22 @@ func parseTimePtr(ns sql.NullString) *time.Time {
 
 // newID 產生一個觀測 / 事件的主鍵。不用 uuid package —— 16 bytes 的 crypto/rand
 // 已經夠，少一個直接相依。
+var idCounter atomic.Uint64
+
 func newID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand 在 Linux 上失敗等於系統壞了。這裡仍然要產出唯一值，
-		// 因為丟掉一筆觀測比用一個難看的 ID 更糟。
-		return fmt.Sprintf("t%d", time.Now().UnixNano())
+	now := time.Now().UnixNano()
+	seq := idCounter.Add(1)
+	var b [32]byte
+	const hexChars = "0123456789abcdef"
+	for i := 15; i >= 0; i-- {
+		b[i] = hexChars[now&15]
+		now >>= 4
 	}
-	return hex.EncodeToString(b[:])
+	for i := 31; i >= 16; i-- {
+		b[i] = hexChars[seq&15]
+		seq >>= 4
+	}
+	return string(b[:])
 }
 
 // newToken 產生 32 bytes 的隨機 token，base64url 無 padding（43 字，好貼）。
@@ -1958,14 +1967,16 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 		return fmt.Errorf("store: observation machine: %w", err)
 	}
 
-	var prepared [][]any
+	type preparedRow struct { id, kind, subject, payload string }
+	capacity := 10 + len(b.Systemd) + len(b.Artifacts) + len(b.Events) + len(b.Journals) + len(b.AuthHealth) + len(b.Credentials) + len(b.CLITools)
+	prepared := make([]preparedRow, 0, capacity)
 	measured, recv := fmtTime(b.MeasuredAt), fmtTime(receivedAt)
 	put := func(kind, subject string, v any) error {
-		payload, err := json.Marshal(v)
+		payload, err := jsonv2.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("store: marshal %s/%s: %w", kind, subject, err)
 		}
-		prepared = append(prepared, []any{newID(), machineID, measured, recv, kind, subject, string(payload), SourceAgentMeasurement})
+		prepared = append(prepared, preparedRow{newID(), kind, subject, string(payload)})
 		return nil
 	}
 
@@ -2087,31 +2098,41 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 			return err
 		}
 	}
-	var values []string
-	var args []any
+	args := make([]any, 0, 100*8)
+	var queryBuf []byte
+
 	flush := func() error {
-		if len(values) == 0 {
+		if len(args) == 0 {
 			return nil
 		}
-		_, err := tx.Exec("INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES "+strings.Join(values, ","), args...)
-		values = nil
-		args = nil
+		rows := len(args) / 8
+		queryBuf = queryBuf[:0]
+		queryBuf = append(queryBuf, "INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES "...)
+		for i := 0; i < rows; i++ {
+			if i > 0 {
+				queryBuf = append(queryBuf, ',')
+			}
+			queryBuf = append(queryBuf, "(?,?,?,?,?,?,?,?)"...)
+		}
+		_, err := tx.Exec(string(queryBuf), args...)
+		args = args[:0]
+
 		if isForeignKeyErr(err) {
 			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
 		}
 		return err
 	}
 	for _, row := range prepared {
-		if interval > 0 && (row[4] == KindCLITool || row[4] == KindSystemd) {
-			old, ok := previous[snapshotKey{row[4].(string), row[5].(string)}]
+		if interval > 0 && (row.kind == KindCLITool || row.kind == KindSystemd) {
+			old, ok := previous[snapshotKey{row.kind, row.subject}]
 			age := receivedAt.Sub(old.received)
-			if ok && old.payload == row[6] && age >= 0 && age < interval {
+			if ok && old.payload == row.payload && age >= 0 && age < interval {
 				continue
 			}
 		}
-		values = append(values, "(?,?,?,?,?,?,?,?)")
-		args = append(args, row...)
-		if len(values) == 100 {
+
+		args = append(args, row.id, machineID, measured, recv, row.kind, row.subject, row.payload, SourceAgentMeasurement)
+		if len(args) == 100*8 {
 			if err := flush(); err != nil {
 				return fmt.Errorf("store: insert observations: %w", err)
 			}
