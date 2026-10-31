@@ -30,9 +30,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	jsonv2 "github.com/go-json-experiment/json"
 	"errors"
 	"fmt"
+	jsonv2 "github.com/go-json-experiment/json"
 	"log"
 	"net/url"
 	"os"
@@ -1967,7 +1967,7 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 		return fmt.Errorf("store: observation machine: %w", err)
 	}
 
-	type preparedRow struct { id, kind, subject, payload string }
+	type preparedRow struct{ id, kind, subject, payload string }
 	capacity := 10 + len(b.Systemd) + len(b.Artifacts) + len(b.Events) + len(b.Journals) + len(b.AuthHealth) + len(b.Credentials) + len(b.CLITools)
 	prepared := make([]preparedRow, 0, capacity)
 	measured, recv := fmtTime(b.MeasuredAt), fmtTime(receivedAt)
