@@ -1203,19 +1203,11 @@ func parseTimePtr(ns sql.NullString) *time.Time {
 var idCounter atomic.Uint64
 
 func newID() string {
-	now := time.Now().UnixNano()
-	seq := idCounter.Add(1)
-	var b [32]byte
-	const hexChars = "0123456789abcdef"
-	for i := 15; i >= 0; i-- {
-		b[i] = hexChars[now&15]
-		now >>= 4
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("t%d", time.Now().UnixNano())
 	}
-	for i := 31; i >= 16; i-- {
-		b[i] = hexChars[seq&15]
-		seq >>= 4
-	}
-	return string(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // newToken 產生 32 bytes 的隨機 token，base64url 無 padding（43 字，好貼）。
