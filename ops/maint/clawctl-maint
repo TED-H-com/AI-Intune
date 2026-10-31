@@ -1,0 +1,128 @@
+#!/bin/bash
+set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C
+export LC_ALL
+
+log=/var/log/sudo-clawctl.log
+conf=/etc/clawctl/maint.conf
+test_mode=0
+dry=0
+if [[ $EUID != 0 && ${CLAWCTL_MAINT_TEST:-} == 1 ]]; then
+    test_mode=1
+    log=${CLAWCTL_MAINT_LOG:-$log}
+    conf=${CLAWCTL_MAINT_CONF:-$conf}
+    [[ ${CLAWCTL_MAINT_DRYEXEC:-} != 1 ]] || dry=1
+fi
+original=("$@")
+finish() {
+    local rc=$? line quoted='' user
+    trap - EXIT
+    printf -v quoted '%q ' "${original[@]}"
+    user=${SUDO_USER:--}
+    printf -v line '%s user=%q argv=%s exit=%s' "$(/usr/bin/date -Iseconds)" "$user" "$quoted" "$rc"
+    if [[ ! -e $log ]]; then
+        if (( EUID == 0 )); then
+            /usr/bin/install -o root -g root -m 0640 /dev/null "$log" || exit "$((rc == 0 ? 1 : rc))"
+        else
+            (umask 027; : > "$log") || exit "$((rc == 0 ? 1 : rc))"
+        fi
+    fi
+    printf '%s\n' "$line" >> "$log" || exit "$((rc == 0 ? 1 : rc))"
+    if [[ -x /usr/bin/logger ]]; then
+        /usr/bin/env -i PATH="$PATH" /usr/bin/logger -t clawctl-maint -- "$line" || true
+    fi
+    exit "$rc"
+}
+trap finish EXIT
+usage() {
+    cat >&2 <<'USAGE'
+Usage: clawctl-maint apt update|upgrade|dist-upgrade|autoremove
+       clawctl-maint apt install <pkg...>
+       clawctl-maint reboot
+       clawctl-maint svc restart|start|stop|status <name>
+       clawctl-maint npm install|update -g --ignore-scripts [--dry-run] <pkgs...>
+       npm update permits zero packages.
+USAGE
+    exit 2
+}
+(( EUID == 0 || test_mode == 1 )) || usage
+(( $# > 0 )) || usage
+cmd=(/usr/bin/env -i PATH="$PATH" HOME=/root LANG=C.UTF-8)
+case $1 in
+apt)
+    (( $# >= 2 )) || usage
+    sub=$2
+    shift 2
+    cmd+=(DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -y "$sub")
+    case $sub in
+    update|upgrade|dist-upgrade|autoremove) (( $# == 0 )) || usage ;;
+    install)
+        (( $# > 0 )) || usage
+        for pkg in "$@"; do
+            [[ $pkg =~ ^[a-z0-9][a-z0-9+.:=~-]*$ && $pkg != *.deb ]] || usage
+        done
+        cmd+=(-- "$@")
+        ;;
+    *) usage ;;
+    esac
+    ;;
+reboot)
+    (( $# == 1 )) || usage
+    cmd+=(/usr/sbin/reboot)
+    ;;
+svc)
+    (( $# == 3 )) || usage
+    verb=$2 unit=$3
+    [[ $unit =~ ^[A-Za-z0-9@_.:-]+$ && $unit != -* ]] || usage
+    [[ $unit == *.service ]] || unit+=.service
+    cmd+=(/usr/bin/systemctl)
+    case $verb in
+    status) cmd+=(--no-pager status "$unit") ;;
+    restart|start|stop) cmd+=("$verb" "$unit") ;;
+    *) usage ;;
+    esac
+    ;;
+npm)
+    (( $# >= 4 )) || usage
+    verb=$2
+    [[ $verb == install || $verb == update ]] || usage
+    [[ $3 == -g && $4 == --ignore-scripts ]] || usage
+    shift 4
+    npm_args=("$verb" -g --ignore-scripts)
+    if [[ ${1:-} == --dry-run ]]; then npm_args+=(--dry-run); shift; fi
+    [[ $verb == update || $# -gt 0 ]] || usage
+    for pkg in "$@"; do
+        [[ $pkg =~ ^(@[a-z0-9._-]+/)?[a-z0-9._-]+(@[A-Za-z0-9._^~-]+)?$ && $pkg != .* && $pkg != /* && $pkg != -* ]] || usage
+    done
+    # Open once: metadata and contents refer to the same file.
+    [[ -f $conf ]] || usage
+    if ! exec {conf_fd}< "$conf"; then usage; fi
+    meta=$(/usr/bin/stat -Lc '%u %a' "/proc/$$/fd/$conf_fd") || usage
+    read -r owner mode <<< "$meta"
+    if [[ $owner != 0 ]] || (( (8#$mode & 8#022) != 0 )); then usage; fi
+    npm_bin=''
+    while IFS= read -r line || [[ -n $line ]]; do
+        [[ -z $line || $line == \#* ]] && continue
+        [[ $line =~ ^NPM_BIN=(/[^[:space:]]+)$ && -z $npm_bin ]] || usage
+        npm_bin=${BASH_REMATCH[1]}
+    done <&"$conf_fd"
+    exec {conf_fd}<&-
+    [[ $npm_bin == /* && -f $npm_bin && -x $npm_bin ]] || usage
+    # npm is a "#!/usr/bin/env node" script: node must be on PATH (same dir as npm).
+    cmd=(/usr/bin/env -i PATH="${npm_bin%/*}:$PATH" HOME=/root LANG=C.UTF-8
+        npm_config_ignore_scripts=true "$npm_bin" "${npm_args[@]}" "$@")
+    ;;
+*) usage ;;
+esac
+cd /
+if (( dry )); then
+    printf '%q ' "${cmd[@]}"
+    printf '\n'
+else
+    rc=0
+    "${cmd[@]}" || rc=$?
+    exit "$rc"
+fi
