@@ -63,6 +63,7 @@ check 2 Usage:
 saved_conf=$CLAWCTL_MAINT_CONF
 export CLAWCTL_MAINT_CONF=$tmp/conf
 check 2 Usage: npm install -g --ignore-scripts x
+# shellcheck disable=SC2016 # literal $(...) is the point: it must not run
 printf 'NPM_BIN=$(touch %s/pwned)\n' "$tmp" > "$tmp/conf"
 check 2 Usage: npm update -g --ignore-scripts
 [[ ! -e $tmp/pwned ]]
