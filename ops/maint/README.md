@@ -1,13 +1,13 @@
 # Sudo maintenance wrapper
 
-Install from the repository root. Replace `thuang` with the operator account:
+Install from the repository root. Replace `agentuser` with the operator account:
 
 ```sh
 sudo install -o root -g root -m 0755 ops/maint/clawctl-maint /usr/local/sbin/clawctl-maint
 sudo install -d -o root -g root -m 0755 /etc/clawctl
 sudo install -o root -g root -m 0644 ops/maint/maint.conf.example /etc/clawctl/maint.conf
 sudoedit /etc/clawctl/maint.conf
-sed 's/@USER@/thuang/g' ops/maint/clawctl-maintenance.sudoers.tmpl > /tmp/clawctl-maintenance.sudoers
+sed 's/@USER@/agentuser/g' ops/maint/clawctl-maintenance.sudoers.tmpl > /tmp/clawctl-maintenance.sudoers
 sudo visudo -cf /tmp/clawctl-maintenance.sudoers
 sudo install -o root -g root -m 0440 /tmp/clawctl-maintenance.sudoers /etc/sudoers.d/clawctl-maintenance
 rm /tmp/clawctl-maintenance.sudoers
