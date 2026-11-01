@@ -49,17 +49,28 @@ for sub in custom live batt ps cap assertions; do
     check 0 "$base /usr/bin/pmset -g $sub" pmset -g "$sub"
 done
 for flag in -a -b -c -u; do
+    for key in sleep disksleep standby powernap autorestart displaysleep; do
+        for value in 0 10; do
+            check 0 "$base /usr/bin/pmset $flag $key $value" pmset "$flag" "$key" "$value"
+        done
+    done
     check 0 "$base /usr/bin/pmset $flag sleep 0 disksleep 9999 standby 1 powernap 0 autorestart 1 displaysleep 10" \
         pmset "$flag" sleep 0 disksleep 9999 standby 1 powernap 0 autorestart 1 displaysleep 10
+    check 2 '' pmset "$flag" hibernatemode 0
+    for value in -1 1.5 abc '' 12345; do
+        check 2 '' pmset "$flag" sleep "$value"
+    done
+    check 2 '' pmset "$flag" sleep
 done
+check 0 "$base /usr/bin/pmset -a sleep 0 displaysleep 10" pmset -a sleep 0 displaysleep 10
 for key in hibernatemode destroyfvkeyonstandby schedule repeat restoredefaults; do
     check 2 '' pmset -a "$key" 1
     check 2 '' pmset "$key"
 done
-for value in abc -1 1.5 10000 ''; do check 2 '' pmset -a sleep "$value"; done
+check 2 '' pmset -a sleep 10000
+check 2 '' pmset -s
 check 2 '' pmset -s sleep 1
-check 2 '' pmset -a sleep
-check 2 '' pmset -g unknown
+check 2 '' pmset -g bogus
 check 2 '' pmset -g custom extra
 check 2 '' pmset -g ''
 check 2 '' pmset
