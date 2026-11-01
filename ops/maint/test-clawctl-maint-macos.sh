@@ -32,6 +32,7 @@ check() {
     local receipt quoted=''
     printf -v quoted '%q ' "$@"
     receipt=$(tail -n 1 "$CLAWCTL_MAINT_LOG")
+    [[ $receipt =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ user= ]] || exit 1
     [[ $receipt == *" user=test\\ user argv=$quoted exit=$rc" ]] || exit 1
     count=$((count + 1))
 }
