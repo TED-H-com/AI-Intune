@@ -56,12 +56,14 @@ jobs:
       - name: Maintenance wrapper shellcheck and tests
         run: |
           shellcheck ops/maint/clawctl-maint ops/maint/test-clawctl-maint.sh
+          shellcheck ops/maint/clawctl-maint-macos ops/maint/test-clawctl-maint-macos.sh ops/maint/install-clawctl-maint-macos.sh
           maint_conf=$(mktemp)
           trap 'sudo rm -f "$maint_conf"' EXIT
           printf 'NPM_BIN=/usr/bin/true\n' > "$maint_conf"
           sudo chown root:root "$maint_conf"
           sudo chmod 0644 "$maint_conf"
           bash ops/maint/test-clawctl-maint.sh "$maint_conf"
+          bash ops/maint/test-clawctl-maint-macos.sh "$maint_conf"
 
       - name: ops tests
         run: bash ops/test-ops.sh
