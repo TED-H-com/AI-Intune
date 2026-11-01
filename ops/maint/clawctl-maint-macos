@@ -1,0 +1,137 @@
+#!/bin/bash
+set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C
+export LC_ALL
+
+log=/var/log/sudo-clawctl.log
+conf=/etc/clawctl/maint.conf
+test_mode=0
+dry=0
+if [[ $EUID != 0 && ${CLAWCTL_MAINT_TEST:-} == 1 ]]; then
+    test_mode=1
+    log=${CLAWCTL_MAINT_LOG:-$log}
+    conf=${CLAWCTL_MAINT_CONF:-$conf}
+    [[ ${CLAWCTL_MAINT_DRYEXEC:-} != 1 ]] || dry=1
+fi
+original=("$@")
+finish() {
+    local rc=$? line quoted='' user
+    trap - EXIT
+    printf -v quoted '%q ' ${original[@]+"${original[@]}"}
+    user=${SUDO_USER:--}
+    printf -v line '%s user=%q argv=%s exit=%s' "$(/usr/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')" "$user" "$quoted" "$rc"
+    if [[ ! -e $log ]]; then
+        if (( EUID == 0 )); then
+            /usr/bin/install -o root -g wheel -m 0640 /dev/null "$log" || exit "$((rc == 0 ? 1 : rc))"
+        else
+            (umask 027; : > "$log") || exit "$((rc == 0 ? 1 : rc))"
+        fi
+    fi
+    printf '%s\n' "$line" >> "$log" || exit "$((rc == 0 ? 1 : rc))"
+    if [[ -x /usr/bin/logger ]]; then
+        /usr/bin/env -i PATH="$PATH" /usr/bin/logger -t clawctl-maint -- "$line" || true
+    fi
+    exit "$rc"
+}
+trap finish EXIT
+usage() {
+    cat >&2 <<'USAGE'
+Usage: clawctl-maint reboot
+       clawctl-maint svc kickstart|status <label>
+       clawctl-maint npm install|update -g --ignore-scripts [--dry-run] <pkgs...>
+       clawctl-maint pmset -g [custom|live|batt|ps|cap|assertions]
+       clawctl-maint pmset -a|-b|-c|-u <key> <value> [<key> <value>...]
+       npm update permits zero packages.
+USAGE
+    exit 2
+}
+(( EUID == 0 || test_mode == 1 )) || usage
+(( $# > 0 )) || usage
+cmd=(/usr/bin/env -i PATH="$PATH" HOME=/var/root)
+case $1 in
+reboot)
+    (( $# == 1 )) || usage
+    cmd+=(/sbin/shutdown -r now)
+    ;;
+svc)
+    (( $# == 3 )) || usage
+    verb=$2 label=$3
+    [[ ${#label} -le 128 && $label =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$ ]] || usage
+    case $verb in
+    kickstart) cmd+=(/bin/launchctl kickstart -k "system/$label") ;;
+    status) cmd+=(/bin/launchctl print "system/$label") ;;
+    *) usage ;;
+    esac
+    ;;
+pmset)
+    shift
+    (( $# > 0 )) || usage
+    pmset_args=("$@")
+    if [[ $1 == -g ]]; then
+        (( $# <= 2 )) || usage
+        case ${2:-} in
+        ''|custom|live|batt|ps|cap|assertions) ;;
+        *) usage ;;
+        esac
+        [[ $# == 1 || -n $2 ]] || usage
+    else
+        case $1 in -a|-b|-c|-u) ;; *) usage ;; esac
+        shift
+        (( $# >= 2 && $# % 2 == 0 )) || usage
+        while (( $# > 0 )); do
+            case $1 in
+            sleep|disksleep|standby|powernap|autorestart|displaysleep) ;;
+            *) usage ;;
+            esac
+            [[ $2 =~ ^[0-9]{1,4}$ ]] || usage
+            shift 2
+        done
+    fi
+    cmd+=(/usr/bin/pmset "${pmset_args[@]}")
+    ;;
+npm)
+    (( $# >= 4 )) || usage
+    verb=$2
+    [[ $verb == install || $verb == update ]] || usage
+    [[ $3 == -g && $4 == --ignore-scripts ]] || usage
+    shift 4
+    npm_args=("$verb" -g --ignore-scripts)
+    if [[ ${1:-} == --dry-run ]]; then npm_args+=(--dry-run); shift; fi
+    [[ $verb == update || $# -gt 0 ]] || usage
+    for pkg in "$@"; do
+        [[ $pkg =~ ^(@[a-z0-9._-]+/)?[a-z0-9._-]+(@[A-Za-z0-9._^~-]+)?$ && $pkg != .* && $pkg != /* && $pkg != -* && $pkg != *.tgz && $pkg != *.tar && $pkg != *.tar.* && $pkg != *.tbz && $pkg != *.tbz2 && $pkg != *.txz ]] || usage
+    done
+    [[ -f $conf ]] || usage
+    exec 3< "$conf" || usage
+    # BSD stat on macOS; GNU stat permits the same checks in Linux CI.
+    meta=$(/usr/bin/stat -f '%u %Lp' "$conf" 2>/dev/null) ||
+        meta=$(/usr/bin/stat -c '%u %a' "$conf") || usage
+    read -r owner mode <<< "$meta"
+    [[ $owner =~ ^[0-9]+$ && $mode =~ ^[0-7]{3,4}$ ]] || usage
+    if [[ $owner != 0 ]] || (( (8#$mode & 8#022) != 0 )); then usage; fi
+    npm_bin=''
+    while IFS= read -r line || [[ -n $line ]]; do
+        [[ -z $line || $line == \#* ]] && continue
+        [[ $line =~ ^NPM_BIN=(/[^[:space:]]+)$ && -z $npm_bin ]] || usage
+        npm_bin=${BASH_REMATCH[1]}
+    done <&3
+    exec 3<&-
+    [[ $npm_bin == /* && -f $npm_bin && -x $npm_bin ]] || usage
+    # npm is a "#!/usr/bin/env node" script: node must be on PATH (same dir as npm).
+    cmd=(/usr/bin/env -i PATH="${npm_bin%/*}:$PATH" HOME=/var/root LANG=en_US.UTF-8
+        npm_config_ignore_scripts=true "$npm_bin" "${npm_args[@]}" "$@")
+    ;;
+*) usage ;;
+esac
+cd /
+if (( dry )); then
+    printf '%q ' "${cmd[@]}"
+    printf '\n'
+else
+    rc=0
+    "${cmd[@]}" || rc=$?
+    exit "$rc"
+fi
