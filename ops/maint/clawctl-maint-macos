@@ -22,7 +22,7 @@ finish() {
     trap - EXIT
     printf -v quoted '%q ' ${original[@]+"${original[@]}"}
     user=${SUDO_USER:--}
-    printf -v line '%s user=%q argv=%s exit=%s' "$(/usr/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')" "$user" "$quoted" "$rc"
+    printf -v line '%s user=%q argv=%s exit=%s' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$user" "$quoted" "$rc"
     if [[ ! -e $log ]]; then
         if (( EUID == 0 )); then
             /usr/bin/install -o root -g wheel -m 0640 /dev/null "$log" || exit "$((rc == 0 ? 1 : rc))"
