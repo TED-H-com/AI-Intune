@@ -901,3 +901,22 @@ administrators. Pasted codes are never durable or included in audit records.
 
 Active Sign-ins pages use a fixed, CSP-hashed refresh script that pauses while
 a code input is focused or contains text. No pasted code enters browser storage.
+
+### Host-local stale machine retirement
+
+Run `clawctl-hub machine retire-stale --db /path/to/clawctl.sqlite` to list
+never-enrolled, unretired machines with zero check-ins. A machine qualifies after
+one hour when its non-empty display name or hostname exactly matches either name
+of an unretired machine with check-ins, or after 24 hours without a duplicate.
+Live unused enrollment codes and pending join requests block selection.
+`--json` includes each candidate's branches and duplicate machine IDs.
+
+The default is a read-only dry-run and can run beside a live Hub. Stop the Hub
+before adding `--apply`; apply requires the existing maintenance checks, ledger
+locks, and managed systemd stopped-unit proof. In Docker, use
+`--apply --container-stopped`: this requires `/.dockerenv` and retains the upgrade
+and writer locks, so a Hub holding the writer lock prevents apply.
+Each candidate is rechecked, previewed, and retired through the audited operator
+lifecycle service. Registry and history remain available. `--reason` overrides
+the generated branch-specific reason. Apply reports individual results and totals,
+continues after a machine fails, and exits with an error if any retirement fails.
