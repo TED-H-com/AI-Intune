@@ -36,6 +36,7 @@ type machineCommandDeps struct {
 	checkMaintenance     func(string) error
 	verifyHubStopped     func(context.Context, string) error
 	openDirectDB         func(string) (*store.Store, error)
+	dockerenvPath        string
 	tailnetSource        operator.TailnetSource
 }
 
@@ -60,6 +61,7 @@ func runMachineCommandWithDeps(ctx context.Context, argv []string, out, errOut i
 		fmt.Fprintln(errOut, "Usage: clawctl-hub machine assigned-user --machine <name|id> --user <user_id|none> --confirm-name <display_name> [--hub-url URL | --db PATH]")
 		fmt.Fprintln(errOut, "Usage: clawctl-hub machine channel --machine <name|id> --set canary|stable|none --confirm-name <display_name> [--hub-url URL | --db PATH]")
 		fmt.Fprintln(errOut, "       clawctl-hub machine lifecycle --machine <name|id> [--set active|retired (--preview | --reason REASON --confirm-name NAME)] [--json] [--hub-url URL | --db PATH]")
+		fmt.Fprintln(errOut, "       clawctl-hub machine retire-stale --db PATH [--apply [--container-stopped]] [--reason REASON] [--json]")
 		fmt.Fprintln(errOut, "       clawctl-hub machine actions --machine <id> [--json] [--hub-url URL]")
 		fmt.Fprintln(errOut, "       clawctl-hub machine rename --machine <id> --set <display_name> [--preview | --reason REASON --confirm-name CURRENT] [--json] [--hub-url URL]")
 		fmt.Fprintln(errOut, "       clawctl-hub machine notes --machine <id> --set <notes> [--preview | --reason REASON --confirm-name CURRENT] [--json] [--hub-url URL]")
@@ -68,7 +70,7 @@ func runMachineCommandWithDeps(ctx context.Context, argv []string, out, errOut i
 	}
 	if len(argv) == 0 {
 		printUsage()
-		return errors.New("machine: must specify assigned-user, channel, lifecycle, rename, notes, actions, timeline, or data subcommand")
+		return errors.New("machine: must specify assigned-user, channel, lifecycle, retire-stale, rename, notes, actions, timeline, or data subcommand")
 	}
 	if argv[0] == "-h" || argv[0] == "--help" {
 		printUsage()
@@ -76,6 +78,9 @@ func runMachineCommandWithDeps(ctx context.Context, argv []string, out, errOut i
 	}
 	if argv[0] == "assigned-user" {
 		return runMachineAssignedUserSubcommand(ctx, argv[1:], out, errOut, deps)
+	}
+	if argv[0] == "retire-stale" {
+		return runMachineRetireStaleSubcommand(ctx, argv[1:], out, errOut, deps)
 	}
 	if argv[0] == "lifecycle" {
 		return runMachineLifecycleSubcommand(ctx, argv[1:], out, errOut, deps)
