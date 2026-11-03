@@ -483,7 +483,7 @@ make cross       # Linux amd64 and arm64 Agent binaries
 make agent-bundles
 ```
 
-`make test` puts the Go test temporary directory on `/dev/shm` when it exists. Running `go test ./...` directly with `TMPDIR` on disk makes the Store, Hub, Web, operator, and Agent packages exceed the default 10-minute package timeout.
+`make test` runs Go tests through `ops/test-go.sh`, which creates a unique disk directory under `~/agent-work/tmp/`, sets a 30-minute package timeout, and removes the directory when the tests finish or are interrupted. It rejects memory-backed scratch paths. For a focused run, use `bash ops/test-go.sh "$(command -v go)" ./internal/store`. `CLAWCTL_TEST_SCRATCH_ROOT` selects another disk directory; keep its path short enough for Unix socket tests.
 
 The Agent is built with `CGO_ENABLED=0` so the management plane does not share the runtime failure domain of the Node applications it manages.
 
@@ -915,7 +915,7 @@ make cross       # Linux amd64 與 arm64 Agent binaries
 make agent-bundles
 ```
 
-`make test` 在有 `/dev/shm` 時把 Go 測試的暫存目錄放在那裡。直接跑 `go test ./...` 而 `TMPDIR` 在磁碟上時，Store、Hub、Web、operator 與 Agent 這幾包會超過預設的 10 分鐘套件時限。
+`make test` 透過 `ops/test-go.sh` 執行 Go 測試，在 `~/agent-work/tmp/` 下建立獨立的磁碟暫存目錄，設定每個套件 30 分鐘的時限，並在完成或中斷時清理。記憶體檔案系統會被拒絕。單獨測試一個套件可用 `bash ops/test-go.sh "$(command -v go)" ./internal/store`。`CLAWCTL_TEST_SCRATCH_ROOT` 可指定其他磁碟目錄；路徑應保持簡短，讓 Unix socket 測試能正常執行。
 
 Agent 固定使用 `CGO_ENABLED=0` 建立，確保 management plane 不會與它管理的 Node application 共用同一個 runtime failure domain。
 
