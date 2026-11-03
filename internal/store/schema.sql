@@ -1981,6 +1981,8 @@ CREATE TABLE IF NOT EXISTS observed_latest (
  kind TEXT NOT NULL, subject TEXT NOT NULL,
  observation_id TEXT NOT NULL, measured_at TEXT NOT NULL, received_at TEXT NOT NULL,
  payload TEXT NOT NULL, source TEXT NOT NULL, observation_sequence INTEGER NOT NULL,
+ machine_type TEXT GENERATED ALWAYS AS (CASE WHEN kind='host_profile_apply' AND json_valid(payload) THEN COALESCE(json_extract(payload,'$.machine_type'),'') ELSE '' END) VIRTUAL,
+ profile_source TEXT GENERATED ALWAYS AS (CASE WHEN kind='host_profile_apply' AND json_valid(payload) THEN COALESCE(json_extract(payload,'$.profile_source'),'') ELSE '' END) VIRTUAL,
  PRIMARY KEY(machine_id,kind,subject)
 );
 CREATE INDEX IF NOT EXISTS ix_observed_latest_kind ON observed_latest(kind,machine_id,subject);

@@ -887,6 +887,8 @@ func addMissingColumns(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 	want := map[string]map[string]string{
+		// Generated columns preserve the observation JSON as the single source of truth.
+		"observed_latest":  {"machine_type": "TEXT GENERATED ALWAYS AS (CASE WHEN kind='host_profile_apply' AND json_valid(payload) THEN COALESCE(json_extract(payload,'$.machine_type'),'') ELSE '' END) VIRTUAL", "profile_source": "TEXT GENERATED ALWAYS AS (CASE WHEN kind='host_profile_apply' AND json_valid(payload) THEN COALESCE(json_extract(payload,'$.profile_source'),'') ELSE '' END) VIRTUAL"},
 		"disk_alerts":      {"cleared_reason": "TEXT NOT NULL DEFAULT ''", "last_seen_at": "TEXT NOT NULL DEFAULT ''"},
 		"disk_canary_days": {"received_at": "TEXT NOT NULL DEFAULT ''"},
 		"schedules":        {"tz": "TEXT NOT NULL DEFAULT 'UTC'", "execution_mode": "TEXT NOT NULL DEFAULT '' CHECK(execution_mode IN ('','read','write'))"},
@@ -1087,7 +1089,7 @@ type columnQueryer interface {
 }
 
 func columnSet(q columnQueryer, table string) (map[string]bool, error) {
-	rows, err := q.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	rows, err := q.Query(fmt.Sprintf(`SELECT cid,name,type,"notnull",dflt_value,pk FROM pragma_table_xinfo('%s')`, table))
 	if err != nil {
 		return nil, err
 	}

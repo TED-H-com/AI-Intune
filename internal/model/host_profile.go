@@ -95,6 +95,8 @@ type HostApplyItem struct {
 	Detail string `json:"detail"`
 }
 type HostApplyResult struct {
+	MachineType    string                   `json:"machine_type,omitempty"`
+	ProfileSource  string                   `json:"profile_source,omitempty"`
 	Schema         string                   `json:"schema"`
 	ProfileDigest  string                   `json:"profile_digest"`
 	AppliedAt      time.Time                `json:"applied_at"`
@@ -104,15 +106,32 @@ type HostApplyResult struct {
 
 // ValidHostApplyResult bounds the additive host report before relaying or showing it.
 func ValidHostApplyResult(r *HostApplyResult) bool {
-	if r == nil || r.Schema != "clawctl-fleet-apply/v1" || r.AppliedAt.IsZero() || len(r.ProfileDigest) > 71 || len(r.Items) == 0 || len(r.Items) > 9 {
+	if r == nil {
+		return false
+	}
+	switch r.MachineType {
+	case "", "laptop", "desktop", "server", "unknown":
+	default:
+		return false
+	}
+	switch r.ProfileSource {
+	case "", "file", "skipped":
+	case "default:laptop", "default:desktop", "default:server":
+		if r.ProfileSource != "default:"+r.MachineType {
+			return false
+		}
+	default:
+		return false
+	}
+	if r.Schema != "clawctl-fleet-apply/v1" || r.AppliedAt.IsZero() || len(r.ProfileDigest) > 71 || len(r.Items) == 0 || len(r.Items) > 9 {
 		return false
 	}
 	if len(r.Items) == 1 {
 		if v, ok := r.Items["profile"]; ok {
-			return v.Status == "failed" && len(v.Detail) <= 256 && r.ProfileDigest == ""
+			return (v.Status == "failed" || v.Status == "skipped" && r.ProfileSource == "skipped") && len(v.Detail) <= 256 && r.ProfileDigest == ""
 		}
 	}
-	if len(r.Items) != 9 || len(r.ProfileDigest) != 71 {
+	if r.ProfileSource == "skipped" || len(r.Items) != 9 || len(r.ProfileDigest) != 71 {
 		return false
 	}
 	allowed := map[string]bool{"lid_ignore": true, "disable_sleep": true, "power_profile": true, "wifi_power_save_off": true, "journald_max_mb": true, "unattended_upgrades": true, "scoped_sudoers": true, "linger": true, "root_disk_clean_timer": true, "profile": true}

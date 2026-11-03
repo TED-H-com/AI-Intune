@@ -1,12 +1,15 @@
 package web
 
 import (
+	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
+	"github.com/teddashh/AI-Intune/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHostProfileHumanAndReadAPI(t *testing.T) {
@@ -21,7 +24,21 @@ func TestHostProfileHumanAndReadAPI(t *testing.T) {
 		mux.ServeHTTP(w, r)
 		return w
 	}
+	now := time.Now().UTC()
+	if err := st.UpsertMachine(store.Machine{MachineID: "linux", DisplayName: "Server", OS: "linux", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	result := &model.HostApplyResult{Schema: "clawctl-fleet-apply/v1", MachineType: "unknown", ProfileSource: "skipped", AppliedAt: now, Items: map[string]model.HostApplyItem{"profile": {Status: "skipped"}}}
+	if err := st.RecordObservation("linux", model.ObservationBatch{MeasuredAt: now, HostProfileApply: result}, now); err != nil {
+		t.Fatal(err)
+	}
 	w := req("GET", "/machines/host-profile", nil, false)
+	for _, want := range []string{"Machine type", "Profile source", "unknown", "skipped"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatal(want, w.Body.String())
+		}
+	}
+
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "Keep running with the lid closed") || !strings.Contains(w.Body.String(), "Read-only") {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -37,7 +54,7 @@ func TestHostProfileHumanAndReadAPI(t *testing.T) {
 		t.Fatal(p)
 	}
 	w = req("GET", "/v1/operator/host-profile", nil, false)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"lid_ignore":true`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"lid_ignore":true`) || !strings.Contains(w.Body.String(), `"machine_type":"unknown"`) || !strings.Contains(w.Body.String(), `"profile_source":"skipped"`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	for _, v := range []url.Values{{"unknown": {"true"}}, {"lid_ignore": {"true", "false"}}, {"journald_max_mb": {"1"}}, {"power_profile": {"shell"}}} {

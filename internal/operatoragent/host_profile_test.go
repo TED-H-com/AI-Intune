@@ -3,15 +3,20 @@ package operatoragent
 import (
 	"context"
 	"encoding/json"
+	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/store"
+	"strings"
 	"testing"
 )
 
-type profileFakeHub struct{ fakeHub }
+type profileFakeHub struct {
+	fakeHub
+	profile store.FleetHostProfile
+}
 
 func (f *profileFakeHub) HostProfile(context.Context) (store.FleetHostProfile, error) {
 	f.call("profile")
-	return store.FleetHostProfile{}, nil
+	return f.profile, nil
 }
 func TestHostProfileReadTool(t *testing.T) {
 	f := &profileFakeHub{}
@@ -34,4 +39,17 @@ func TestHostProfileReadTool(t *testing.T) {
 		}
 	}
 	t.Fatal("missing tool")
+}
+
+func TestHostProfileMetadataForwarded(t *testing.T) {
+	f := &profileFakeHub{profile: store.FleetHostProfile{Hosts: []store.HostProfileStatus{{Result: &model.HostApplyResult{MachineType: "server", ProfileSource: "default:server"}}}}}
+	s := &Service{Hub: f}
+	out, err := s.Call(context.Background(), "host_profile_get", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil || !strings.Contains(string(raw), `"machine_type":"server"`) || !strings.Contains(string(raw), `"profile_source":"default:server"`) {
+		t.Fatal(string(raw), err)
+	}
 }

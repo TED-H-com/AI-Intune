@@ -22,6 +22,55 @@ FIELDS = ('lid_ignore', 'disable_sleep', 'power_profile', 'wifi_power_save_off',
 TARGETS = ('sleep.target', 'suspend.target', 'hibernate.target', 'hybrid-sleep.target')
 
 
+# Missing profiles opt into embedded defaults; explicit files (including {}) win.
+AUTO_DEFAULT_ON_MISSING = True
+DEFAULT_PROFILES = {
+    'laptop': dict(lid_ignore=True, disable_sleep=True, power_profile='performance',
+                   wifi_power_save_off=True, journald_max_mb=500, unattended_upgrades=True,
+                   scoped_sudoers=True, linger=True, root_disk_clean_timer=True),
+    'desktop': dict(disable_sleep=True, power_profile='performance', journald_max_mb=500,
+                    unattended_upgrades=True, scoped_sudoers=True, linger=True,
+                    root_disk_clean_timer=True),
+    'server': dict(disable_sleep=True, power_profile='performance', journald_max_mb=500,
+                   unattended_upgrades=True, scoped_sudoers=True, linger=True,
+                   root_disk_clean_timer=True),
+}
+
+
+def detect_machine_type(sysfs_root=Path('/sys'), hostnamectl_runner=subprocess.run):
+    root = Path(sysfs_root)
+    kind = 'unknown'
+    try:
+        code = int((root / 'class/dmi/id/chassis_type').read_text().strip())
+        if code in (17, 23, 25, 28, 29):
+            return 'server'
+        if code in (8, 9, 10, 11, 14, 30, 31, 32):
+            kind = 'laptop'
+        elif code in (3, 4, 5, 6, 7, 13, 15, 16, 24, 35, 36):
+            kind = 'desktop'
+    except (OSError, ValueError):
+        pass
+    for battery in (root / 'class/power_supply').glob('BAT*'):
+        try:
+            if (battery / 'type').read_text().strip() == 'Battery':
+                return 'laptop'
+        except OSError:
+            pass
+    if kind != 'unknown':
+        return kind
+    try:
+        result = hostnamectl_runner(['hostnamectl', '--json=short'], timeout=5,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   env={'PATH': os.environ['PATH'], 'LC_ALL': 'C'})
+        if result.returncode == 0:
+            chassis = json.loads(result.stdout).get('Chassis')
+            return {'laptop': 'laptop', 'convertible': 'laptop', 'tablet': 'laptop',
+                    'desktop': 'desktop', 'server': 'server'}.get(chassis, 'unknown')
+    except (OSError, ValueError, AttributeError, TypeError, subprocess.SubprocessError):
+        pass
+    return 'unknown'
+
+
 def strict(pairs):
     out = {}
     for k, v in pairs:
@@ -50,9 +99,12 @@ def parse(raw):
 
 
 class Applier:
-    def __init__(self, args):
+    def __init__(self, args, sysfs_root=None, hostnamectl_runner=subprocess.run):
         self.args = args
         self.prefix = args.root_prefix.rstrip('/')
+        self.sysfs_root = sysfs_root if sysfs_root is not None else self.path('/sys')
+        self.hostnamectl_runner = hostnamectl_runner
+        self.profile_source = 'file'
         self.changed = False
         self.system_uid = os.geteuid() if self.prefix else 0
 
@@ -223,7 +275,17 @@ class Applier:
                 new = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                 os.close(fd)
                 fd = new
-            f = os.open(profile.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            try:
+                f = os.open(profile.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            except FileNotFoundError:
+                # Only ENOENT from the final open permits defaults. Traversal,
+                # policy, permission and symlink failures still refuse changes.
+                self.machine_type = detect_machine_type(self.sysfs_root, self.hostnamectl_runner)
+                if AUTO_DEFAULT_ON_MISSING and self.machine_type in DEFAULT_PROFILES:
+                    self.profile_source = 'default:' + self.machine_type
+                    return parse(json.dumps(DEFAULT_PROFILES[self.machine_type]))
+                self.profile_source = 'skipped'
+                return None
             with os.fdopen(f, 'rb') as stream:
                 s = os.fstat(stream.fileno())
                 if not stat.S_ISREG(s.st_mode) or s.st_uid != uid or s.st_size > 65536:
@@ -233,7 +295,9 @@ class Applier:
                     raise ValueError('oversized profile')
         finally:
             os.close(fd)
-        return parse(raw)
+        profile = parse(raw)
+        self.machine_type = detect_machine_type(self.sysfs_root, self.hostnamectl_runner)
+        return profile
 
     def apply_item(self, name, value):
         self.execution_allowed()
@@ -638,17 +702,23 @@ class Applier:
 
     def apply(self):
         self.execution_allowed()
-        result = {'schema': 'clawctl-fleet-apply/v1', 'profile_digest': '',
+        self.machine_type = 'unknown'
+        result = {'machine_type': self.machine_type, 'profile_source': 'file', 'schema': 'clawctl-fleet-apply/v1', 'profile_digest': '',
                   'applied_at': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
                   'items': {}, 'reboot_required': self.path('/var/run/reboot-required').exists()}
         try:
             profile = self.read_input()
-            canonical = json.dumps(profile, separators=(',', ':'), ensure_ascii=True).encode()
-            result['profile_digest'] = 'sha256:' + hashlib.sha256(canonical).hexdigest()
+            result['machine_type'] = self.machine_type
+            result['profile_source'] = self.profile_source
+            if profile is None:
+                result['items']['profile'] = {'status': 'skipped', 'detail': 'No host profile and no default for this machine type'}
+            else:
+                canonical = json.dumps(profile, separators=(',', ':'), ensure_ascii=True).encode()
+                result['profile_digest'] = 'sha256:' + hashlib.sha256(canonical).hexdigest()
         except (OSError, ValueError, KeyError, StopIteration, TypeError):
             result['items']['profile'] = {'status': 'failed', 'detail': 'Profile refused; check ownership, JSON and installer configuration'}
         else:
-            for name in FIELDS:
+            for name in FIELDS if profile is not None else ():
                 self.changed = False
                 status, detail = 'unmanaged', ''
                 if name in profile:

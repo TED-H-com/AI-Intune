@@ -1,3 +1,7 @@
+import errno
+import importlib.machinery
+import sys
+from unittest.mock import Mock, patch
 import hashlib
 import json
 import os
@@ -8,6 +12,8 @@ import unittest
 
 os.umask(0o022)
 BASE = Path(__file__).resolve().parent
+sys.dont_write_bytecode = True
+applier = importlib.machinery.SourceFileLoader('applier', str(BASE / 'clawctl-fleet-apply')).load_module()
 
 
 class ApplyTest(unittest.TestCase):
@@ -49,7 +55,7 @@ if name=='loginctl':
 p.write_text(json.dumps(s))
 '''
         stub = stub.replace("os.environ['CALLS']", repr(str(self.calls))).replace("os.environ['COMMAND_STATE']", repr(str(self.state))).replace("int(os.environ.get('VISUDO_FAIL','0'))", "int(Path(" + repr(str(self.bin / 'visudo-fail')) + ").exists())")
-        for cmd in ('systemctl', 'visudo', 'powerprofilesctl', 'loginctl', 'id'):
+        for cmd in ('systemctl', 'visudo', 'powerprofilesctl', 'loginctl', 'id', 'hostnamectl'):
             path = self.bin / cmd
             path.write_text(stub)
             path.chmod(0o755)
@@ -81,6 +87,101 @@ p.write_text(json.dumps(s))
     def snapshot(self):
         return {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*') if p.is_file() and not p.is_symlink() and '/var/lib/clawctl-fleet-apply/' not in str(p)}
 
+    def chassis(self, code):
+        path = self.root / 'sys/class/dmi/id/chassis_type'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(code))
+
+    def test_machine_detection(self):
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0, b'{"Chassis":"server"}'))
+        for kind, codes in {'desktop': (3,4,5,6,7,13,15,16,24,35,36),
+                            'laptop': (8,9,10,11,14,30,31,32),
+                            'server': (17,23,25,28,29)}.items():
+            for code in codes:
+                self.chassis(code)
+                self.assertEqual(applier.detect_machine_type(self.root / 'sys', runner), kind)
+        runner.assert_not_called()
+        for code in (0, 12):
+            self.chassis(code)
+            for chassis, want in {'laptop':'laptop', 'convertible':'laptop', 'tablet':'laptop',
+                                  'desktop':'desktop', 'server':'server', 'vm':'unknown',
+                                  'container':'unknown', 'other':'unknown'}.items():
+                runner.return_value.stdout = json.dumps({'Chassis':chassis}).encode()
+                self.assertEqual(applier.detect_machine_type(self.root / 'sys', runner), want)
+        argv = runner.call_args.args[0]
+        self.assertEqual(argv, ['hostnamectl', '--json=short'])
+        self.assertEqual(runner.call_args.kwargs['timeout'], 5)
+        (self.root / 'sys/class/dmi/id/chassis_type').unlink()
+        runner.return_value.stdout = b'{"Chassis":"desktop"}'
+        self.assertEqual(applier.detect_machine_type(self.root / 'sys', runner), 'desktop')
+        runner.side_effect = subprocess.TimeoutExpired(argv, 5)
+        self.assertEqual(applier.detect_machine_type(self.root / 'sys', runner), 'unknown')
+
+    def test_battery_override(self):
+        battery = self.root / 'sys/class/power_supply/BAT0/type'
+        battery.parent.mkdir(parents=True)
+        battery.write_text('Battery')
+        runner = Mock(side_effect=AssertionError('unexpected fallback'))
+        for code, want in ((3,'laptop'), (0,'laptop'), (17,'server')):
+            self.chassis(code)
+            self.assertEqual(applier.detect_machine_type(self.root / 'sys', runner), want)
+        battery.write_text('Mains')
+        self.chassis(3)
+        self.assertEqual(applier.detect_machine_type(self.root / 'sys', runner), 'desktop')
+
+    def test_missing_default_and_explicit_override(self):
+        self.profile.unlink()
+        self.chassis(17)
+        out = self.run_apply()
+        self.assertEqual(out['machine_type'], 'server')
+        self.assertEqual(out['profile_source'], 'default:server')
+        for name in ('lid_ignore', 'wifi_power_save_off'):
+            self.assertNotIn(name, applier.DEFAULT_PROFILES['server'])
+            self.assertEqual(out['items'][name]['status'], 'unmanaged')
+        self.assertEqual(out['profile_digest'], 'sha256:' + hashlib.sha256(
+            json.dumps(applier.parse(json.dumps(applier.DEFAULT_PROFILES['server'])), separators=(',', ':')).encode()).hexdigest())
+        self.write({})
+        out = self.run_apply()
+        self.assertEqual(out['profile_source'], 'file')
+        self.assertTrue(all(v['status'] == 'unmanaged' for v in out['items'].values()))
+        self.profile.unlink()
+        self.chassis(9)
+        out = self.run_apply()
+        self.assertEqual(out['profile_source'], 'default:laptop')
+        for name in ('lid_ignore', 'wifi_power_save_off'):
+            self.assertTrue(applier.DEFAULT_PROFILES['laptop'][name])
+            self.assertEqual(out['items'][name]['status'], 'changed')
+        self.chassis(0)
+        out = self.run_apply()
+        self.assertEqual(out['machine_type'], 'unknown')
+        self.assertEqual(out['profile_source'], 'skipped')
+        self.assertEqual(out['profile_digest'], '')
+        self.assertEqual(out['items'], {'profile': {'status':'skipped', 'detail':'No host profile and no default for this machine type'}})
+
+    def test_missing_only_on_leaf_open(self):
+        self.profile.unlink()
+        self.chassis(17)
+        self.profile.symlink_to('absent')
+        self.assertEqual(self.run_apply(False)['items']['profile']['status'], 'failed')
+        self.profile.unlink()
+        self.agent_config.unlink()
+        self.profile.parent.rmdir()
+        self.run_apply(False)
+
+    def test_leaf_open_errors_never_default(self):
+        self.chassis(17)
+        a = applier.Applier(type('Args', (), {'root_prefix':str(self.root), 'dry_run':True})())
+        real_open = os.open
+        for error in (errno.EACCES, errno.ELOOP, errno.EIO):
+            def fail_leaf(path, *args, **kwargs):
+                if path == 'host-profile.json':
+                    raise OSError(error, 'fixture')
+                return real_open(path, *args, **kwargs)
+            with patch.object(applier.os, 'open', side_effect=fail_leaf):
+                with self.assertRaises(OSError):
+                    a.read_input()
+            self.assertEqual(a.profile_source, 'file')
+
     def test_monitor_only_refuses_install_and_every_apply(self):
         self.agent_config.write_text(json.dumps({'execution_policy': {'mode': 'monitor_only', 'revision': 2}}))
         before = self.snapshot()
@@ -111,6 +212,7 @@ p.write_text(json.dumps(s))
         self.assertEqual((self.root / 'var/lib/clawctl-fleet-apply/last.json').stat().st_mode & 0o777, 0o644)
 
     def test_fail_closed(self):
+        self.chassis(17)
         cases = ['{', '{"unknown":true}', '{"lid_ignore":1}', '{"journald_max_mb":99}', '{"power_profile":"shell"}', '{"lid_ignore":true,"lid_ignore":false}', '{} {}', '[]', '{"lid_ignore":true}' + ' ' * 65536]
         for raw in cases:
             self.profile.write_text(raw)

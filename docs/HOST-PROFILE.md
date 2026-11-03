@@ -49,7 +49,7 @@ starts the applier. The periodic timer repairs drift even when the profile does
 not change. The agent never runs the installer or calls sudo.
 
 `last.json` under `/var/lib/clawctl-fleet-apply` is atomic, mode 0644, and contains
-only schema, profile digest, apply time, bounded fixed item messages and a reboot
+only schema, machine type, profile source, profile digest, apply time, bounded fixed item messages and a reboot
 flag. The agent relays it with observations. The Hub shows display names, whether
 the digest matches, each item result, restart requirement and Hub receipt time.
 Waiting includes missing or stale reports; Failed includes an item failure.
@@ -66,13 +66,67 @@ backups are retained for review and rollback. `--root-prefix /absolute/fixture`
 is offline filesystem staging for tests; commands still use PATH, so use fakes
 when testing the executable. It is not a systemd namespace or a live-host sandbox.
 
+## Built-in defaults when the profile file is absent
+
+`AUTO_DEFAULT_ON_MISSING = True` enables automatic application of code constants
+when the final `host-profile.json` open returns ENOENT. Defaults use the same
+strict parser and canonical SHA-256 digest as explicit files; they are never
+loaded from another disk file. Missing parent directories, denied access,
+symlinks, ownership failures and invalid profiles remain failures. Execution
+policy checks apply to defaults too.
+
+| Machine type | SMBIOS chassis codes |
+| --- | --- |
+| desktop | 3, 4, 5, 6, 7, 13, 15, 16, 24, 35, 36 |
+| laptop | 8, 9, 10, 11, 14, 30, 31, 32 |
+| server | 17, 23, 25, 28, 29 |
+| unknown | All other codes, including docking station 12 |
+
+Detection reads `/sys/class/dmi/id/chassis_type`. A `BAT*` supply whose `type`
+is `Battery` overrides desktop or unknown to laptop, but never a DMI server.
+When DMI is missing or unknown and there is no battery, a fixed, shell-free
+`hostnamectl --json=short` query (five-second timeout) supplies the fallback:
+laptop/convertible/tablet → laptop, desktop → desktop, server → server.
+VM and container values remain unknown because they do not establish a host
+hardware role. Recognized DMI takes precedence over hostnamectl. Unavailable
+or malformed evidence yields unknown. Tests inject sysfs and the query runner.
+
+These defaults match the fleet's performance and 500 MB maintenance settings:
+
+```json
+{
+  "laptop": {"lid_ignore":true,"disable_sleep":true,"power_profile":"performance","wifi_power_save_off":true,"journald_max_mb":500,"unattended_upgrades":true,"scoped_sudoers":true,"linger":true,"root_disk_clean_timer":true},
+  "desktop": {"disable_sleep":true,"power_profile":"performance","journald_max_mb":500,"unattended_upgrades":true,"scoped_sudoers":true,"linger":true,"root_disk_clean_timer":true},
+  "server": {"disable_sleep":true,"power_profile":"performance","journald_max_mb":500,"unattended_upgrades":true,"scoped_sudoers":true,"linger":true,"root_disk_clean_timer":true}
+}
+```
+
+Desktop and server defaults leave lid and Wi-Fi settings unmanaged, preserving
+local network choices. Laptop defaults keep lid-closed operation and Wi-Fi awake.
+An unknown machine without a file reports `items.profile` with status `skipped`
+and detail `No host profile and no default for this machine type`, an empty digest,
+and exits zero. Successful defaults also exit zero; item failures still exit one.
+
+Reports retain `clawctl-fleet-apply/v1` with additive optional `machine_type`
+(laptop/desktop/server/unknown) and `profile_source`
+(file/default:laptop/default:desktop/default:server/skipped). Older reports omit
+these fields. The agent, observation ledger, operator API and MCP preserve them;
+the host setup page shows Machine type and Profile source. The existing
+`observed_latest` projection has generated `machine_type` and `profile_source`
+columns, added through the standard missing-column migration, derived from its
+canonical JSON payload. Older payloads project empty strings without rewriting
+historical evidence. Digest and freshness still determine whether a report
+matches the Hub profile; a local default does not claim a match to a different
+Hub profile.
+
 ## Privilege boundary
 
 The observer agent remains unprivileged with NoNewPrivileges and
 ProtectSystem=strict. It writes only data to its existing writable
 `~/.config/clawctl/host-profile.json`, mode 0600. Linux check-in responses add
 `host_profile` and `host_profile_digest`. Other platforms receive neither.
-The default profile is `{}` and manages nothing.
+The Hub profile starts as `{}` and manages nothing. Any valid explicit file,
+including `{}`, fully overrides the built-in defaults below.
 
 The separate root service accepts a fixed vocabulary, not shell, paths, unit
 names, usernames or templates from the Hub. It reads the account from root-owned

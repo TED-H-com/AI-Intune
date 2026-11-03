@@ -1201,7 +1201,14 @@ only. `GET /v1/operator/host-profile` and read-only MCP `host_profile_get` retur
 the same profile and per-host status. The check-in adds `host_profile` and
 `host_profile_digest`; the agent validates the digest and atomically saves data.
 A separate root service applies the fixed vocabulary and embedded templates;
-observations relay `host_profile_apply`. This is not an arbitrary job executor,
+observations relay `host_profile_apply`. Reports retain `clawctl-fleet-apply/v1` and
+add optional `machine_type` (laptop/desktop/server/unknown) and `profile_source`
+(file/default:laptop/default:desktop/default:server/skipped), preserved in the
+observation JSON and returned in each host's `result`. Older reports omit them.
+Missing local profile files automatically use embedded chassis defaults; unknown
+machines without a file report a skipped profile with an empty digest. Invalid
+files still fail. See [HOST-PROFILE](HOST-PROFILE.md#built-in-defaults-when-the-profile-file-is-absent).
+ This is not an arbitrary job executor,
 and does not relax the observer's privilege boundary or enable root Hub jobs.
 See [HOST-PROFILE](HOST-PROFILE.md) for ownership, validation and evidence limits.
 

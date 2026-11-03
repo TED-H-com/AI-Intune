@@ -1341,7 +1341,14 @@ returns `{profile,digest,hosts}`: the optional typed fleet settings and Linux
 host reports with display names, receipt times, item status and restart flag.
 The strictly decoded operator client and read-only MCP `host_profile_get` expose
 the same read. Linux check-in responses add `host_profile` and
-`host_profile_digest`; observations add `host_profile_apply`. No operator write
+`host_profile_digest`; observations add `host_profile_apply`. Reports retain `clawctl-fleet-apply/v1` and
+add optional `machine_type` (laptop/desktop/server/unknown) and `profile_source`
+(file/default:laptop/default:desktop/default:server/skipped), preserved in the
+observation JSON and returned in each host's `result`. Older reports omit them.
+Missing local profile files automatically use embedded chassis defaults; unknown
+machines without a file report a skipped profile with an empty digest. Invalid
+files still fail. See [HOST-PROFILE](HOST-PROFILE.md#built-in-defaults-when-the-profile-file-is-absent).
+ No operator write
 API or write MCP is introduced. See [HOST-PROFILE](HOST-PROFILE.md).
 
 ## One-command Linux and Windows join
