@@ -6,6 +6,11 @@ The scheduled task still directly executes the agent, uses a LogonTrigger,
 InteractiveToken and LeastPrivilege, and requires an interactive user logon.
 No stored password is used. `<Hidden>true</Hidden>` hides the task in Task
 Scheduler's UI; the GUI subsystem prevents the agent console window.
+Subprocesses also run without console windows: the shared process constructor
+sets Windows `HideWindow` and `CREATE_NO_WINDOW`, preserving other process
+attributes. This includes PowerShell task/event probes and CLI helpers.
+Reinstall to replace any existing task action with a direct `clawctl-agent.exe`
+action; proxy settings are stored in `agent.json` rather than a shell wrapper.
 
 The daemon writes standard Go logs, including fatal errors and recovered
 main-goroutine panic stacks, to

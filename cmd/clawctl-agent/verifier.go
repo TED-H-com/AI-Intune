@@ -32,6 +32,7 @@ import (
 	"unicode"
 
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/processenv"
 )
 
 const (
@@ -556,7 +557,7 @@ func shellQuote(value string) string {
 
 // runSSH 只做一件事：把一行 POSIX sh 交給遠端的 shell，把它說的話原樣帶回來。
 func runSSH(ctx context.Context, destination, command string) sshResult {
-	cmd := exec.CommandContext(ctx, "ssh", sshArgs(destination, command)...)
+	cmd := processenv.CommandContext(ctx, "ssh", sshArgs(destination, command)...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

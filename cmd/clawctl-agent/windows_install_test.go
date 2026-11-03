@@ -187,3 +187,22 @@ func TestWindowsTaskBindsInstallingUserAndDelaysLogon(t *testing.T) {
 		t.Fatal("proxy config must be persisted before task startup")
 	}
 }
+
+func TestWindowsInstallerReplacesLegacyTaskAndPersistsProxy(t *testing.T) {
+	installer := readOpsFile(t, "install-agent-windows.ps1")
+	unregister := strings.Index(installer, "\nUnregister-ScheduledTask -TaskName $TaskName")
+	register := strings.Index(installer, "\n  Register-ScheduledTask -TaskName $TaskName")
+	if unregister < 0 || register <= unregister || !strings.Contains(installer, "-Xml $TaskXml -Force -ErrorAction Stop") {
+		t.Fatal("installation must replace the existing task action with the rendered template")
+	}
+	for _, text := range []string{"'--proxy' {", "$Proxy = [string]$args[$i + 1]", "-NotePropertyName proxy_url -NotePropertyValue $Proxy -Force", "$TaskXml.Replace('@@CLAWCTL_AGENT_BIN@@', (XmlEscape $BinFile))"} {
+		if !strings.Contains(installer, text) {
+			t.Errorf("installer missing %q", text)
+		}
+	}
+	for _, wrapper := range []string{"cmd.exe", "powershell.exe", ".bat", ".cmd"} {
+		if strings.Contains(strings.ToLower(readOpsFile(t, "clawctl-agent.task.xml")), wrapper) {
+			t.Errorf("task contains wrapper %q", wrapper)
+		}
+	}
+}

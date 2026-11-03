@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/processenv"
 )
 
 // AuthHealth reuses credential parsing; no token values are added to observations.
@@ -65,8 +66,8 @@ func ghAuthStatus(ctx context.Context, home string) (string, error) {
 	if !ok {
 		return "", exec.ErrNotFound
 	}
-	cmd := exec.CommandContext(ctx, binary, "auth", "status", "--hostname", "github.com")
-	cmd.Env = append(os.Environ(), "HOME="+home, "GH_PROMPT_DISABLED=1")
+	cmd := processenv.CommandContext(ctx, binary, "auth", "status", "--hostname", "github.com")
+	cmd.Env = append(cmd.Env, "HOME="+home, "GH_PROMPT_DISABLED=1")
 	// status never requests --show-token; cap even a broken CLI's output.
 	b := &authStatusBuffer{}
 	cmd.Stdout = b

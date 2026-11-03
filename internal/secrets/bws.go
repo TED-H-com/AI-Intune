@@ -10,12 +10,13 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/teddashh/AI-Intune/internal/processenv"
 )
 
 var ErrDenied = errors.New("secret project denied")
@@ -284,10 +285,12 @@ func (p *BWS) run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.config.TimeoutSeconds)*time.Second)
 	defer cancel()
 	args = append(args, "--output", "json", "--server-url", p.config.ServerURL)
-	cmd := exec.CommandContext(ctx, p.config.Binary, args...)
+	cmd := processenv.CommandContext(ctx, p.config.Binary, args...)
 	// Remove inherited BWS settings: configuration and authentication are explicit.
 	tokenURL, _ := url.Parse(p.config.TokenRef)
-	for _, v := range os.Environ() {
+	environment := cmd.Env
+	cmd.Env = make([]string, 0, len(environment)+1)
+	for _, v := range environment {
 		if !strings.HasPrefix(v, "BWS_") && !(tokenURL.Scheme == "env" && strings.HasPrefix(v, tokenURL.Host+"=")) {
 			cmd.Env = append(cmd.Env, v)
 		}

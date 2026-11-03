@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/teddashh/AI-Intune/internal/model"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/teddashh/AI-Intune/internal/processenv"
 )
 
 type lsDevice struct {
@@ -181,7 +182,7 @@ func CollectBlockDevices(ctx context.Context) []model.BlockDevice {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	for _, mount := range []string{"MOUNTPOINTS", "MOUNTPOINT"} {
-		cmd := exec.CommandContext(ctx, "lsblk", "--json", "--bytes", "--output", "NAME,PATH,KNAME,TYPE,SIZE,MODEL,SERIAL,WWN,FSTYPE,UUID,LABEL,"+mount+",PKNAME,RM,RO,TRAN")
+		cmd := processenv.CommandContext(ctx, "lsblk", "--json", "--bytes", "--output", "NAME,PATH,KNAME,TYPE,SIZE,MODEL,SERIAL,WWN,FSTYPE,UUID,LABEL,"+mount+",PKNAME,RM,RO,TRAN")
 		var out diskOutput
 		cmd.Stdout = &out
 		if err := cmd.Run(); err != nil {

@@ -71,7 +71,7 @@ if ((Protect-JoinInstallerOutput $cases[0] @('', $null)) -ne $cases[0]) { throw 
 # used by Fail in the installer. Neither stream may escape to the console.
 $Installer = Join-Path $Fixtures 'fixture installer.ps1'
 @'
-if ($args.Count -ne 6 -or $args[0] -ne '--hub' -or $args[1] -ne 'https://hub.example.com' -or $args[2] -ne '--token-file' -or $args[4] -ne '--jobs-enabled' -or $args[5] -ne 'false') { exit 91 }
+if ($args.Count -ne 8 -or $args[0] -ne '--hub' -or $args[1] -ne 'https://hub.example.com' -or $args[2] -ne '--token-file' -or $args[4] -ne '--jobs-enabled' -or $args[5] -ne 'false' -or $args[6] -ne '--proxy' -or $args[7] -ne 'http://proxy.example:8080') { exit 91 }
 if ($args[3] -notmatch 'token file$') { exit 92 }
 [Console]::WriteLine('stdout encoding diagnostic; bare enroll.+[fixture]$value')
 [Console]::Error.WriteLine('stderr unable to switch the encoding; bare device.*(fixture)^value')
@@ -85,7 +85,7 @@ foreach ($fail in @($false, $true)) {
   $failed = $false
   $console = @()
   try {
-    $console = @(Invoke-JoinInstaller $Installer 'https://hub.example.com' (Join-Path $Fixtures 'token file') 'false' $secrets *>&1)
+    $console = @(Invoke-JoinInstaller $Installer 'https://hub.example.com' (Join-Path $Fixtures 'token file') 'false' $secrets 'http://proxy.example:8080' *>&1)
   } catch {
     $failed = $true
     if ($_.Exception.Message -ne 'Agent installer failed. See the join log for redacted diagnostics.') { throw 'Unexpected installer failure.' }

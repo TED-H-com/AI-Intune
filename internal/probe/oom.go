@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/processenv"
 )
 
 var kernelVictim = regexp.MustCompile(`Killed process ([0-9]+) \(([^)]+)\)`)
@@ -269,7 +269,7 @@ func (b *cappedOOMOutput) Write(p []byte) (int, error) {
 func oomJournal(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "journalctl", "--since=-1 hour", "--no-pager", "-o", "json", "-n", "256", "--grep=Killed process|^Killed /|oom-kill:")
+	cmd := processenv.CommandContext(ctx, "journalctl", "--since=-1 hour", "--no-pager", "-o", "json", "-n", "256", "--grep=Killed process|^Killed /|oom-kill:")
 	cmd.WaitDelay = 100 * time.Millisecond
 	var out cappedOOMOutput
 	cmd.Stdout = &out
@@ -281,7 +281,7 @@ func oomJournal(ctx context.Context) string {
 func oomDmesg(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "dmesg", "--time-format=iso", "--nopager", "--level=emerg,alert,crit,err,warn")
+	cmd := processenv.CommandContext(ctx, "dmesg", "--time-format=iso", "--nopager", "--level=emerg,alert,crit,err,warn")
 	cmd.WaitDelay = 100 * time.Millisecond
 	var out cappedOOMOutput
 	cmd.Stdout = &out

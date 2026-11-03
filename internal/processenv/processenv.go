@@ -9,9 +9,11 @@ import (
 )
 
 // CommandContext creates a subprocess that cannot report readiness or feed the
-// watchdog for the service process that launched it.
+// watchdog for the service process that launched it. Windows subprocesses run
+// without console windows.
 func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
+	HideConsole(cmd)
 	cmd.Env = WithoutSystemdNotifications(os.Environ())
 	return cmd
 }

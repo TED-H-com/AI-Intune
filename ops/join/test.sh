@@ -158,7 +158,13 @@ ns = {'t': 'http://schemas.microsoft.com/windows/2004/02/mit/task'}
 assert task.find('t:Settings/t:Hidden', ns).text == 'true'
 assert task.find('t:Actions/t:Exec/t:Command', ns).text == '@@CLAWCTL_AGENT_BIN@@'
 assert task.find('t:Actions/t:Exec/t:Arguments', ns) is None
-assert 'cmd.exe' not in (root/'ops/clawctl-agent.task.xml').read_text().lower()
+for wrapper in ('cmd.exe', 'powershell.exe', '.bat', '.cmd'):
+    assert wrapper not in (root/'ops/clawctl-agent.task.xml').read_text().lower()
+assert s.count("$started.device_secret) $Proxy") == 1
+assert "'--proxy' {" in installer
+assert '$Proxy = [string]$args[$i + 1]' in installer
+assert installer.index('\nUnregister-ScheduledTask -TaskName $TaskName') < installer.index('\n  Register-ScheduledTask -TaskName $TaskName')
+assert '-Xml $TaskXml -Force -ErrorAction Stop' in installer
 installer = (root/'ops/install-agent-windows.ps1').read_text()
 for text in ('jobs_enabled', '--monitor-only', 'Register-ScheduledTask', 'enroll --hub $Hub --token-file $TokenFile'):
     assert text in installer, text
