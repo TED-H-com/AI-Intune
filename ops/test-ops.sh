@@ -2710,6 +2710,12 @@ else
 	failed=$((failed + 1))
 fi
 
+if bash "$ROOT/ops/test-test-go.sh"; then
+	passed=$((passed + 1))
+else
+	failed=$((failed + 1))
+fi
+
 # Includes the root applier fixture suite in ops/fleet/applier/test.sh.
 
 if bash "$ROOT/ops/join/test.sh"; then
