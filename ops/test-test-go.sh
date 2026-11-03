@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for ops/test-go.sh disk scratch placement, validation, and cleanup.
 set -euo pipefail
+unset CLAWCTL_TEST_SCRATCH_ROOT
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RUNNER="$ROOT/ops/test-go.sh"
