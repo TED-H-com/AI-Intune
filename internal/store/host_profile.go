@@ -72,7 +72,7 @@ func (s *Store) FleetHostProfile(now time.Time) (FleetHostProfile, error) {
 	}
 	// Select one observation per host inside the set query. The correlated
 	// lookup visits the small current projection, never the retained ledger.
-	rows, err := s.rdb.Query(`SELECT m.machine_id,m.display_name,o.payload,o.received_at
+	rows, err := s.rdb.Query(`SELECT m.machine_id,m.display_name,o.payload,o.received_at,o.machine_type,o.profile_source
  FROM machine_registry m
  LEFT JOIN observed_latest o ON o.machine_id=m.machine_id AND o.kind='host_profile_apply'
  AND o.subject=(SELECT x.subject FROM observed_latest x
@@ -85,8 +85,8 @@ func (s *Store) FleetHostProfile(now time.Time) (FleetHostProfile, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var host HostProfileStatus
-		var payload, received sql.NullString
-		if err = rows.Scan(&host.MachineID, &host.DisplayName, &payload, &received); err != nil {
+		var payload, received, machineType, profileSource sql.NullString
+		if err = rows.Scan(&host.MachineID, &host.DisplayName, &payload, &received, &machineType, &profileSource); err != nil {
 			return v, err
 		}
 		v.Hosts = append(v.Hosts, host)
@@ -99,6 +99,8 @@ func (s *Store) FleetHostProfile(now time.Time) (FleetHostProfile, error) {
 		if json.Unmarshal([]byte(raw), &h.Result) != nil || h.Result == nil {
 			continue
 		}
+		h.Result.MachineType = machineType.String
+		h.Result.ProfileSource = profileSource.String
 		t := parseTime(recv)
 		h.ReceivedAt = &t
 		if !model.ValidHostApplyResult(h.Result) {
