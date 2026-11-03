@@ -12,4 +12,7 @@ Error telemetry is stored in `<hub database path>.errors.sqlite` with its own WA
 
 The existing automatic/manual prune workflow expires error records after 30 days using Hub receive time, including the newest record. Dry runs include the error count, and applied prune counts are recorded in the main retention log. Aggregates are computed from retained records, so pruning also removes their contributions.
 
-This step adds no uploader, UI, issue filing, or deployment.
+The [agent uploader](../README.md#agent-error-upload) sends local agent and BAT
+logs through the ingest route. The opt-in [issue filer](ERROR_ISSUES.md) reads
+stored records and reports recurring errors to GitHub. Both Hub features remain
+disabled by default and are enabled separately through their documented settings.

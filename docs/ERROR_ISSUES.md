@@ -2,7 +2,7 @@
 
 Error records are defined by `internal/errlog`. The Hub stores telemetry in its
 separate `.errors.sqlite` WAL database; ingestion and read access are documented
-in [ERROR_API.md](../ERROR_API.md).
+in [ERROR_API.md](ERROR_API.md).
 
 ## Automatic GitHub Issues
 
