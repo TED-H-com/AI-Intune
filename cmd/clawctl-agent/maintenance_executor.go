@@ -15,6 +15,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/maintenance"
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/processenv"
 )
 
 // maintenanceConfMutator is a test seam. Production leaves it nil. A test may
@@ -152,7 +153,7 @@ func (e maintenanceExecutor) Run(ctx context.Context, job model.JobResponse) ([]
 }
 
 func runMaintenance(ctx context.Context, name string, args ...string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := processenv.CommandContext(ctx, name, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

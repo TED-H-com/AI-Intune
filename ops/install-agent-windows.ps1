@@ -294,6 +294,7 @@ $TaskXml = $TaskXml.Replace('@@CLAWCTL_AGENT_USER_SID@@', (XmlEscape $identity.U
 if ($TaskXml.Contains('@@')) { Fail "Scheduled task XML contains an unresolved placeholder" }
 # Register-ScheduledTask receives a UTF-16 .NET string, not the UTF-8 file bytes.
 $TaskXml = $TaskXml -replace '^<\?xml[^?]*\?>', '<?xml version="1.0" encoding="UTF-16"?>'
+# Replace the previous action, including legacy proxy shell wrappers.
 Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false -ErrorAction SilentlyContinue
 try {
   Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Xml $TaskXml -Force -ErrorAction Stop | Out-Null

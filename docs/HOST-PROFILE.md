@@ -66,6 +66,14 @@ backups are retained for review and rollback. `--root-prefix /absolute/fixture`
 is offline filesystem staging for tests; commands still use PATH, so use fakes
 when testing the executable. It is not a systemd namespace or a live-host sandbox.
 
+## Windows default
+
+Windows installations run the agent task and its subprocesses without console
+windows. The installer registers a hidden task that executes
+`clawctl-agent.exe` directly and stores proxy settings in `agent.json`.
+The fleet applier and the machine-type profiles below apply to Linux;
+Windows console behavior is an installation default.
+
 ## Built-in defaults when the profile file is absent
 
 `AUTO_DEFAULT_ON_MISSING = True` enables automatic application of code constants

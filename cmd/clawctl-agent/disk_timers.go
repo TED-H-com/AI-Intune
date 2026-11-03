@@ -6,10 +6,11 @@ import (
 	"github.com/teddashh/AI-Intune/internal/model"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/teddashh/AI-Intune/internal/processenv"
 )
 
 // The fixed show probes are read-only. No sudo or unit mutation is invoked.
@@ -30,7 +31,7 @@ func observeDiskTimers(now time.Time) []model.DiskTimerObservation {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			args := append(append([]string{}, prefix...), "show", unit, "--property=LoadState,UnitFileState,ActiveState")
-			raw, err := exec.CommandContext(ctx, "systemctl", args...).Output()
+			raw, err := processenv.CommandContext(ctx, "systemctl", args...).Output()
 			if err != nil || len(raw) > 4096 {
 				return nil, false
 			}
