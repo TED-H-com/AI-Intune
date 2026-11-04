@@ -81,9 +81,54 @@ add a tighter limit than Hub enforces. `expected_control_revision` has a
 minimum and no JSON Schema maximum, because the Hub maximum is the maximum
 int64.
 
+## Registry cleanup review
+
+```bash
+./build/clawctl-operator --hub-url "$CLAWCTL_HUB_URL" call stale_machines_list '{}'
+```
+
+MCP `stale_machines_list` and CLI `call stale_machines_list` use
+`operatorclient.Client.StaleMachineCandidates` and authenticated
+`GET /v1/operator/stale-machines` (`view`; no query parameters or tool arguments).
+Service tokens must allow this route explicitly. Machine bearer credentials do
+not authorize it. The response is JSON with `Cache-Control: no-store`, schema
+version 1, `evaluated_at`, `limit: 100`, `truncated`, and `items` (an empty array
+when no candidates qualify). No mutation or enrollment credential is returned.
+
+The operator service uses `store.StaleMachineCandidates` unchanged. Candidates
+are active registry entries with no enrollment and no check-in ever, at least
+one hour old, and no matching unexpired unused enrollment token or pending join
+request. They must also have a same-name/hostname non-retired entry with a
+check-in (`duplicate-of-active`), or be at least 24 hours old (`abandoned-24h`).
+Both branches can apply. Expired tickets and expired pending joins do not block
+inclusion. An old reporting machine is never selected merely for sharing a name.
+
+Each item contains `machine_id`, safely displayed `display_name` and `hostname`,
+`created_at`, the store's `branches`, and authorized `duplicate_of` machine IDs.
+The service checks read scope separately for each candidate and related ID;
+hidden identities and counts are omitted. Current Hub `view` grants cover all
+machines. Related IDs are sorted and capped at 100 per item, with
+`related_truncated`. A branch can remain present with no visible related IDs.
+Names and branch labels are evidence for human review, not proof of shared
+physical identity.
+
+This is an explicitly bounded live result, ordered by oldest creation time then
+machine ID. `truncated: true` means the response is not the whole candidate list.
+There is no cursor or total count. Review the oldest entries, then read again;
+use the active roster for the complete registry. Limits apply after read-scope
+filtering. The store still evaluates its existing full snapshot before the
+response is bounded.
+
+Open **名冊整理** at `/machines/lifecycle` for the same evidence, age, related
+machine links, and active/retired roster links. Administrators can follow
+**檢視退役** to the machine detail action area. Retirement still requires the
+existing lifecycle preview, revision, digest, display-name confirmation, reason,
+and idempotent audited apply. Re-read candidates after each reviewed retirement.
+This tool neither retires nor deletes entries and adds no batch write.
+
 ## Tools
 
-Reads: `fleet_overview`, `machines_list`, `machine_get`, `machine_evidence`,
+Reads: `fleet_overview`, `machines_list`, `stale_machines_list`, `machine_get`, `machine_evidence`,
 `jobs_list`, `job_get`, `job_evidence`, `deployments_list`, `deployment_get`,
 `software_report`, `compliance`, `rollout_status`, `disk_clean_summaries`,
 `disk_clean_summary`.

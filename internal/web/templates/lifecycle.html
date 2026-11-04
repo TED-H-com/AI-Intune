@@ -1,48 +1,30 @@
 {{define "lifecycle.html"}}{{template "head" .}}
 <div class="page-heading"><div>
-  <h1>裝置生命週期</h1>
-  <p>管理 active 與 retired 狀態。</p>
+  <h1>名冊整理</h1>
+  <p>檢視未完成註冊、從未回報且沒有有效註冊票券或待核准申請的名冊列。</p>
+  <p><a href="/machines?lifecycle=active#machines">管理中名冊</a> · <a href="/machines?lifecycle=retired#machines">已退役名冊</a></p>
 </div></div>
 
-<div class="kpis" style="margin-bottom:18px">
-  <div class="kpi"><span class="n">{{.Lifecycle.Active}}</span><span class="l">active 名冊列</span></div>
-  <div class="kpi"><span class="n">{{.Lifecycle.Retired}}</span><span class="l">retired 名冊列</span></div>
-</div>
-
+<p>同名回報紀錄供核對身分。請確認機器 ID 與使用狀態。</p>
+{{if .Lifecycle.Truncated}}<p role="status">目前顯示最早建立的 {{.Lifecycle.Limit}} 筆候選，尚有其他候選。檢視處理後請重新整理。</p>{{end}}
 <div class="panel" style="padding:4px 6px;overflow-x:auto">
-<table>
-<thead><tr>
-  <th>裝置</th><th style="width:100px">狀態</th><th style="width:100px">revision</th>
-  <th style="width:130px">agent</th><th style="width:120px">channel</th><th style="min-width:310px">動作</th>
-</tr></thead>
+<table style="min-width:900px">
+<thead><tr><th>裝置</th><th>建立時間</th><th>整理依據</th><th>同名回報紀錄</th>{{if .Access.CanAdmin}}<th>動作</th>{{end}}</tr></thead>
 <tbody>
 {{range .Lifecycle.Rows}}
   <tr>
-    <td><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a><div class="mono small dim">{{.MachineID}}</div></td>
-    <td>{{if eq .State "retired"}}<span class="st grey">retired</span>{{else}}<span class="st blue">active</span>{{end}}
-      {{with .RetiredAt}}<div class="small dim">{{.Local.Format "2006-01-02 15:04"}}</div>{{end}}
+    <td><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a><div class="mono small dim">{{.MachineID}}</div>{{with .Hostname}}<div class="small dim">{{.}}</div>{{end}}</td>
+    <td>{{.CreatedAt.Local.Format "2006-01-02 15:04"}}<div class="small dim">已建立 {{.AgeHours}} 小時</div></td>
+    <td><div>未完成註冊 · 從未回報</div><div>無有效票券或有效待核准申請</div>
+      {{range .Branches}}{{if eq . "duplicate-of-active"}}<div>建立滿 1 小時，且有同名回報紀錄</div>{{else if eq . "abandoned-24h"}}<div>建立滿 24 小時</div>{{end}}{{end}}
     </td>
-    <td class="mono">{{.Revision}}</td>
-    <td>{{if .Enrolled}}已有 credential{{else}}尚未 enroll{{end}}</td>
-    <td>{{if .Channel}}<span class="mono">{{.Channel}}</span>{{else}}未指派{{end}}</td>
-    <td>
-      {{if $.Access.CanAdmin}}
-      <form class="action-form" method="post" action="/machines/{{.MachineID}}/lifecycle-preview" style="margin:0">
-        <input type="hidden" name="desired_state" value="{{.DesiredState}}">
-        <input type="hidden" name="expected_revision" value="{{.Revision}}">
-        <label><span class="field-label">理由</span>
-          <input type="text" name="reason" placeholder="為什麼要切換成 {{.DesiredLabel}}" autocomplete="off" required aria-required="true">
-        </label>
-        <button type="submit">{{.PreviewButton}}</button>
-      </form>
-      {{end}}
-    </td>
+    <td>{{range .DuplicateOf}}<div><a class="mono" href="/machines/{{.}}">{{.}}</a></div>{{else}}<span class="dim">無可顯示的紀錄</span>{{end}}{{if .RelatedTruncated}}<div class="small dim">僅顯示前 100 筆</div>{{end}}</td>
+    {{if $.Access.CanAdmin}}<td><a href="/machines/{{.MachineID}}?section=actions#action-lifecycle">檢視退役</a></td>{{end}}
   </tr>
 {{else}}
-  <tr><td colspan="6" class="empty">名冊是空的。</td></tr>
+  <tr><td colspan="{{if .Access.CanAdmin}}5{{else}}4{{end}}" class="empty">目前沒有待整理的名冊列。</td></tr>
 {{end}}
 </tbody>
 </table>
 </div>
-
 {{template "foot" .}}{{end}}

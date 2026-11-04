@@ -92,3 +92,16 @@ func TestServiceTokenMCPAndCallNeverPrintSecret(t *testing.T) {
 		}
 	}
 }
+
+func TestStaleMachinesCLIContract(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := run([]string{"--hub-url", "http://100.64.0.1:8787", "tools"}, strings.NewReader(""), &out, &errOut); err != nil || !strings.Contains(out.String(), `"stale_machines_list"`) {
+		t.Fatalf("tool listing err=%v", err)
+	}
+	out.Reset()
+	errOut.Reset()
+	err := run([]string{"--hub-url", "http://100.64.0.1:8787", "call", "stale_machines_list", `{"retire":true}`}, strings.NewReader(""), &out, &errOut)
+	if err == nil || out.Len() != 0 || !strings.Contains(errOut.String(), `"code":"invalid_arguments"`) {
+		t.Fatalf("invalid review command err=%v stderr=%s", err, errOut.String())
+	}
+}
