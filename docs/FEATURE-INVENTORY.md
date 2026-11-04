@@ -47,12 +47,12 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 
 Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
-## 358 個 production operations 基線
+## 359 個 production operations 基線
 
-此數字按 HTTP method + route 計數：33 個 non-operator operations、325 個 operator
-operations；其中 159 個為 operator JSON、166 個為 HTML/BFF/CSV/download。Operator 另按 exact
-capability 分成 `view=128`、`operate=34`、`admin=163`。這組數字由 route/API/service/Web/CLI
-合約測試固定；358-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
+此數字按 HTTP method + route 計數：33 個 non-operator operations、326 個 operator
+operations；其中 160 個為 operator JSON、166 個為 HTML/BFF/CSV/download。Operator 另按 exact
+capability 分成 `view=129`、`operate=34`、`admin=163`。這組數字由 route/API/service/Web/CLI
+合約測試固定；359-operation surface 包含受 operator view 保護的 Agent bootstrap download、Tailnet Settings、Maintenance、Ticket usage、資料揭露面、註冊報告、每日早報預覽、註冊上限、軟體清查、每機安裝狀態、發佈與指派對照、Hub 名冊重新命名及名冊備註、管理中心導覽語言偏好，
 以及只開兩條 route 的 verifier transport；
 這是 repo 的 route manifest 基線，live binary 的實機紀錄是私人工作筆記，不在這個公開倉庫，兩者在部署前本來就可能不同。
 新增、移除或改 method 時，須同步更新本節與 route manifest 測試。
@@ -104,7 +104,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 32 | `GET /api/v1/errors` | `cmd/clawctl-hub/errors_api.go` | No | Scoped errors:read token; filtered error records; opt-in ingest |
 | 33 | `GET /api/v1/errors/top` | `cmd/clawctl-hub/errors_api.go` | No | Scoped errors:read token; error aggregates; opt-in ingest |
 
-### Operator HTML/BFF 與 JSON（325）
+### Operator HTML/BFF 與 JSON（326）
 
 | # | Method / route | 類型 | 人工 action | 備註 |
 |---:|---|---|---|---|
@@ -173,7 +173,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 96 | `GET /v1/operator/audit-events` | JSON | 讀取 | Safe allowlist audit read；完整 filters、creation-ceiling cursor 與 bounded denial sampling |
 | 97 | `GET /reports/changes` | HTML | 讀取 | Changes typed safe read；SSR 共用 operator service、固定 window/ceilings、coverage 與 paging |
 | 98 | `GET /v1/operator/changes` | JSON | 讀取 | Transition + endpoint-delta safe DTO；Hub clock、bounded filters/window/paging、retention/malformed disclosure |
-| 99 | `GET /machines/lifecycle` | HTML | 讀取／預覽入口 | Devices > Lifecycle 可發現 submenu；顯示 active/retired 與獨立 revision，不再顯示 legacy expected 軸 |
+| 99 | `GET /machines/lifecycle` | HTML | 讀取 | 名冊整理：分頁檢視未完成註冊的舊紀錄，連至單機頁的既有退役預覽與確認 |
 | 100 | `POST /machines/{id}/lifecycle-preview` | HTML form | 是，preview | Web adapter 呼叫 canonical lifecycle service；retire 確認另列當下開啟的終端工作階段數，並說明套用時仍開啟者會結束；restore 不顯示這項退役影響 |
 | 101 | `GET /v1/operator/machines/{id}/lifecycle` | JSON | 讀取 | Safe current projection；回 `lifecycle_revision` / `ETag`，分母只由 active/retired 決定；不回 legacy `expected` 或 credential/token hash |
 | 102 | `POST /v1/operator/machines/{id}/lifecycle-preview` | JSON | 是，preview | `admin`；另回不綁 digest/receipt 的 `open_agent_session_count` preview-time fact；其餘保留／存取影響綁 exact revision；非終態 job 會阻擋 active→retired |
@@ -458,6 +458,7 @@ domain service 見 `internal/operator/`。
 | 356 | `POST /tenant/offline-alerts/apply` | HTML form | Yes | `admin`; Canonical confirmed apply |
 | 357 | `POST /machines/{id}/execution-policy/preview` | HTML form | Yes, preview | Human admin; audited profile preview |
 | 358 | `POST /machines/{id}/execution-policy/apply` | HTML form | Yes | Human admin + fresh MFA; exact preview, revision, reason, confirmation and request key |
+| 359 | `GET /v1/operator/stale-machines` | JSON | 讀取 | `view`；unused-registration 候選、嚴格游標分頁；明確 service-token allowlist |
 
 ## Workload / submenu parity matrix
 

@@ -996,7 +996,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/machines" {
 		machineRequest, err = parseMachineIndexRequest(r)
 		if err != nil {
-			http.Error(w, "machine filter 或 cursor 不合法", http.StatusBadRequest)
+			http.Error(w, "裝置查詢無效，請重新選擇篩選條件", http.StatusBadRequest)
 			return
 		}
 	}

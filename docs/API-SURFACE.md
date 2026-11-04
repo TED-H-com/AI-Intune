@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 364 個 HTTP operations（39 non-operator＋325 operator；159 條 operator JSON）、
+> 逐一對照 365 個 HTTP operations（39 non-operator＋326 operator；160 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 364-operation tally above (39 non-operator + 325 operator). The inventory/contract excludes these six public account operations and totals 358. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 365-operation tally above (39 non-operator + 326 operator). The inventory/contract excludes these six public account operations and totals 359. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -1519,3 +1519,11 @@ The per-machine durable latch `machine_offline_alerts` retains only episode and
 Hub-clock delivery/dedupe metadata, is disclosed with state records, and
 has no agent-controlled text or secret fields. See [Hub reliability](HUB-RELIABILITY.md#immediate-machine-offline-notifications)
 for recovery hold, backoff, lifecycle handling and ambiguous-delivery limits.
+
+## Registry cleanup review
+
+`GET /v1/operator/stale-machines` requires exact `view` permission and an explicit
+service-token route allowlist. It returns up to 100 unused-registration candidates
+per page with a strict optional `cursor` and `next_cursor`; membership is live.
+See [the operator contract](OPERATOR-AGENT.md#registry-cleanup-review) for evidence
+fields and continuation rules. The read performs no retirement or deletion.

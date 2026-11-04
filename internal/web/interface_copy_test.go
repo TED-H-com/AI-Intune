@@ -17,6 +17,7 @@ import (
 )
 
 var forbiddenInterfaceCopy = []string{
+	"machine filter 或 cursor",
 	"registry ceiling 內",
 	"符合 filter",
 	"目前 filter 沒有",

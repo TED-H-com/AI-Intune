@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"html"
 	"net/http"
 	"net/url"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/operator"
+	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"github.com/teddashh/AI-Intune/internal/tailnet"
 )
@@ -115,6 +118,27 @@ func TestMachineIndexDistinguishesUnusedRegistrationFromEnrolledSilentDevice(t *
 		body := get(t, s, "/machines?machine_id="+url.QueryEscape(id))
 		if !strings.Contains(machineIndexRowsHTML(t, body), want) {
 			t.Fatalf("device %s missing enrollment state %q", id, want)
+		}
+	}
+}
+
+func TestMachineIndexEnrollmentCopyPreservesConflictAndUnknownJudgements(t *testing.T) {
+	s, _ := newServer(t)
+	conflict := state.IdentityConflict
+	for _, tc := range []struct {
+		state *state.State
+		want  string
+	}{{&conflict, "IdentityConflict"}, {nil, "無法取得"}} {
+		var body bytes.Buffer
+		view := &machineIndexPageView{Result: operator.MachineListResult{Items: []operator.MachineSummary{{
+			MachineID: "no-heartbeat", DisplayName: "No heartbeat", State: tc.state,
+		}}}}
+		if err := s.tmpl.ExecuteTemplate(&body, "machines-index.html", page{MachineList: view}); err != nil {
+			t.Fatal(err)
+		}
+		rows := machineIndexRowsHTML(t, body.String())
+		if !strings.Contains(rows, tc.want) || strings.Contains(rows, "待註冊") || strings.Contains(rows, "尚未回報") {
+			t.Fatalf("enrollment copy obscured judgement %q: %s", tc.want, rows)
 		}
 	}
 }
@@ -314,7 +338,7 @@ func TestMachineIndexRejectsUnknownAmbiguousAndNonCanonicalQuery(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			response := doGet(t, s, path)
 			if response.Code != http.StatusBadRequest ||
-				!strings.Contains(response.Body.String(), "machine filter 或 cursor 不合法") {
+				!strings.Contains(response.Body.String(), "裝置查詢無效，請重新選擇篩選條件") {
 				t.Fatalf("GET %s = %d: %s", path, response.Code, response.Body.String())
 			}
 		})

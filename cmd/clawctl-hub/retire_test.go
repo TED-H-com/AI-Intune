@@ -64,12 +64,8 @@ func TestRetireLeavesDenominatorKeepsHistoryAndKillsTheToken(t *testing.T) {
 		t.Fatalf("retire: %v", err)
 	}
 
-	// --- 一：離開分母 —— 但**不是**離開畫面。
-	//
-	// ⚠ 這兩件事原本在這裡是同一條斷言（`!Contains(body, "leaver")`），
-	// 而那條斷言強制執行的正好是這個產品要修的那個 bug。見下面那支測試
-	// 的註解。所以現在分開：不在機隊表格裡（離開分母），
-	// 但在已退役那一段裡（沒有離開畫面）。
+	// Retirement leaves the managed denominator. The dashboard links to the
+	// canonical retired roster, which keeps each device and its detail page reachable.
 	body := getPage(t, mux, "/")
 	if !strings.Contains(body, "名冊上 1 台") {
 		t.Errorf("退役後分母沒有變成 1：\n%s", firstLines(body, 6))
@@ -77,8 +73,12 @@ func TestRetireLeavesDenominatorKeepsHistoryAndKillsTheToken(t *testing.T) {
 	if strings.Contains(fleetTable(t, body), "leaver") {
 		t.Error("退役的機器還在機隊表格上 —— 那它就沒有離開分母")
 	}
-	if !strings.Contains(body, "leaver") {
-		t.Error("退役的機器從畫面上整個消失了 —— 離開分母不等於離開畫面")
+	if !strings.Contains(body, `href="/machines?lifecycle=retired#machines"`) {
+		t.Error("dashboard has no entry to retired history")
+	}
+	retired := getPage(t, mux, "/machines?lifecycle=retired")
+	if !strings.Contains(retired, "leaver") || !strings.Contains(retired, `href="/machines/`+gone.id+`"`) {
+		t.Error("retired roster lost the retained device or detail link")
 	}
 	if !strings.Contains(fleetTable(t, body), "keeper") {
 		t.Error("退役一台把另一台也弄不見了")
@@ -109,24 +109,8 @@ func TestRetireLeavesDenominatorKeepsHistoryAndKillsTheToken(t *testing.T) {
 	postObservation(t, mux, keep.token, http.StatusNoContent)
 }
 
-// TestRetiredMachineLeavesTheDenominatorWithoutLeavingTheScreen
-//
-// ⚠ 這個測試存在的理由：分母的規則在四個地方各寫了一次 ——
-// Overview 在 Go 裡、ticket 週報在 SQL 裡、死人之鐘又是另一句 SQL、
-// tailnet 對照是第四個。四個各自會忘記的地方。
-//
-// ⚠⚠ 這個測試原本的名字是 `...DoesNotComeBackThroughAnyPage`，
-// 而它斷言的是 `!strings.Contains(body, "leaver")` ——
-// **它強制執行了「機器從畫面上消失」，而那正好是這個產品存在要修的那個 bug。**
-//
-// 它綠了好幾天。實機退役 sampleagent1 兩秒才看到真相：機隊表格上沒有它，
-// 而唯一還提到它的一列在「名冊之外」那一段，寫著「不在名冊裡」、綠燈
-// online、附一句「不打算納管就跑 ignore-peer」。三句話全錯。
-// 同時「取消退役」那個按鈕變成一扇沒有門的房間 —— retire 在 UI 上
-// 不可逆了，而「可以反悔」是那個寫入路徑自己立的規則。
-//
-// **離開分母**跟**離開畫面**是兩件事。測試只寫了前者的名字，
-// 卻斷言了後者的行為 —— 所以現在兩件都斷言，而且分開斷言。
+// Retired history stays reachable through the canonical roster. Retired devices
+// remain outside reporting denominators and retain their Tailnet discrepancy evidence.
 func TestRetiredMachineLeavesTheDenominatorWithoutLeavingTheScreen(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"))
 	if err != nil {
@@ -176,21 +160,18 @@ func TestRetiredMachineLeavesTheDenominatorWithoutLeavingTheScreen(t *testing.T)
 		}
 	}
 
-	// (2) 不離開畫面：首頁上要找得到它，而且要標明它退役了。
+	// (2) The dashboard links to the canonical retired roster, which retains
+	// the device and a reachable detail/restore path.
 	home := getPage(t, mux, "/")
 	if strings.Contains(fleetTable(t, home), "leaver") {
 		t.Error("退役的機器還在機隊表格上 —— 它應該在「已退役」那一段")
 	}
-	if !strings.Contains(home, "leaver") {
-		t.Error("退役的機器從首頁上整個消失了 —— 那是這個產品存在要修的那個 bug")
+	if !strings.Contains(home, `href="/machines?lifecycle=retired#machines"`) || !strings.Contains(home, "已退役名冊（1 台）") {
+		t.Error("dashboard lost the retired-roster entry or count")
 	}
-	if !strings.Contains(home, "已退役") {
-		t.Error("首頁上沒有「已退役」這一段 —— 那台機器出現在畫面上卻沒有標籤")
-	}
-	// ⚠ 這一條是真正的重點：路由存在不等於人到得了。
-	// 「取消退役」在單機頁上，而單機頁只從連結點得進去。
-	if !strings.Contains(home, `href="/machines/`+gone.id+`"`) {
-		t.Error("首頁上沒有連到那台退役機器的連結 —— 取消退役變成一扇沒有門的房間")
+	retired := getPage(t, mux, "/machines?lifecycle=retired")
+	if !strings.Contains(retired, "leaver") || !strings.Contains(retired, "已退役") || !strings.Contains(retired, `href="/machines/`+gone.id+`"`) {
+		t.Error("retired roster lost the device, lifecycle label, or detail/restore link")
 	}
 	// (3) 它不准被講成「不在名冊裡」。它在名冊裡，它是退役的。
 	//
@@ -210,8 +191,13 @@ func TestRetiredMachineLeavesTheDenominatorWithoutLeavingTheScreen(t *testing.T)
 		}
 	}
 	// (4) 矛盾要攤出來：退役了，但 tailnet 說它還活著。
-	if !strings.Contains(home, "兩邊講的不一樣") {
+	if !strings.Contains(home, "1 台已退役裝置仍在 Tailnet 上線") || !strings.Contains(home, `href="/machines/enrollment"`) {
 		t.Error("退役的機器在 tailnet 上還 online，畫面上卻沒有把這個矛盾講出來")
+	}
+
+	enrollment := getPage(t, mux, "/machines/enrollment")
+	if !strings.Contains(enrollment, "已退役但 Tailnet 仍在線") || !strings.Contains(enrollment, `href="/machines/`+gone.id+`"`) {
+		t.Error("enrollment evidence lost the retired-but-online device and detail link")
 	}
 
 	// 早報也是一個分母的出口。⚠ 它不是網頁，所以上面那個迴圈掃不到它。

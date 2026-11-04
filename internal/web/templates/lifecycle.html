@@ -2,12 +2,12 @@
 <div class="page-heading"><div>
   <h1>名冊整理</h1>
   <p>檢視未完成註冊、從未回報且沒有有效註冊票券或待核准申請的名冊列。</p>
-  <p><a href="/machines?lifecycle=active#machines">管理中名冊</a> · <a href="/machines?lifecycle=retired#machines">已退役名冊</a></p>
+  <p class="roster-links"><a href="/machines?lifecycle=active#machines">管理中名冊</a> · <a href="/machines?lifecycle=retired#machines">已退役名冊</a></p>
 </div></div>
 
 <p>同名回報紀錄供核對身分。請確認機器 ID 與使用狀態。</p>
 {{if .Lifecycle.Truncated}}<p role="status">本頁顯示 {{.Lifecycle.Limit}} 筆候選，尚有其他候選。請開啟下一頁繼續檢視。</p>{{end}}
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel roster-table" role="region" aria-label="待整理名冊" tabindex="0">
 <table style="min-width:900px">
 <thead><tr><th>裝置</th><th>建立時間</th><th>整理依據</th><th>同名回報紀錄</th>{{if .Access.CanAdmin}}<th>動作</th>{{end}}</tr></thead>
 <tbody>
@@ -27,5 +27,5 @@
 </tbody>
 </table>
 </div>
-<nav aria-label="名冊整理分頁"><a href="/machines/lifecycle">第一頁</a>{{with .Lifecycle.NextHref}} · <a href="{{.}}" rel="next">下一頁</a>{{end}}</nav>
+<nav class="roster-pagination" aria-label="名冊整理分頁"><a href="/machines/lifecycle">第一頁</a>{{with .Lifecycle.NextHref}} · <a href="{{.}}" rel="next">下一頁</a>{{end}}</nav>
 {{template "foot" .}}{{end}}
