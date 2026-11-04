@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,7 +43,7 @@ func TestOperatorStaleMachinesReadContract(t *testing.T) {
 	if denied.Code != 403 || strings.Contains(denied.Body.String(), `"machine_id"`) {
 		t.Fatalf("unauthorized %d %s", denied.Code, denied.Body.String())
 	}
-	for _, suffix := range []string{"?", "?limit=1", "?limit=1&limit=2", "?%zz"} {
+	for _, suffix := range []string{"?", "?limit=1", "?limit=1&limit=2", "?%zz", "?cursor=", "?cursor=bad", "?cursor=bad&cursor=bad", "?cursor=" + strings.Repeat("a", 7000)} {
 		if got := request(route+suffix, true); got.Code != 400 {
 			t.Fatalf("invalid query %q: %d", suffix, got.Code)
 		}
@@ -121,5 +122,45 @@ func TestOperatorStaleMachinesServiceTokenAllowlist(t *testing.T) {
 		} else if rec.Code != 401 || strings.Contains(rec.Body.String(), `"items"`) {
 			t.Fatalf("route allowlist bypass %d", rec.Code)
 		}
+	}
+}
+
+func TestOperatorStaleMachinesPagination(t *testing.T) {
+	f := observedOperatorFixture(t)
+	stamp := time.Now().UTC().Add(-25 * time.Hour).Format(time.RFC3339)
+	for i := 0; i < 102; i++ {
+		id := fmt.Sprintf("api-page-%03d", i)
+		if _, err := f.store.DB().Exec(`INSERT INTO machine_registry(machine_id,display_name,created_at) VALUES(?,?,?)`, id, id, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cursor := ""
+	count := 0
+	for {
+		path := "/v1/operator/stale-machines"
+		if cursor != "" {
+			path += "?cursor=" + cursor
+		}
+		req := httptest.NewRequest("GET", path, nil)
+		req = operatorauth.WithPrincipal(req, operatorauth.Principal{GrantedCapabilities: operatorauth.CapabilityNames{View: "view"}})
+		rec := httptest.NewRecorder()
+		f.mux.ServeHTTP(rec, req)
+		var page operator.StaleMachineReview
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &page) != nil {
+			t.Fatalf("page %d %s", rec.Code, rec.Body.String())
+		}
+		for _, item := range page.Items {
+			if item.MachineID != fmt.Sprintf("api-page-%03d", count) {
+				t.Fatalf("skip/duplicate: %s", item.MachineID)
+			}
+			count++
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if count != 102 {
+		t.Fatalf("read %d candidates", count)
 	}
 }

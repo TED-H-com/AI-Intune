@@ -89,11 +89,12 @@ int64.
 
 MCP `stale_machines_list` and CLI `call stale_machines_list` use
 `operatorclient.Client.StaleMachineCandidates` and authenticated
-`GET /v1/operator/stale-machines` (`view`; no query parameters or tool arguments).
+`GET /v1/operator/stale-machines` (`view`; optional `cursor` query parameter / tool argument).
 Service tokens must allow this route explicitly. Machine bearer credentials do
 not authorize it. The response is JSON with `Cache-Control: no-store`, schema
-version 1, `evaluated_at`, `limit: 100`, `truncated`, and `items` (an empty array
-when no candidates qualify). No mutation or enrollment credential is returned.
+version 1, `evaluated_at`, `limit: 100`, `truncated`, `next_cursor`,
+`consistency: "live_candidate_membership"`, and `items` (an empty array when no
+candidates qualify). No mutation or enrollment credential is returned.
 
 The operator service uses `store.StaleMachineCandidates` unchanged. Candidates
 are active registry entries with no enrollment and no check-in ever, at least
@@ -112,15 +113,34 @@ machines. Related IDs are sorted and capped at 100 per item, with
 Names and branch labels are evidence for human review, not proof of shared
 physical identity.
 
-This is an explicitly bounded live result, ordered by oldest creation time then
-machine ID. `truncated: true` means the response is not the whole candidate list.
-There is no cursor or total count. Review the oldest entries, then read again;
-use the active roster for the complete registry. Limits apply after read-scope
-filtering. The store still evaluates its existing full snapshot before the
-response is bounded.
+Pages contain at most 100 candidates, ordered by immutable `created_at` then
+`machine_id`, both ascending. Pass the opaque `next_cursor` unchanged as the
+next request's `cursor`; `next_cursor: null` and `truncated: false` mark the end.
+Inspecting later pages requires no retirement or other write. The cursor is
+canonical unpadded base64url JSON (`v: 1`, UTC `created_at`, `machine_id`), at most
+2048 bytes. Only the optional cursor is accepted; unknown/duplicate query names,
+empty supplied cursors, malformed/oversized cursors and empty query markers are
+rejected. Client calls use `StaleMachineCandidates(ctx, cursor)`, with `""` for
+the first page. For MCP/CLI continuation:
+
+```bash
+./build/clawctl-operator --hub-url "$CLAWCTL_HUB_URL" call stale_machines_list '{"cursor":"<next_cursor>"}'
+```
+
+Membership and permissions are live on each read, not frozen across pages.
+Retiring any previous-page item, including the cursor anchor, does not move the
+continuation position. Later eligible items remain reachable without duplicates
+or offset skips. Entries newly eligible at or before the cursor require a fresh
+first-page traversal; entries that cease qualifying disappear. Limits and the
+next-page decision apply after read-scope filtering. The cursor contains only
+the last authorized item, not an unseen lookahead identity. The client checks
+page order, advancement beyond the request cursor, and that `next_cursor` matches
+the last item of a full page. The store still evaluates its existing full
+snapshot on each read; this change bounds responses, not database query work.
 
 Open **名冊整理** at `/machines/lifecycle` for the same evidence, age, related
-machine links, and active/retired roster links. Administrators can follow
+machine links, active/retired roster links, and **第一頁** / **下一頁** navigation.
+The page accepts only the same optional `cursor` query. Administrators can follow
 **檢視退役** to the machine detail action area. Retirement still requires the
 existing lifecycle preview, revision, digest, display-name confirmation, reason,
 and idempotent audited apply. Re-read candidates after each reviewed retirement.

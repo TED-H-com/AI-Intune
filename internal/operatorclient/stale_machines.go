@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -14,8 +15,15 @@ import (
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
-func (c *Client) StaleMachineCandidates(ctx context.Context) (operator.StaleMachineReview, error) {
-	req, err := c.newOperatorRequest(ctx, http.MethodGet, "/v1/operator/stale-machines", nil)
+func (c *Client) StaleMachineCandidates(ctx context.Context, cursor string) (operator.StaleMachineReview, error) {
+	path := "/v1/operator/stale-machines"
+	if cursor != "" {
+		if _, err := operator.DecodeStaleMachineCursor(cursor); err != nil {
+			return operator.StaleMachineReview{}, err
+		}
+		path += "?cursor=" + url.QueryEscape(cursor)
+	}
+	req, err := c.newOperatorRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return operator.StaleMachineReview{}, err
 	}
@@ -33,19 +41,33 @@ func (c *Client) StaleMachineCandidates(ctx context.Context) (operator.StaleMach
 	if err := decodeStrictJSONDocument(res.body, "stale machines", &out); err != nil {
 		return operator.StaleMachineReview{}, err
 	}
-	if err := validateStaleMachineReview(out); err != nil {
+	if err := validateStaleMachineReview(out, cursor); err != nil {
 		return operator.StaleMachineReview{}, err
 	}
 	return out, nil
 }
 
-func validateStaleMachineReview(out operator.StaleMachineReview) error {
+func validateStaleMachineReview(out operator.StaleMachineReview, cursor string) error {
 	bad := errors.New("operator client: invalid stale machine evidence")
-	if out.SchemaVersion != 1 || out.Limit != operator.StaleMachineReviewLimit || out.Items == nil || len(out.Items) > out.Limit || (out.Truncated && len(out.Items) != out.Limit) {
+	if out.Consistency != operator.StaleMachineReviewConsistency || out.Truncated != (out.NextCursor != nil) || out.SchemaVersion != 1 || out.Limit != operator.StaleMachineReviewLimit || out.Items == nil || len(out.Items) > out.Limit || (out.Truncated && len(out.Items) != out.Limit) {
 		return bad
 	}
 	if err := validateMachineEvaluationTime(out.EvaluatedAt); err != nil {
 		return err
+	}
+	if cursor != "" && len(out.Items) > 0 {
+		after, err := operator.DecodeStaleMachineCursor(cursor)
+		first := out.Items[0]
+		if err != nil || first.CreatedAt.Before(after.CreatedAt) || (first.CreatedAt.Equal(after.CreatedAt) && first.MachineID <= after.MachineID) {
+			return bad
+		}
+	}
+	if out.NextCursor != nil {
+		next, err := operator.DecodeStaleMachineCursor(*out.NextCursor)
+		last := out.Items[len(out.Items)-1]
+		if err != nil || !next.CreatedAt.Equal(last.CreatedAt) || next.MachineID != last.MachineID {
+			return bad
+		}
 	}
 	seen := map[string]bool{}
 	for i, item := range out.Items {

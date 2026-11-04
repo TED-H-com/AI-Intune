@@ -7,20 +7,25 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/teddashh/AI-Intune/internal/operator"
 )
 
-type staleReviewHub struct{ fakeHub }
+type staleReviewHub struct {
+	fakeHub
+	cursor string
+}
 
-func (h *staleReviewHub) StaleMachineCandidates(context.Context) (operator.StaleMachineReview, error) {
+func (h *staleReviewHub) StaleMachineCandidates(_ context.Context, cursor string) (operator.StaleMachineReview, error) {
+	h.cursor = cursor
 	h.call("StaleMachineCandidates")
 	return operator.StaleMachineReview{SchemaVersion: 1, Limit: 100, Items: []operator.StaleMachineReviewItem{}}, h.err
 }
 func TestStaleMachinesToolReadContract(t *testing.T) {
 	h := &staleReviewHub{}
 	s := &Service{Hub: h}
-	for _, raw := range []string{`{"limit":1}`, `{"retire":true}`, `null`, `[]`, `{} {}`} {
+	for _, raw := range []string{`{"limit":1}`, `{"retire":true}`, `null`, `[]`, `{} {}`, `{"cursor":null}`, `{"cursor":""}`, `{"Cursor":"bad"}`, `{"cursor":"bad"}`} {
 		if _, err := s.Call(context.Background(), "stale_machines_list", json.RawMessage(raw)); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}
@@ -30,6 +35,19 @@ func TestStaleMachinesToolReadContract(t *testing.T) {
 	}
 	if _, err := s.Call(context.Background(), "stale_machines_list", json.RawMessage(`{}`)); err != nil || len(h.calls) != 1 {
 		t.Fatalf("read %v", err)
+	}
+	cursor, err := operator.EncodeStaleMachineCursor(operator.MachineReadPosition{CreatedAt: time.Now().UTC().Add(-24 * time.Hour), MachineID: "anchor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]string{"cursor": cursor})
+	if _, err := s.Call(context.Background(), "stale_machines_list", args); err != nil || h.cursor != cursor {
+		t.Fatalf("cursor not forwarded: %s %v", h.cursor, err)
+	}
+	duplicate := `{"cursor":"` + cursor + `","cursor":"` + cursor + `"}`
+	before := len(h.calls)
+	if _, err := s.Call(context.Background(), "stale_machines_list", json.RawMessage(duplicate)); err == nil || len(h.calls) != before {
+		t.Fatal("duplicate cursor reached Hub")
 	}
 	h.err = errors.New("forbidden")
 	if _, err := s.Call(context.Background(), "stale_machines_list", json.RawMessage(`{}`)); err == nil {

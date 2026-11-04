@@ -6,7 +6,7 @@
 </div></div>
 
 <p>同名回報紀錄供核對身分。請確認機器 ID 與使用狀態。</p>
-{{if .Lifecycle.Truncated}}<p role="status">目前顯示最早建立的 {{.Lifecycle.Limit}} 筆候選，尚有其他候選。檢視處理後請重新整理。</p>{{end}}
+{{if .Lifecycle.Truncated}}<p role="status">本頁顯示 {{.Lifecycle.Limit}} 筆候選，尚有其他候選。請開啟下一頁繼續檢視。</p>{{end}}
 <div class="panel" style="padding:4px 6px;overflow-x:auto">
 <table style="min-width:900px">
 <thead><tr><th>裝置</th><th>建立時間</th><th>整理依據</th><th>同名回報紀錄</th>{{if .Access.CanAdmin}}<th>動作</th>{{end}}</tr></thead>
@@ -22,9 +22,10 @@
     {{if $.Access.CanAdmin}}<td><a href="/machines/{{.MachineID}}?section=actions#action-lifecycle">檢視退役</a></td>{{end}}
   </tr>
 {{else}}
-  <tr><td colspan="{{if .Access.CanAdmin}}5{{else}}4{{end}}" class="empty">目前沒有待整理的名冊列。</td></tr>
+  <tr><td colspan="{{if .Access.CanAdmin}}5{{else}}4{{end}}" class="empty">{{if .Lifecycle.Continued}}此頁沒有待整理的名冊列。{{else}}目前沒有待整理的名冊列。{{end}}</td></tr>
 {{end}}
 </tbody>
 </table>
 </div>
+<nav aria-label="名冊整理分頁"><a href="/machines/lifecycle">第一頁</a>{{with .Lifecycle.NextHref}} · <a href="{{.}}" rel="next">下一頁</a>{{end}}</nav>
 {{template "foot" .}}{{end}}

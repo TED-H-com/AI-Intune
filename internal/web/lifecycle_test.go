@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -288,5 +289,32 @@ func TestLifecycleWebRestoreMakesPendingEnrollmentTicketRedeemableAgain(t *testi
 	if gotID, agentToken, err := st.RedeemEnrollToken(ticket, request, time.Now().UTC()); err != nil ||
 		gotID != machineID || agentToken == "" {
 		t.Fatalf("restored pending ticket redemption id=%q token=%t err=%v", gotID, agentToken != "", err)
+	}
+}
+
+func TestLifecycleReviewPagination(t *testing.T) {
+	s, st := newServer(t)
+	stamp := time.Now().UTC().Add(-25 * time.Hour).Format(time.RFC3339)
+	for i := 0; i < 102; i++ {
+		id := fmt.Sprintf("web-page-%03d", i)
+		if _, err := st.DB().Exec(`INSERT INTO machine_registry(machine_id,display_name,created_at) VALUES(?,?,?)`, id, id, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := get(t, s, "/machines/lifecycle")
+	match := regexp.MustCompile(`href="(/machines/lifecycle\?cursor=[^"]+)" rel="next"`).FindStringSubmatch(first)
+	if len(match) != 2 || !strings.Contains(first, `href="/machines/lifecycle">第一頁`) || !strings.Contains(first, "web-page-099") || strings.Contains(first, "web-page-100") {
+		t.Fatal("first page/navigation incorrect")
+	}
+	viewer := diskWebRequest(t, s, "GET", match[1], nil, diskWebPrincipal(false, false, ""), false)
+	body := viewer.Body.String()
+	if viewer.Code != 200 || !strings.Contains(body, "web-page-100") || !strings.Contains(body, "web-page-101") || strings.Contains(body, "web-page-099") || strings.Contains(body, `rel="next"`) || strings.Contains(body, "檢視退役") {
+		t.Fatalf("next page: %d %s", viewer.Code, body)
+	}
+	for _, suffix := range []string{"?", "?cursor=", "?cursor=bad", "?cursor=x&cursor=y", "?limit=1", "?cursor=%zz", "?cursor=" + strings.Repeat("a", 7000)} {
+		rec := diskWebRequest(t, s, "GET", "/machines/lifecycle"+suffix, nil, diskWebPrincipal(false, false, ""), false)
+		if rec.Code != 400 || strings.Contains(rec.Body.String(), "web-page-") {
+			t.Fatalf("query %q status %d", suffix, rec.Code)
+		}
 	}
 }
