@@ -452,13 +452,14 @@ type page struct {
 	ComplianceAssignmentReview *complianceAssignmentReviewPage
 
 	// Dashboard
-	Overview     store.Overview
-	Dashboard    dashboardStats
-	MachineTable dashboardMachineTable
-	MachineIndex bool
-	MachineList  *machineIndexPageView
-	Headline     []string
-	HubInFleet   string
+	Overview       store.Overview
+	Dashboard      dashboardStats
+	MachineTable   dashboardMachineTable
+	MachineIndex   bool
+	MachineSection string
+	MachineList    *machineIndexPageView
+	Headline       []string
+	HubInFleet     string
 	// HubEvents：Hub 這 24 小時對自己的日誌（重啟、迴圈卡住、時鐘跳動）。
 	// ⚠ 空的意思是「沒記到」，不是「沒事」。網路斷線它自己看不到。
 	HubEvents []store.HubEvent
@@ -1067,6 +1068,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		Dashboard:           buildDashboardStats(ov, deploymentViews, deploymentsKnown),
 		MachineTable:        buildDashboardMachineTable(ov, r.URL.Query().Get("machines")),
 		MachineIndex:        machineIndex,
+		MachineSection:      r.URL.Query().Get("section"),
 		MachineList:         buildMachineIndexPage(machineRequest, machines),
 		Headline:            headline(ov),
 		HubInFleet:          hubInFleet(ov, s.hubHost),

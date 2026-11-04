@@ -17,6 +17,9 @@ import (
 )
 
 var forbiddenInterfaceCopy = []string{
+	"registry ceiling 內",
+	"符合 filter",
+	"目前 filter 沒有",
 	"temporary guard",
 	"temporary explanation",
 	"暫時設定",

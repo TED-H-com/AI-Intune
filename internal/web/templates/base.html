@@ -204,6 +204,24 @@ ul.findings .who{color:var(--dim);flex:none;min-width:96px}
   padding:12px 15px;border-radius:0 3px 3px 0;margin:14px 0;font-size:14px;
 }
 .caveat b{color:#7a3e00}
+/* Device lists share the existing compact table and form tokens. */
+.roster-filters{padding:12px 14px;margin-bottom:14px}
+.roster-filter-row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+.roster-advanced{margin-top:12px}
+.roster-advanced summary{cursor:pointer}
+.roster-advanced[open] summary{margin-bottom:10px}
+.roster-advanced fieldset{border:0;padding:8px 0 0;margin:0}
+.roster-advanced input[type=number]{width:80px}
+.roster-table{padding:4px 6px;overflow-x:auto}
+.roster-table td{vertical-align:top}
+.roster-table .mono{overflow-wrap:anywhere}
+.roster-pagination{padding:8px 4px;display:flex;gap:12px;align-items:center}
+@media(max-width:760px){
+  .roster-filters button,.roster-filters input:not([type=checkbox]),.roster-filters select,.roster-advanced summary{min-height:44px}
+  .roster-filter-row label:has(input[type=checkbox]){display:flex;align-items:center;min-height:44px}
+  .roster-pagination a{display:inline-flex;align-items:center;min-height:44px}
+}
+
 .strip{display:flex;gap:2px;align-items:flex-end;height:26px}
 .strip i{display:block;width:6px;border-radius:1px}
 .swatch{display:inline-block;width:8px;height:8px;border-radius:1px;margin:0 4px 0 8px}

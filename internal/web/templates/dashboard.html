@@ -16,6 +16,11 @@
   </div>
 </div>
 
+{{if and .MachineIndex (or (eq .MachineSection "") (eq .MachineSection "machines"))}}
+{{template "machines-index.html" .}}
+{{end}}
+
+{{if or (not .MachineIndex) (eq .MachineSection "fleet-kpis")}}
 <section id="fleet-kpis" class="section-anchor" tabindex="-1" aria-labelledby="fleet-kpis-title">
   <h2 class="sr-only" id="fleet-kpis-title">機隊摘要</h2>
   <div class="metric-grid">
@@ -40,7 +45,7 @@
         {{if eq .Dashboard.Attention 0}}沒有機器需要查看{{else}}分母內不是「在線」的機器{{end}}</span>
       </div>
     </a>
-    <a class="metric-card" id="kpi-findings" href="#findings">
+    <a class="metric-card" id="kpi-findings" href="{{if .MachineIndex}}/machines?section=findings{{end}}#findings">
       <div class="metric-label">目前發現</div>
       <div class="metric-value">{{.Dashboard.Findings}}</div>
       <div class="metric-note">
@@ -53,7 +58,7 @@
 
 <div class="dashboard-grid">
   <section class="panel" aria-labelledby="fleet-reading-title">
-    <div class="panel-title"><h2 id="fleet-reading-title">狀態判讀</h2><a href="#machines">檢視機器名冊 →</a></div>
+    <div class="panel-title"><h2 id="fleet-reading-title">狀態判讀</h2><a href="/machines#machines">檢視機器名冊 →</a></div>
     <div class="headline">
       {{range .Headline}}<p>{{.}}</p>{{end}}
     </div>
@@ -93,9 +98,9 @@
   {{end}}
 </details>
 
-{{if .MachineIndex}}
-{{template "machines-index.html" .}}
-{{else}}
+{{end}}
+
+{{if not .MachineIndex}}
 <div class="section-title">
   <h2 id="machines" class="section-anchor" tabindex="-1">名冊</h2>
   {{if .MachineTable.Filter}}
@@ -151,48 +156,13 @@
 </div>
 </div>
 
-<h2 id="retired" class="section-anchor" tabindex="-1">已退役</h2>
-{{if .Overview.Retired}}
 <div class="panel">
-  <p style="margin-top:0">
-    這 <b>{{len .Overview.Retired}}</b> 台不算分母、不亮燈、不進早報。
-    <span class="dim small">但它們留在這裡。</span>
-  </p>
-  <table>
-    <tr><th style="width:200px">機器</th><th style="width:150px">退役時間</th><th>當初的名字與位址</th></tr>
-    {{range .Overview.Retired}}
-    <tr>
-      <td class="name"><a href="/machines/{{.MachineID}}">{{.DisplayName}}</a></td>
-      <td class="dim small">{{if .RetiredAt}}{{.RetiredAt.Local.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
-      <td class="dim small">
-        {{if .Hostname}}{{.Hostname}}{{else}}—{{end}}
-        {{if .TailscaleIP}} · <span class="mono">{{.TailscaleIP}}</span>{{end}}
-      </td>
-    </tr>
-    {{end}}
-  </table>
-  {{if .Tailnet.RetiredButOnline}}
-  <div class="caveat" style="margin-top:12px">
-    <b>兩邊講的不一樣：</b>這些機器已退役，但 Tailnet 仍顯示 online。
-    <ul style="margin-bottom:0">
-      {{range .Tailnet.RetiredButOnline}}
-      <li>
-        <a href="/machines/{{.MachineID}}">{{.DisplayName}}</a>
-        {{if .Peer.Hostname}}（{{.Peer.Hostname}}）{{end}}
-        {{if .Peer.IP}} · <span class="mono">{{.Peer.IP}}</span>{{end}}
-        <span class="dim small">；不在管理分母</span>
-      </li>
-      {{end}}
-    </ul>
-  </div>
-  {{end}}
-  <p class="dim small">點選機器可預覽恢復管理。</p>
+  <p style="margin:0"><a href="/machines?lifecycle=retired#machines">已退役名冊（{{len .Overview.Retired}} 台）</a> · <a href="/machines/lifecycle">名冊整理</a></p>
+  {{if .Tailnet.RetiredButOnline}}<p class="small">{{len .Tailnet.RetiredButOnline}} 台已退役裝置仍在 Tailnet 上線。<a href="/machines/enrollment">檢視註冊與網路狀態</a></p>{{end}}
 </div>
-{{else}}
-<div class="panel"><p class="empty">沒有已退役的機器。</p></div>
-{{end}}
 {{end}}
 
+{{if or (not .MachineIndex) (eq .MachineSection "findings")}}
 <h2 id="findings" class="section-anchor" tabindex="-1">目前所有的發現</h2>
 <div class="panel">
   <ul class="findings">
@@ -315,5 +285,7 @@
   上一次還原演練：{{.RestoreDrill.At.Local.Format "2006-01-02"}}（{{.RestoreDrill.Days}} 天前；每 90 天一次）。
 {{end}}
 </p>
+
+{{end}}
 
 {{template "foot" .}}{{end}}

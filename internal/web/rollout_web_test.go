@@ -701,7 +701,7 @@ func TestMachinePagesScrubPersistedBoundaryAndHubEventText(t *testing.T) {
 		t.Fatalf("boundary pause changed=%v err=%v", changed, err)
 	}
 
-	for _, path := range []string{"/", "/machines"} {
+	for _, path := range []string{"/", "/machines?section=fleet-kpis"} {
 		page := get(t, s, path)
 		// The reason appears once in the deployment headline and once in the
 		// persisted Hub event. Both paths must scrub presentation controls.
