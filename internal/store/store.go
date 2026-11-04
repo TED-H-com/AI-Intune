@@ -1959,8 +1959,8 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 	}
 
 	type observationRow struct {
-		id      string
-		machine string
+		id       string
+		machine  string
 		measured string
 		recv     string
 		kind     string
