@@ -104,6 +104,21 @@ func TestMachineIndexAdvancedFiltersRemainVisibleWhenApplied(t *testing.T) {
 	}
 }
 
+func TestMachineIndexDistinguishesUnusedRegistrationFromEnrolledSilentDevice(t *testing.T) {
+	s, st := newServer(t)
+	pending, _, err := st.CreateEnrollTokenFor("pending-device", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	silent := enroll(t, st, "silent-device", time.Now().UTC())
+	for id, want := range map[string]string{pending: "待註冊", silent: "尚未回報"} {
+		body := get(t, s, "/machines?machine_id="+url.QueryEscape(id))
+		if !strings.Contains(machineIndexRowsHTML(t, body), want) {
+			t.Fatalf("device %s missing enrollment state %q", id, want)
+		}
+	}
+}
+
 func machineIndexRowsHTML(t *testing.T, body string) string {
 	t.Helper()
 	section := strings.Index(body, `<h2 id="machines"`)
