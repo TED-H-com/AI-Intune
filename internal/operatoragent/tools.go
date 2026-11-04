@@ -70,6 +70,8 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return nil, &CallError{Code: "invalid_arguments", Message: "context is required"}
 	}
 	switch name {
+	case "stale_machines_list":
+		return s.staleMachinesList(ctx, raw)
 	case "join_requests_list":
 		return s.joinRequestsList(ctx, raw)
 	case "certificate_list", "certificate_get":

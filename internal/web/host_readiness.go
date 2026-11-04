@@ -104,7 +104,7 @@ func (s *Server) hostReadiness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.group()
-	s.render(w, r, "readiness.html", page{Title: "Host readiness", Nav: "machines", Readiness: view})
+	s.render(w, r, "readiness.html", page{Title: "Host readiness", Nav: "readiness", Readiness: view})
 }
 
 type readinessHost struct{ ID, Name string }

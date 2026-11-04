@@ -12,6 +12,8 @@ For tool removal, follow [skills/fleet-tool-removal/SKILL.md](skills/fleet-tool-
 
 Do not merge PRs unless the human asked. Do not print secrets.
 
+For Web layout and navigation, follow [DESIGN.md](DESIGN.md).
+
 ## Interface copy
 
 - Every Web, CLI, installer, and API message contains only the current state, available action, concrete impact, and exact next step.

@@ -1,21 +1,147 @@
 package web
 
 import (
+	"bytes"
 	"html"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/operator"
+	"github.com/teddashh/AI-Intune/internal/state"
 	"github.com/teddashh/AI-Intune/internal/store"
 	"github.com/teddashh/AI-Intune/internal/tailnet"
 )
 
 var machineIndexRowLinkRE = regexp.MustCompile(`<a href="/machines/([^"]+)">([^<]*)</a>`)
 var machineIndexNextLinkRE = regexp.MustCompile(`href="([^"]+)">下一頁`)
+
+func TestMachineIndexDefaultsToActiveWithoutMergingNames(t *testing.T) {
+	s, st := newServer(t)
+	first := onlineMachine(t, st, "shared-name")
+	second := onlineMachine(t, st, "second-registration")
+	retired := onlineMachine(t, st, "old-registration")
+	if _, err := st.DB().Exec(`UPDATE machine_registry SET display_name='shared-name' WHERE machine_id IN (?,?)`, second, retired); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RetireMachine(retired, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{first, second}},
+		{"display_name=shared-name", []string{first, second}},
+		{"lifecycle=any", []string{first, second, retired}},
+		{"lifecycle=retired", []string{retired}},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			path := "/machines?limit=1"
+			if tc.query != "" {
+				path += "&" + tc.query
+			}
+			var ids []string
+			for page := 0; path != ""; page++ {
+				if page > len(tc.want) {
+					t.Fatal("pagination did not terminate")
+				}
+				body := get(t, s, path)
+				ids = append(ids, machineIndexRowIDs(t, body)...)
+				path = machineIndexNextHref(body)
+				if path != "" {
+					u, err := url.Parse(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					path = u.RequestURI()
+				}
+			}
+			slices.Sort(ids)
+			slices.Sort(tc.want)
+			if !slices.Equal(ids, tc.want) {
+				t.Fatalf("roster IDs=%v want %v", ids, tc.want)
+			}
+		})
+	}
+}
+
+func TestMachineIndexTabsRenderOnlyTheirSelectedContent(t *testing.T) {
+	s, st := newServer(t)
+	onlineMachine(t, st, "tab-device")
+	for _, tc := range []struct {
+		path string
+		id   string
+	}{
+		{"/machines", "machines"},
+		{"/machines?section=machines", "machines"},
+		{"/machines?section=fleet-kpis", "fleet-kpis"},
+		{"/machines?section=findings", "findings"},
+	} {
+		body := get(t, s, tc.path)
+		for _, id := range []string{"machines", "fleet-kpis", "findings"} {
+			if got := strings.Contains(body, `id="`+id+`"`); got != (tc.id == id) {
+				t.Errorf("%s contains section %q = %v", tc.path, id, got)
+			}
+		}
+	}
+}
+
+func TestMachineIndexAdvancedFiltersRemainVisibleWhenApplied(t *testing.T) {
+	s, st := newServer(t)
+	onlineMachine(t, st, "filter-device")
+	for _, query := range []string{"state=Online", "reporting=true", "machine_id=unknown", "limit=1"} {
+		body := get(t, s, "/machines?"+query)
+		if !strings.Contains(body, `class="roster-advanced" open`) || !strings.Contains(body, `href="/machines#machines">清除</a>`) {
+			t.Fatalf("advanced filter is hidden for %s", query)
+		}
+	}
+	body := get(t, s, "/machines")
+	if strings.Contains(body, `class="roster-advanced" open`) || strings.Contains(body, `>清除</a>`) {
+		t.Fatal("default roster incorrectly shows applied filters")
+	}
+}
+
+func TestMachineIndexDistinguishesUnusedRegistrationFromEnrolledSilentDevice(t *testing.T) {
+	s, st := newServer(t)
+	pending, _, err := st.CreateEnrollTokenFor("pending-device", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	silent := enroll(t, st, "silent-device", time.Now().UTC())
+	for id, want := range map[string]string{pending: "待註冊", silent: "尚未回報"} {
+		body := get(t, s, "/machines?machine_id="+url.QueryEscape(id))
+		if !strings.Contains(machineIndexRowsHTML(t, body), want) {
+			t.Fatalf("device %s missing enrollment state %q", id, want)
+		}
+	}
+}
+
+func TestMachineIndexEnrollmentCopyPreservesConflictAndUnknownJudgements(t *testing.T) {
+	s, _ := newServer(t)
+	conflict := state.IdentityConflict
+	for _, tc := range []struct {
+		state *state.State
+		want  string
+	}{{&conflict, "IdentityConflict"}, {nil, "無法取得"}} {
+		var body bytes.Buffer
+		view := &machineIndexPageView{Result: operator.MachineListResult{Items: []operator.MachineSummary{{
+			MachineID: "no-heartbeat", DisplayName: "No heartbeat", State: tc.state,
+		}}}}
+		if err := s.tmpl.ExecuteTemplate(&body, "machines-index.html", page{MachineList: view}); err != nil {
+			t.Fatal(err)
+		}
+		rows := machineIndexRowsHTML(t, body.String())
+		if !strings.Contains(rows, tc.want) || strings.Contains(rows, "待註冊") || strings.Contains(rows, "尚未回報") {
+			t.Fatalf("enrollment copy obscured judgement %q: %s", tc.want, rows)
+		}
+	}
+}
 
 func machineIndexRowsHTML(t *testing.T, body string) string {
 	t.Helper()
@@ -114,7 +240,7 @@ func TestMachineIndexCanonicalFiltersReachTheSharedReadModel(t *testing.T) {
 					t.Errorf("GET %s leaked non-matching machine %s into the index", test.path, id)
 				}
 			}
-			if !strings.Contains(body, "符合 filter 1 / registry ceiling 內 4 台") {
+			if !strings.Contains(body, "符合條件 1 台 · 名冊共 4 台") {
 				t.Errorf("GET %s did not preserve full-fleet and matched totals", test.path)
 			}
 		})
@@ -144,7 +270,7 @@ func TestMachineIndexPagingPreservesFiltersAndCreationCeiling(t *testing.T) {
 
 	seen := map[string]bool{firstIDs[0]: true}
 	for page := 1; ; page++ {
-		if !strings.Contains(body, "符合 filter 3 / registry ceiling 內 3 台") {
+		if !strings.Contains(body, "符合條件 3 台 · 名冊共 3 台") {
 			t.Fatalf("page %d changed the ceiling traversal totals", page)
 		}
 		next := machineIndexNextHref(body)
@@ -212,7 +338,7 @@ func TestMachineIndexRejectsUnknownAmbiguousAndNonCanonicalQuery(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			response := doGet(t, s, path)
 			if response.Code != http.StatusBadRequest ||
-				!strings.Contains(response.Body.String(), "machine filter 或 cursor 不合法") {
+				!strings.Contains(response.Body.String(), "裝置查詢無效，請重新選擇篩選條件") {
 				t.Fatalf("GET %s = %d: %s", path, response.Code, response.Body.String())
 			}
 		})
@@ -254,7 +380,7 @@ func TestMachineIndexRendersSafeProjectionAndNoPrivateRegistryFields(t *testing.
 
 	body := get(t, s, "/machines?machine_id="+url.QueryEscape(id))
 	rows := machineIndexRowsHTML(t, body)
-	for _, want := range []string{id, `unsafe&lt;script&gt;�name`, "display_name_control_or_format_replaced"} {
+	for _, want := range []string{id, `unsafe&lt;script&gt;�name`, "名稱資料待確認"} {
 		if !strings.Contains(rows, want) {
 			t.Errorf("safe machine row is missing %q: %s", want, rows)
 		}
@@ -328,9 +454,12 @@ func TestMachineIndexAncillarySectionsUseTheSafeDisplayNameProjection(t *testing
 	if !strings.Contains(rows, neverID) || strings.Contains(rows, activeID) || strings.Contains(rows, credentialTargetID) {
 		t.Fatalf("fixture did not keep the ancillary machine off-page: %s", rows)
 	}
+	// Each device tab renders its own evidence; all projections must remain safe.
+	body += get(t, s, "/machines?section=fleet-kpis&machine_id="+url.QueryEscape(neverID)+"&limit=1")
+	body += get(t, s, "/machines?section=findings&machine_id="+url.QueryEscape(neverID)+"&limit=1")
 	for _, want := range []string{
 		`unsafe&lt;script&gt;��ancillary`,
-		`display_name_control_or_format_replaced`,
+		`名稱資料待確認`,
 		`id="double-agents"`,
 		`machine_checkins.observation_age_seconds`,
 		`>工具版本</h2>`,

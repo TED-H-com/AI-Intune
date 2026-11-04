@@ -92,14 +92,19 @@ func TestUIShowsVerifiedTailnetIdentityAndHidesUnauthorizedControls(t *testing.T
 		}
 	}
 
+	if _, err := st.DB().Exec(`INSERT INTO machine_registry(machine_id,display_name,created_at) VALUES('unused-access','Unused','2020-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
 	viewLifecycle := renderWithCapabilities(t, s, "/machines/lifecycle", operatorauth.CapabilityNames{View: names.View})
-	if strings.Contains(viewLifecycle, `action="/machines/`+id+`/lifecycle-preview"`) ||
-		strings.Contains(viewLifecycle, "capability") {
-		t.Fatal("view-only lifecycle submenu exposed unavailable control copy")
+	if strings.Contains(viewLifecycle, "檢視退役") || strings.Contains(viewLifecycle, "#action-lifecycle") || strings.Contains(viewLifecycle, "capability") {
+		t.Fatal("view-only registry review exposed unavailable controls")
+	}
+	if !strings.Contains(viewLifecycle, `href="/machines/unused-access"`) {
+		t.Fatal("viewer cannot inspect candidate")
 	}
 	adminLifecycle := renderWithCapabilities(t, s, "/machines/lifecycle", names)
-	if !strings.Contains(adminLifecycle, `action="/machines/`+id+`/lifecycle-preview"`) {
-		t.Fatal("fully granted lifecycle submenu is missing canonical preview control")
+	if !strings.Contains(adminLifecycle, `href="/machines/unused-access?section=actions#action-lifecycle"`) || strings.Contains(adminLifecycle, `action="/machines/unused-access/lifecycle-preview"`) {
+		t.Fatal("registry review must link to canonical machine actions")
 	}
 
 	s.SetTailnetStatus(tailnet.Status{

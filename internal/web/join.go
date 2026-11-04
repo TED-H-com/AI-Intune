@@ -208,7 +208,7 @@ func (s *Server) joinPage(w http.ResponseWriter, r *http.Request) {
 		view.Rows = append(view.Rows, joinRow{j, operator.JoinDisplayName(j.Hostname), int(time.Until(j.ExpiresAt).Minutes()) + 1})
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	s.render(w, r, "join.html", page{Title: "Waiting to join", Nav: "machines-enrollment", Join: view})
+	s.render(w, r, "join.html", page{Title: "Waiting to join", Nav: "machines-join", Join: view})
 }
 func (s *Server) joinList(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.operator.ListJoins()

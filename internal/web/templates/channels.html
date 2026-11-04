@@ -1,5 +1,5 @@
 {{define "channels.html"}}{{template "head" .}}
-<div class="page-heading"><div><h1>Channels</h1><p>Outbound notifications and bot-to-machine bindings. Bindings are metadata only.</p></div></div>
+<div class="page-heading"><div><h1>通知通道</h1><p>Outbound notifications and bot-to-machine bindings. Bindings are metadata only.</p></div></div>
 <div class="panel"><h2>Configured channels</h2><p>Discord health validates the remote identity; other providers check credential availability. Credential values and references are hidden.</p>
 <table><thead><tr><th>Name</th><th>Kind</th><th>Health</th>{{if .Access.CanAdmin}}<th>Actions</th>{{end}}</tr></thead><tbody>
 {{range .Channels.Rows}}<tr><td>{{.ID}}</td><td>{{.Kind}}</td><td>{{.Status}}</td>{{if $.Access.CanAdmin}}<td><form method="post" action="/channels/test"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Send test message</button></form><form method="post" action="/channels/remove"><input type="hidden" name="id" value="{{.ID}}"><button class="secondary" type="submit">Remove channel</button></form></td>{{end}}</tr>{{else}}<tr><td colspan="4">No channels configured.</td></tr>{{end}}</tbody></table></div>

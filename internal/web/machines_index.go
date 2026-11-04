@@ -29,6 +29,8 @@ type machineIndexPageView struct {
 	Limit       int
 
 	HasFilters       bool
+	AdvancedFilters  bool
+	Heading          string
 	NextHref         string
 	FirstPageHref    string
 	CurrentLabel     string
@@ -152,6 +154,11 @@ func parseMachineIndexRequest(r *http.Request) (operator.MachineListRequest, err
 			return operator.MachineListRequest{}, errors.New("unknown machines filter value")
 		}
 	}
+	// The interactive roster starts with devices that are still managed.
+	// Explicit lifecycle=any remains available for cross-lifecycle searches.
+	if request.Lifecycle == "" {
+		request.Lifecycle = operator.MachineLifecycleActive
+	}
 	if err := operator.ValidateMachineListRequest(request); err != nil {
 		return operator.MachineListRequest{}, err
 	}
@@ -210,7 +217,7 @@ func buildMachineIndexPage(request operator.MachineListRequest, result operator.
 		}
 	}
 	if view.Lifecycle == "" {
-		view.Lifecycle = string(operator.MachineLifecycleAny)
+		view.Lifecycle = string(operator.MachineLifecycleActive)
 	}
 	if view.Reporting == "" {
 		view.Reporting = string(operator.MachineReportingAny)
@@ -224,11 +231,19 @@ func buildMachineIndexPage(request operator.MachineListRequest, result operator.
 		})
 	}
 	view.HasFilters = request.MachineID != "" || request.DisplayName != "" || len(request.States) > 0 ||
-		(request.Lifecycle != "" && request.Lifecycle != operator.MachineLifecycleAny) ||
+		(request.Lifecycle != "" && request.Lifecycle != operator.MachineLifecycleActive) ||
 		(request.Reporting != "" && request.Reporting != operator.MachineReportingAny) ||
-		(request.Channel != "" && request.Channel != operator.MachineChannelAny)
+		(request.Channel != "" && request.Channel != operator.MachineChannelAny) ||
+		(request.Limit != 0 && request.Limit != operator.DefaultMachineReadLimit)
+	view.AdvancedFilters = request.MachineID != "" || len(request.States) > 0 ||
+		(request.Reporting != "" && request.Reporting != operator.MachineReportingAny) ||
+		(request.Limit != 0 && request.Limit != operator.DefaultMachineReadLimit)
+	view.Heading = "在管裝置"
 	if request.Lifecycle == operator.MachineLifecycleRetired {
 		view.CurrentLabel = "已退役"
+		view.Heading = "已退役裝置"
+	} else if request.Lifecycle == operator.MachineLifecycleAny {
+		view.Heading = "全部裝置"
 	}
 	if result.NextCursor != nil {
 		view.NextHref = machineIndexURL(request, *result.NextCursor)
@@ -251,7 +266,7 @@ func machineIndexURL(request operator.MachineListRequest, cursor string) string 
 		values.Add("state", string(candidate))
 	}
 	for _, field := range []struct{ name, value, defaultValue string }{
-		{"lifecycle", string(request.Lifecycle), string(operator.MachineLifecycleAny)},
+		{"lifecycle", string(request.Lifecycle), ""},
 		{"reporting", string(request.Reporting), string(operator.MachineReportingAny)},
 		{"channel", string(request.Channel), string(operator.MachineChannelAny)},
 	} {

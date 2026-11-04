@@ -176,6 +176,8 @@ func (h *hub) operatorRoutes(mux *http.ServeMux) []string {
 		patterns = append(patterns, pattern)
 		mux.HandleFunc(pattern, h.handleOfflineAlertSettings)
 	}
+	patterns = append(patterns, "GET /v1/operator/stale-machines")
+	mux.HandleFunc("GET /v1/operator/stale-machines", h.handleListOperatorStaleMachines)
 	patterns = append(patterns, "GET /v1/operator/machines/{id}/oom-kills")
 	mux.HandleFunc("GET /v1/operator/machines/{id}/oom-kills", h.handleOperatorOOMKills)
 	patterns = append(patterns, "GET /v1/operator/jobs-summary", "GET /v1/operator/approvals-summary", "GET /v1/operator/hub-status")
@@ -636,7 +638,7 @@ func (h *hub) handleListOperatorMachines(w http.ResponseWriter, r *http.Request)
 	result, err := operator.New(h.store).ListMachinesPage(request, time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, operator.ErrInvalidMachineRead) {
-			writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "machine filter 或 cursor 不合法")
+			writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "裝置查詢無效，請重新選擇篩選條件")
 			return
 		}
 		log.Printf("failed to read operator machine list: %v", err)

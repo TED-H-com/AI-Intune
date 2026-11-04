@@ -81,9 +81,74 @@ add a tighter limit than Hub enforces. `expected_control_revision` has a
 minimum and no JSON Schema maximum, because the Hub maximum is the maximum
 int64.
 
+## Registry cleanup review
+
+```bash
+./build/clawctl-operator --hub-url "$CLAWCTL_HUB_URL" call stale_machines_list '{}'
+```
+
+MCP `stale_machines_list` and CLI `call stale_machines_list` use
+`operatorclient.Client.StaleMachineCandidates` and authenticated
+`GET /v1/operator/stale-machines` (`view`; optional `cursor` query parameter / tool argument).
+Service tokens must allow this route explicitly. Machine bearer credentials do
+not authorize it. The response is JSON with `Cache-Control: no-store`, schema
+version 1, `evaluated_at`, `limit: 100`, `truncated`, `next_cursor`,
+`consistency: "live_candidate_membership"`, and `items` (an empty array when no
+candidates qualify). No mutation or enrollment credential is returned.
+
+The operator service uses `store.StaleMachineCandidates` unchanged. Candidates
+are active registry entries with no enrollment and no check-in ever, at least
+one hour old, and no matching unexpired unused enrollment token or pending join
+request. They must also have a same-name/hostname non-retired entry with a
+check-in (`duplicate-of-active`), or be at least 24 hours old (`abandoned-24h`).
+Both branches can apply. Expired tickets and expired pending joins do not block
+inclusion. An old reporting machine is never selected merely for sharing a name.
+
+Each item contains `machine_id`, safely displayed `display_name` and `hostname`,
+`created_at`, the store's `branches`, and authorized `duplicate_of` machine IDs.
+The service checks read scope separately for each candidate and related ID;
+hidden identities and counts are omitted. Current Hub `view` grants cover all
+machines. Related IDs are sorted and capped at 100 per item, with
+`related_truncated`. A branch can remain present with no visible related IDs.
+Names and branch labels are evidence for human review, not proof of shared
+physical identity.
+
+Pages contain at most 100 candidates, ordered by immutable `created_at` then
+`machine_id`, both ascending. Pass the opaque `next_cursor` unchanged as the
+next request's `cursor`; `next_cursor: null` and `truncated: false` mark the end.
+Inspecting later pages requires no retirement or other write. The cursor is
+canonical unpadded base64url JSON (`v: 1`, UTC `created_at`, `machine_id`), at most
+2048 bytes. Only the optional cursor is accepted; unknown/duplicate query names,
+empty supplied cursors, malformed/oversized cursors and empty query markers are
+rejected. Client calls use `StaleMachineCandidates(ctx, cursor)`, with `""` for
+the first page. For MCP/CLI continuation:
+
+```bash
+./build/clawctl-operator --hub-url "$CLAWCTL_HUB_URL" call stale_machines_list '{"cursor":"<next_cursor>"}'
+```
+
+Membership and permissions are live on each read, not frozen across pages.
+Retiring any previous-page item, including the cursor anchor, does not move the
+continuation position. Later eligible items remain reachable without duplicates
+or offset skips. Entries newly eligible at or before the cursor require a fresh
+first-page traversal; entries that cease qualifying disappear. Limits and the
+next-page decision apply after read-scope filtering. The cursor contains only
+the last authorized item, not an unseen lookahead identity. The client checks
+page order, advancement beyond the request cursor, and that `next_cursor` matches
+the last item of a full page. The store still evaluates its existing full
+snapshot on each read; this change bounds responses, not database query work.
+
+Open **名冊整理** at `/machines/lifecycle` for the same evidence, age, related
+machine links, active/retired roster links, and **第一頁** / **下一頁** navigation.
+The page accepts only the same optional `cursor` query. Administrators can follow
+**檢視退役** to the machine detail action area. Retirement still requires the
+existing lifecycle preview, revision, digest, display-name confirmation, reason,
+and idempotent audited apply. Re-read candidates after each reviewed retirement.
+This tool neither retires nor deletes entries and adds no batch write.
+
 ## Tools
 
-Reads: `fleet_overview`, `machines_list`, `machine_get`, `machine_evidence`,
+Reads: `fleet_overview`, `machines_list`, `stale_machines_list`, `machine_get`, `machine_evidence`,
 `jobs_list`, `job_get`, `job_evidence`, `deployments_list`, `deployment_get`,
 `software_report`, `compliance`, `rollout_status`, `disk_clean_summaries`,
 `disk_clean_summary`.

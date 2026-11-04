@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,33 +15,42 @@ import (
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
-func TestLifecycleSubmenuListsActiveAndRetiredRegistryRows(t *testing.T) {
+func TestLifecycleSubmenuReviewsCandidates(t *testing.T) {
 	s, st := newServer(t)
-	activeID := onlineMachine(t, st, "lifecycle-active")
-	retiredID := onlineMachine(t, st, "lifecycle-retired")
+	activeID := onlineMachine(t, st, "same-name")
+	retiredID := onlineMachine(t, st, "retired-only")
 	if err := st.RetireMachine(retiredID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-
+	empty := get(t, s, "/machines/lifecycle")
+	if !strings.Contains(empty, "目前沒有待整理的名冊列。") || strings.Contains(empty, activeID) || strings.Contains(empty, retiredID) {
+		t.Fatal("reporting or retired entry shown as candidate")
+	}
+	now := time.Now().UTC()
+	if _, err := st.DB().Exec(`INSERT INTO machine_registry(machine_id,display_name,created_at) VALUES('review-candidate','same-name',?)`, now.Add(-25*time.Hour).Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
 	body := get(t, s, "/machines/lifecycle")
-	for _, want := range []string{
-		"裝置生命週期", "lifecycle-active", "lifecycle-retired",
-		`action="/machines/` + activeID + `/lifecycle-preview"`,
-		`action="/machines/` + retiredID + `/lifecycle-preview"`,
-		`name="desired_state" value="retired"`, `name="desired_state" value="active"`,
-		`<span class="st blue">active</span>`, `<span class="st grey">retired</span>`,
-	} {
+	for _, want := range []string{"名冊整理", "已建立 25 小時", "建立滿 24 小時", "建立滿 1 小時", "從未回報", "無有效票券", `href="/machines/review-candidate"`, `href="/machines/` + activeID + `"`, `href="/machines/review-candidate?section=actions#action-lifecycle"`, `href="/machines?lifecycle=active#machines"`, `href="/machines?lifecycle=retired#machines"`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("lifecycle submenu missing %q", want)
+			t.Errorf("missing %q", want)
 		}
 	}
-	if !strings.Contains(body, ">1</span><span class=\"l\">active 名冊列</span>") ||
-		!strings.Contains(body, ">1</span><span class=\"l\">retired 名冊列</span>") {
-		t.Fatalf("lifecycle submenu counts are wrong: %s", body)
+	if strings.Contains(body, retiredID) || strings.Contains(body, `action="/machines/review-candidate/lifecycle-preview"`) {
+		t.Fatal("review contains roster or mutation form")
 	}
-	if strings.Contains(body, "分母意圖") || strings.Contains(body, ">expected<") ||
-		strings.Contains(body, ">not expected<") {
-		t.Fatalf("lifecycle submenu exposed the legacy expected axis: %s", body)
+	viewer := diskWebRequest(t, s, "GET", "/machines/lifecycle", nil, diskWebPrincipal(false, false, ""), false)
+	if viewer.Code != 200 || !strings.Contains(viewer.Body.String(), `href="/machines/review-candidate"`) || !strings.Contains(viewer.Body.String(), activeID) || strings.Contains(viewer.Body.String(), "檢視退役") || strings.Contains(viewer.Body.String(), "#action-lifecycle") {
+		t.Fatalf("viewer review: %d %s", viewer.Code, viewer.Body.String())
+	}
+	_, form := previewMachineLifecycleForm(t, s, "review-candidate", store.MachineLifecycleRetired, "reviewed unused registration")
+	form.Set("confirm", "same-name")
+	if rec := postForm(t, s, "/machines/review-candidate/retire", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("retire %d %s", rec.Code, rec.Body.String())
+	}
+	after := get(t, s, "/machines/lifecycle")
+	if strings.Contains(after, "review-candidate") || !strings.Contains(after, "目前沒有待整理的名冊列。") {
+		t.Fatal("retired candidate still listed")
 	}
 }
 
@@ -279,5 +289,32 @@ func TestLifecycleWebRestoreMakesPendingEnrollmentTicketRedeemableAgain(t *testi
 	if gotID, agentToken, err := st.RedeemEnrollToken(ticket, request, time.Now().UTC()); err != nil ||
 		gotID != machineID || agentToken == "" {
 		t.Fatalf("restored pending ticket redemption id=%q token=%t err=%v", gotID, agentToken != "", err)
+	}
+}
+
+func TestLifecycleReviewPagination(t *testing.T) {
+	s, st := newServer(t)
+	stamp := time.Now().UTC().Add(-25 * time.Hour).Format(time.RFC3339)
+	for i := 0; i < 102; i++ {
+		id := fmt.Sprintf("web-page-%03d", i)
+		if _, err := st.DB().Exec(`INSERT INTO machine_registry(machine_id,display_name,created_at) VALUES(?,?,?)`, id, id, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := get(t, s, "/machines/lifecycle")
+	match := regexp.MustCompile(`href="(/machines/lifecycle\?cursor=[^"]+)" rel="next"`).FindStringSubmatch(first)
+	if len(match) != 2 || !strings.Contains(first, `href="/machines/lifecycle">第一頁`) || !strings.Contains(first, "web-page-099") || strings.Contains(first, "web-page-100") {
+		t.Fatal("first page/navigation incorrect")
+	}
+	viewer := diskWebRequest(t, s, "GET", match[1], nil, diskWebPrincipal(false, false, ""), false)
+	body := viewer.Body.String()
+	if viewer.Code != 200 || !strings.Contains(body, "web-page-100") || !strings.Contains(body, "web-page-101") || strings.Contains(body, "web-page-099") || strings.Contains(body, `rel="next"`) || strings.Contains(body, "檢視退役") {
+		t.Fatalf("next page: %d %s", viewer.Code, body)
+	}
+	for _, suffix := range []string{"?", "?cursor=", "?cursor=bad", "?cursor=x&cursor=y", "?limit=1", "?cursor=%zz", "?cursor=" + strings.Repeat("a", 7000)} {
+		rec := diskWebRequest(t, s, "GET", "/machines/lifecycle"+suffix, nil, diskWebPrincipal(false, false, ""), false)
+		if rec.Code != 400 || strings.Contains(rec.Body.String(), "web-page-") {
+			t.Fatalf("query %q status %d", suffix, rec.Code)
+		}
 	}
 }

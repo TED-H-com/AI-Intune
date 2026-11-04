@@ -14,7 +14,63 @@ import (
 	"github.com/teddashh/AI-Intune/internal/tailnet"
 )
 
-var subNavigationLinkRE = regexp.MustCompile(`<a href="([^"]+)" class="subnav-item[^"]*"[^>]*>([^<]+)</a>`)
+var (
+	subNavigationLinkRE  = regexp.MustCompile(`<a href="([^"]+)" class="subnav-item[^"]*"[^>]*>([^<]+)</a>`)
+	mainNavigationLinkRE = regexp.MustCompile(`<a href="([^"]+)" class="nav-item([^"]*)"([^>]*)>`)
+)
+
+func renderedMainNavigation(t *testing.T, body, label string) string {
+	t.Helper()
+	start := strings.Index(body, `<nav aria-label="`+label+`">`)
+	if start < 0 {
+		t.Fatalf("page missing %q main navigation", label)
+	}
+	end := strings.Index(body[start:], `</nav>`)
+	if end < 0 {
+		t.Fatalf("%q main navigation is truncated", label)
+	}
+	return body[start : start+end+len(`</nav>`)]
+}
+
+func assertMainNavigationBody(t *testing.T, describe, body, activeHref string) {
+	t.Helper()
+	nav := renderedMainNavigation(t, body, "主要導覽")
+	canonical := []string{
+		"/",
+		"/machines#machines",
+		"/apps",
+		"/settings/tailnet",
+		"/jobs",
+		"/reports",
+		"/tenant/maintenance",
+		"/machines/diagnostics",
+	}
+	matches := mainNavigationLinkRE.FindAllStringSubmatch(nav, -1)
+	if len(matches) != len(canonical) {
+		t.Fatalf("%s main navigation has %d links, want %d: %s", describe, len(matches), len(canonical), nav)
+	}
+	activeCount := 0
+	for i, match := range matches {
+		href := html.UnescapeString(match[1])
+		if href != canonical[i] {
+			t.Errorf("%s main navigation link[%d]=%q, want %q", describe, i, href, canonical[i])
+		}
+		isOn := strings.Contains(match[2], "on")
+		isCurrent := strings.Contains(match[3], `aria-current="page"`)
+		if isOn != isCurrent {
+			t.Errorf("%s main navigation link %q class=%q attrs=%q mismatched active state", describe, href, match[2], match[3])
+		}
+		if isCurrent {
+			activeCount++
+			if href != activeHref {
+				t.Errorf("%s active main navigation link=%q, want %q", describe, href, activeHref)
+			}
+		}
+	}
+	if activeCount != 1 {
+		t.Errorf("%s main navigation has %d active links, want 1 (%q): %s", describe, activeCount, activeHref, nav)
+	}
+}
 
 func renderedSubNavigation(t *testing.T, body, label string) string {
 	t.Helper()
@@ -103,24 +159,39 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	})
 
 	machineNav := map[string]string{
-		"/machines/join":                       "Waiting to join",
-		sectionHref("/machines", "fleet-kpis"): "概觀", sectionHref("/machines", "machines"): "所有裝置",
-		sectionHref("/machines", "findings"): "監視", "/jobs": "代理程式活動", "/machines/enrollment": "註冊裝置",
-		"/machines/configuration": "組態", "/machines/compliance": "合規性",
-		"/machines/lifecycle": "生命週期", "/updates": "更新",
+		sectionHref("/machines", "fleet-kpis"):                  "概觀",
+		sectionHref("/machines", "machines"):                    "所有裝置",
+		sectionHref("/machines", "findings"):                    "監視",
+		"/machines/enrollment":                                  "註冊裝置",
+		"/machines/join":                                        "Waiting to join",
+		"/machines/configuration":                               "組態",
+		"/machines/compliance":                                  "合規性",
+		"/machines/lifecycle":                                   "名冊整理",
+		"/updates":                                              "更新",
 		"/machines?lifecycle=retired&section=machines#machines": "已退役",
 	}
-	assertSubNavigation(t, s, "/machines", "裝置子選單", "概觀", machineNav)
+	assertSubNavigation(t, s, "/machines", "裝置子選單", "所有裝置", machineNav)
+	assertSubNavigation(t, s, sectionHref("/machines", "fleet-kpis"), "裝置子選單", "概觀", machineNav)
 	assertSubNavigation(t, s, sectionHref("/machines", "machines"), "裝置子選單", "所有裝置", machineNav)
 	assertSubNavigation(t, s, sectionHref("/machines", "findings"), "裝置子選單", "監視", machineNav)
 	assertSubNavigation(t, s, "/machines?lifecycle=retired&section=machines#machines", "裝置子選單", "已退役", machineNav)
 	assertSubNavigation(t, s, "/machines/enrollment", "裝置子選單", "註冊裝置", machineNav)
-	assertSubNavigation(t, s, "/machines/lifecycle", "裝置子選單", "生命週期", machineNav)
+	assertSubNavigation(t, s, "/machines/join", "裝置子選單", "Waiting to join", machineNav)
+	assertSubNavigation(t, s, "/machines/lifecycle", "裝置子選單", "名冊整理", machineNav)
 	assertSubNavigation(t, s, "/machines/configuration", "裝置子選單", "組態", machineNav)
 	assertSubNavigation(t, s, "/machines/compliance", "裝置子選單", "合規性", machineNav)
-	assertSubNavigation(t, s, "/machines/diagnostics", "疑難排解子選單", "裝置診斷", map[string]string{
+	troubleshootingNav := map[string]string{
 		"/machines/diagnostics": "裝置診斷",
-	})
+		"/readiness":            "Host readiness",
+	}
+	assertSubNavigation(t, s, "/machines/diagnostics", "疑難排解子選單", "裝置診斷", troubleshootingNav)
+	assertSubNavigation(t, s, "/readiness", "疑難排解子選單", "Host readiness", troubleshootingNav)
+	endpointSecurityNav := map[string]string{
+		"/settings/tailnet": "Tailnet",
+		"/secrets":          "Secrets",
+	}
+	assertSubNavigation(t, s, "/settings/tailnet", "端點安全性子選單", "Tailnet", endpointSecurityNav)
+	assertSubNavigation(t, s, "/secrets", "端點安全性子選單", "Secrets", endpointSecurityNav)
 	detailBase := "/machines/" + id
 	detailNav := map[string]string{
 		sectionHref(detailBase, "machine-overview"): "概觀", sectionHref(detailBase, "monitor"): "監視",
@@ -131,11 +202,15 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	assertSubNavigation(t, s, detailBase, "裝置詳細資料子選單", "概觀", detailNav)
 	assertSubNavigation(t, s, sectionHref(detailBase, "monitor"), "裝置詳細資料子選單", "監視", detailNav)
 	agentNav := map[string]string{
-		sectionHref("/jobs", "agent-overview"): "概觀", sectionHref("/jobs", "job-ledger"): "活動",
-		"/machines/enrollment": "裝置註冊", "/apps?view=profiles": "設定檔", "/deployments": "部署", "/audit": "稽核記錄",
+		sectionHref("/jobs", "agent-overview"): "概觀",
+		sectionHref("/jobs", "job-ledger"):     "活動",
+		"/signins":                             "Sign-ins",
+		"/attention/loops":                     "Attention / Loops",
 	}
 	assertSubNavigation(t, s, "/jobs", "代理程式子選單", "概觀", agentNav)
 	assertSubNavigation(t, s, sectionHref("/jobs", "job-ledger"), "代理程式子選單", "活動", agentNav)
+	assertSubNavigation(t, s, "/signins", "代理程式子選單", "Sign-ins", agentNav)
+	assertSubNavigation(t, s, "/attention/loops", "代理程式子選單", "Attention / Loops", agentNav)
 	jobBase := "/jobs/" + jobID
 	assertSubNavigation(t, s, jobBase, "代理程式活動詳細資料子選單", "概觀", map[string]string{
 		"/jobs":                                   "所有活動",
@@ -201,13 +276,15 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	// 同一台機器的兩頁要給同一份子選單。少一項的選單看起來像那一節在這裡不存在。
 	assertSubNavigation(t, s, detailBase+"/timeline", "裝置詳細資料子選單", "事件時間軸", detailNav)
 	assertSubNavigation(t, s, detailBase+"/data", "裝置詳細資料子選單", "資料", detailNav)
-	tenantNav := map[string]string{"/tenant/offline-alerts": "離線通知", "/tenant/certificates": "Certificates", "/tenant/schedules": "Schedules", "/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
+	tenantNav := map[string]string{"/channels": "通知通道", "/tenant/offline-alerts": "離線通知", "/tenant/certificates": "Certificates", "/tenant/schedules": "Schedules", "/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
+	assertSubNavigation(t, s, "/channels", "租用戶子選單", "通知通道", tenantNav)
 	assertSubNavigation(t, s, "/tenant/offline-alerts", "租用戶子選單", "離線通知", tenantNav)
 	assertSubNavigation(t, s, "/tenant/maintenance", "租用戶子選單", "維護", tenantNav)
 	assertSubNavigation(t, s, "/tenant/data", "租用戶子選單", "資料揭露", tenantNav)
 	assertSubNavigation(t, s, "/tenant/disk-policies", "租用戶子選單", "Disk policies", tenantNav)
 	assertSubNavigation(t, s, "/tenant/approvals", "租用戶子選單", "Approvals", tenantNav)
 	assertSubNavigation(t, s, "/tenant/disk-alerts", "租用戶子選單", "Disk alerts", tenantNav)
+	assertSubNavigation(t, s, "/tenant/schedules", "租用戶子選單", "Schedules", tenantNav)
 	assertSubNavigation(t, s, "/tenant/certificates", "租用戶子選單", "Certificates", tenantNav)
 	assertSubNavigation(t, s, "/reports/changes", "報告子選單", "變更", reportsNav)
 	assertSubNavigation(t, s, "/reports/tickets", "報告子選單", "票證使用量", reportsNav)
@@ -216,6 +293,85 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	assertSubNavigation(t, s, "/reports/install", "報告子選單", "安裝狀態", reportsNav)
 	assertSubNavigation(t, s, "/reports/profile", "報告子選單", "發佈與指派", reportsNav)
 	assertSubNavigation(t, s, "/audit", "報告子選單", "稽核記錄", reportsNav)
+
+	for path, wantTopHref := range map[string]string{
+		"/":                            "/",
+		"/machines":                    "/machines#machines",
+		"/machines/enrollment":         "/machines#machines",
+		"/machines/join":               "/machines#machines",
+		"/machines/lifecycle":          "/machines#machines",
+		"/machines/configuration":      "/machines#machines",
+		"/machines/compliance":         "/machines#machines",
+		"/updates":                     "/machines#machines",
+		"/channels":                    "/tenant/maintenance",
+		detailBase:                     "/machines#machines",
+		detailBase + "/timeline":       "/machines#machines",
+		detailBase + "/data":           "/machines#machines",
+		"/apps":                        "/apps",
+		"/deployments":                 "/apps",
+		"/deployments/" + deploymentID: "/apps",
+		"/settings/tailnet":            "/settings/tailnet",
+		"/secrets":                     "/settings/tailnet",
+		"/jobs":                        "/jobs",
+		jobBase:                        "/jobs",
+		"/signins":                     "/jobs",
+		"/attention/loops":             "/jobs",
+		"/reports":                     "/reports",
+		"/checks":                      "/reports",
+		"/reports/changes":             "/reports",
+		"/reports/tickets":             "/reports",
+		"/reports/enrollment":          "/reports",
+		"/reports/software":            "/reports",
+		"/reports/install":             "/reports",
+		"/reports/profile":             "/reports",
+		"/audit":                       "/reports",
+		"/tenant/maintenance":          "/tenant/maintenance",
+		"/tenant/offline-alerts":       "/tenant/maintenance",
+		"/tenant/disk-policies":        "/tenant/maintenance",
+		"/tenant/approvals":            "/tenant/maintenance",
+		"/tenant/disk-alerts":          "/tenant/maintenance",
+		"/tenant/schedules":            "/tenant/maintenance",
+		"/tenant/certificates":         "/tenant/maintenance",
+		"/tenant/data":                 "/tenant/maintenance",
+		"/machines/diagnostics":        "/machines/diagnostics",
+		"/readiness":                   "/machines/diagnostics",
+	} {
+		assertMainNavigationBody(t, "GET "+path, get(t, s, path), wantTopHref)
+	}
+}
+
+func TestSubNavigationPrunesAdminOnlyRoutesForNonAdminOperators(t *testing.T) {
+	s, _ := newServer(t)
+	s.SetTailnetStatus(tailnet.Status{
+		Available: true,
+		Self:      tailnet.Peer{Hostname: "nav-machine", IP: "100.64.0.1", Online: true},
+	})
+	names, err := operatorauth.NamesForPrefix("example.com/cap/clawctl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewOnly := operatorauth.CapabilityNames{View: names.View}
+
+	tailnetView := renderWithCapabilities(t, s, "/settings/tailnet", viewOnly)
+	assertMainNavigationBody(t, "view-only /settings/tailnet", tailnetView, "/settings/tailnet")
+	assertSubNavigationBody(t, s, "view-only /settings/tailnet", tailnetView, "端點安全性子選單", "Tailnet", map[string]string{
+		"/settings/tailnet": "Tailnet",
+	})
+	if strings.Contains(tailnetView, `href="/secrets"`) {
+		t.Fatal("view-only /settings/tailnet exposed admin-only /secrets link")
+	}
+
+	tailnetAdmin := renderWithCapabilities(t, s, "/settings/tailnet", names)
+	assertSubNavigationBody(t, s, "admin /settings/tailnet", tailnetAdmin, "端點安全性子選單", "Tailnet", map[string]string{
+		"/settings/tailnet": "Tailnet",
+		"/secrets":          "Secrets",
+	})
+
+	tenantView := renderWithCapabilities(t, s, "/tenant/maintenance", viewOnly)
+	assertMainNavigationBody(t, "view-only /tenant/maintenance", tenantView, "/tenant/maintenance")
+	if strings.Contains(tenantView, `href="/tenant/disk-policies"`) {
+		t.Fatal("view-only /tenant/maintenance exposed admin-only /tenant/disk-policies link")
+	}
 }
 
 func tableCounts(t *testing.T, st *store.Store, tables ...string) map[string]int {
