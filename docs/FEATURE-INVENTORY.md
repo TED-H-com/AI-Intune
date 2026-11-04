@@ -516,11 +516,12 @@ UI 與 CLI 目前全部不存在。Retire 只會因 authentication query 排除 
 2. Active agent credential rotate/revoke（新 capability；須定義 reconnect 與 recovery）。
 3. Machine retire/unretire（名冊 lifecycle，可逆狀態）。
 
-### Devices > Lifecycle
+### Devices > Registry cleanup and lifecycle
 
 | 功能 | Native source / API | UI | Operator API | CLI | 人工 action | 下一步 / 依賴 |
 |---|---|---:|---:|---:|---|---|
-| Lifecycle read | `OperatorMachineLifecycle`；`GET /v1/operator/machines/{id}/lifecycle` | ✅ Lifecycle submenu＋detail entry | ✅ | ✅ `machine lifecycle` HTTP／break-glass | 讀取 | Safe projection 明列 revision、分母、channel、credential/ticket 可用性與非終態 job；不曝 secret/hash；`c91695b` 已完成 live rollout |
+| Registry cleanup review | `ListStaleMachineCandidates`；`GET /v1/operator/stale-machines` | ✅ `/machines/lifecycle` 分頁候選 | ✅ | ✅ `stale_machines_list` | 讀取 | 沿用未完成註冊且無回報的既有條件；同名只作核對依據；透過單機頁的既有預覽／確認退役 |
+| Lifecycle read | `OperatorMachineLifecycle`；`GET /v1/operator/machines/{id}/lifecycle` | ✅ machine detail entry | ✅ | ✅ `machine lifecycle` HTTP／break-glass | 讀取 | Safe projection 明列 revision、分母、channel、credential/ticket 可用性與非終態 job；不曝 secret/hash；`c91695b` 已完成 live rollout |
 | Retire | `ApplyOperatorMachineLifecycle`；preview + `PUT .../lifecycle` | ✅ preview/confirm | ✅ | ✅ HTTP／break-glass | 是 | Preview 明列當下開啟的終端工作階段數；Web caveat 與 CLI apply notice 說明套用時仍開啟者會結束。Count 不綁 digest/receipt；其餘獨立 `lifecycle_revision`、typed name/reason、digest/idempotency、atomic event/receipt/audit 與 `nonterminal_jobs` blocker 已完成合約測試 |
 | Restore active | 同一 canonical lifecycle service/API | ✅ preview/confirm | ✅ | ✅ HTTP／break-glass | 是 | 保留 registry/history/channel；明列恢復後 retained bearer 可立即再驗證、未過期 pending ticket 可再兌換，不冒充 credential rotation |
 | Active credential rotate/revoke | 尚無 native capability | — | — | — | 是，高風險 | 先定 threat/recovery model，再建 Store/service/API；不可沿用 pending-ticket 名稱 |
@@ -754,7 +755,7 @@ tracking 與 malformed/unplaceable timestamp 都列入 coverage；未被 filter 
 | CLI | 現有能力 | 應收斂到的 submenu/API |
 |---|---|---|
 | `machines` | machine list / safe detail / typed free-text evidence | Devices > All devices；`machines evidence` 支援逐 section `--limit`；預設以 deterministic discovery 走 HTTP，僅明示 `--db` 進 stopped-service break-glass |
-| `machine lifecycle`；`retire` alias | read/preview/apply active/retired | Devices > Lifecycle；retire preview 顯示當下開啟的終端工作階段數，apply 前若非零會提示套用時仍開啟者會結束；兩方向都要 typed confirm/reason；僅明示 `--db` 進 stopped-service canonical service |
+| `machine lifecycle`；`retire` alias | read/preview/apply active/retired | Devices > 名冊整理／machine detail；retire preview 顯示當下開啟的終端工作階段數，apply 前若非零會提示套用時仍開啟者會結束；兩方向都要 typed confirm/reason；僅明示 `--db` 進 stopped-service canonical service |
 | `report`, `report changes`, `tickets` | legacy daily preview、typed Changes、typed Ticket usage text/JSON/CSV；`tickets` 預設 discovery HTTP，明示 `--db` 才進 stopped-service fenced break-glass | Reports |
 | `tailnet` | reconcile、stable-ID ignore/unignore；預設 HTTP，明示 `--db` 才進 stopped-service canonical service | Endpoint security > Tailnet |
 | `prune` | retention preview/apply；預設 HTTP，明示 `--db` 才進 stopped-service canonical service | Tenant administration > Maintenance |

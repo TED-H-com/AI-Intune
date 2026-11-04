@@ -51,5 +51,5 @@
 </div>
 {{end}}
 
-<p><a href="/machines/{{$p.MachineID}}?section=actions#actions">回那台機器，不套用</a> · <a href="/machines/lifecycle">回生命週期清單</a></p>
+<p><a href="/machines/{{$p.MachineID}}?section=actions#actions">回那台機器，不套用</a> · {{if eq $p.DesiredState "active"}}<a href="/machines?lifecycle=retired#machines">回已退役名冊</a>{{else}}<a href="/machines/lifecycle">回名冊整理</a>{{end}}</p>
 {{template "foot" .}}{{end}}
