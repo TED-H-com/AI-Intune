@@ -159,19 +159,19 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	})
 
 	machineNav := map[string]string{
-		sectionHref("/machines", "fleet-kpis"): "概觀",
-		sectionHref("/machines", "machines"):   "所有裝置",
-		sectionHref("/machines", "findings"):   "監視",
-		"/machines/enrollment":                 "註冊裝置",
-		"/machines/join":                       "Waiting to join",
-		"/machines/configuration":              "組態",
-		"/machines/compliance":                 "合規性",
-		"/machines/lifecycle":                  "名冊整理",
-		"/updates":                             "更新",
-		"/channels":                            "Channels",
+		sectionHref("/machines", "fleet-kpis"):                  "概觀",
+		sectionHref("/machines", "machines"):                    "所有裝置",
+		sectionHref("/machines", "findings"):                    "監視",
+		"/machines/enrollment":                                  "註冊裝置",
+		"/machines/join":                                        "Waiting to join",
+		"/machines/configuration":                               "組態",
+		"/machines/compliance":                                  "合規性",
+		"/machines/lifecycle":                                   "名冊整理",
+		"/updates":                                              "更新",
 		"/machines?lifecycle=retired&section=machines#machines": "已退役",
 	}
-	assertSubNavigation(t, s, "/machines", "裝置子選單", "概觀", machineNav)
+	assertSubNavigation(t, s, "/machines", "裝置子選單", "所有裝置", machineNav)
+	assertSubNavigation(t, s, sectionHref("/machines", "fleet-kpis"), "裝置子選單", "概觀", machineNav)
 	assertSubNavigation(t, s, sectionHref("/machines", "machines"), "裝置子選單", "所有裝置", machineNav)
 	assertSubNavigation(t, s, sectionHref("/machines", "findings"), "裝置子選單", "監視", machineNav)
 	assertSubNavigation(t, s, "/machines?lifecycle=retired&section=machines#machines", "裝置子選單", "已退役", machineNav)
@@ -180,7 +180,6 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	assertSubNavigation(t, s, "/machines/lifecycle", "裝置子選單", "名冊整理", machineNav)
 	assertSubNavigation(t, s, "/machines/configuration", "裝置子選單", "組態", machineNav)
 	assertSubNavigation(t, s, "/machines/compliance", "裝置子選單", "合規性", machineNav)
-	assertSubNavigation(t, s, "/channels", "裝置子選單", "Channels", machineNav)
 	troubleshootingNav := map[string]string{
 		"/machines/diagnostics": "裝置診斷",
 		"/readiness":            "Host readiness",
@@ -277,7 +276,8 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 	// 同一台機器的兩頁要給同一份子選單。少一項的選單看起來像那一節在這裡不存在。
 	assertSubNavigation(t, s, detailBase+"/timeline", "裝置詳細資料子選單", "事件時間軸", detailNav)
 	assertSubNavigation(t, s, detailBase+"/data", "裝置詳細資料子選單", "資料", detailNav)
-	tenantNav := map[string]string{"/tenant/offline-alerts": "離線通知", "/tenant/certificates": "Certificates", "/tenant/schedules": "Schedules", "/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
+	tenantNav := map[string]string{"/channels": "通知通道", "/tenant/offline-alerts": "離線通知", "/tenant/certificates": "Certificates", "/tenant/schedules": "Schedules", "/tenant/maintenance": "維護", "/tenant/disk-policies": "Disk policies", "/tenant/approvals": "Approvals", "/tenant/disk-alerts": "Disk alerts", "/tenant/data": "資料揭露"}
+	assertSubNavigation(t, s, "/channels", "租用戶子選單", "通知通道", tenantNav)
 	assertSubNavigation(t, s, "/tenant/offline-alerts", "租用戶子選單", "離線通知", tenantNav)
 	assertSubNavigation(t, s, "/tenant/maintenance", "租用戶子選單", "維護", tenantNav)
 	assertSubNavigation(t, s, "/tenant/data", "租用戶子選單", "資料揭露", tenantNav)
@@ -303,7 +303,7 @@ func TestDeliveredPagesExposeReachableSubNavigation(t *testing.T) {
 		"/machines/configuration":      "/machines#machines",
 		"/machines/compliance":         "/machines#machines",
 		"/updates":                     "/machines#machines",
-		"/channels":                    "/machines#machines",
+		"/channels":                    "/tenant/maintenance",
 		detailBase:                     "/machines#machines",
 		detailBase + "/timeline":       "/machines#machines",
 		detailBase + "/data":           "/machines#machines",

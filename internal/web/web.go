@@ -1692,7 +1692,6 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data.HTTPSInstaller = strings.HasPrefix(s.hubBase, "https://")
 	data.TailscaleInstaller = strings.HasPrefix(s.hubBase, "http://100.")
 	data.AgentInstallers = agentInstallerCommands(s.agentBundles, s.hubBase)
-	data.Nav = canonicalPageNav(name, data)
 	if len(data.SubNav.Items) == 0 {
 		data.SubNav = subNavigationFor(data)
 	}
@@ -1717,16 +1716,6 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 }
 
-func canonicalPageNav(name string, data page) string {
-	if data.Nav == "machines-enrollment" && (name == "join.html" || data.Join != nil || data.Title == "Waiting to join") {
-		return "machines-join"
-	}
-	if data.Nav == "machines" && (name == "readiness.html" || data.Title == "Host readiness" || (data.Readiness != nil && !data.MachineIndex && data.Machine.MachineID == "")) {
-		return "readiness"
-	}
-	return data.Nav
-}
-
 // subNavigationFor keeps the IA in one typed place instead of duplicating a
 // slightly different set of links in every template.  Fragment destinations
 // intentionally point at evidence that is already on the rendered page; later
@@ -1734,10 +1723,7 @@ func canonicalPageNav(name string, data page) string {
 func subNavigationFor(data page) subNavigation {
 	switch data.Nav {
 	case "machines":
-		if data.Title == "Host readiness" || (data.Readiness != nil && !data.MachineIndex && data.Machine.MachineID == "") {
-			return troubleshootingSubNavigation("Host readiness")
-		}
-		current := "概觀"
+		current := "所有裝置"
 		if data.MachineList != nil && data.MachineList.CurrentLabel != "" && data.MachineList.HasFilters {
 			current = data.MachineList.CurrentLabel
 			if current == "所有機器" {
@@ -1746,11 +1732,8 @@ func subNavigationFor(data page) subNavigation {
 		}
 		return devicesSubNavigation(current)
 	case "machines-enrollment":
-		if data.Join != nil || data.Title == "Waiting to join" {
-			return devicesSubNavigation("Waiting to join")
-		}
 		return devicesSubNavigation("註冊裝置")
-	case "machines-join", "join":
+	case "machines-join":
 		return devicesSubNavigation("Waiting to join")
 	case "machines-lifecycle":
 		return devicesSubNavigation("名冊整理")
@@ -1759,10 +1742,10 @@ func subNavigationFor(data page) subNavigation {
 	case "machines-compliance":
 		return devicesSubNavigation("合規性")
 	case "channels":
-		return devicesSubNavigation("Channels")
+		return tenantSubNavigation("通知通道")
 	case "machines-diagnostics":
 		return troubleshootingSubNavigation("裝置診斷")
-	case "readiness", "machines-readiness":
+	case "readiness":
 		return troubleshootingSubNavigation("Host readiness")
 	case "tailnet":
 		return endpointSecuritySubNavigation("Tailnet")
@@ -1949,7 +1932,6 @@ func devicesSubNavigation(current string) subNavigation {
 		subNavigationItem{Label: "合規性", Href: "/machines/compliance"},
 		subNavigationItem{Label: "名冊整理", Href: "/machines/lifecycle"},
 		subNavigationItem{Label: "更新", Href: "/updates"},
-		subNavigationItem{Label: "Channels", Href: "/channels"},
 		subNavigationItem{Label: "已退役", Href: "/machines?lifecycle=retired#machines"},
 	)
 }
@@ -1999,6 +1981,7 @@ func reportsSubNavigation(current string) subNavigation {
 // 東西由揭露面講出來——兩頁講的是同一件事的兩半，所以指得到彼此。
 func tenantSubNavigation(current string) subNavigation {
 	return makeSubNavigation("租用戶子選單", current,
+		subNavigationItem{Label: "通知通道", Href: "/channels"},
 		subNavigationItem{Label: "維護", Href: "/tenant/maintenance"},
 		subNavigationItem{Label: "離線通知", Href: "/tenant/offline-alerts"},
 		subNavigationItem{Label: "Disk policies", Href: "/tenant/disk-policies"},

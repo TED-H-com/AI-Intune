@@ -138,6 +138,7 @@ func navigationLocaleFor(r *http.Request, title string) navigationLocaleView {
 }
 
 var englishNavigationTexts = map[string]string{
+	"通知通道":                  "Notification channels",
 	"總覽":                    "Overview",
 	"裝置":                    "Devices",
 	"裝置註冊":                  "Device enrollment",

@@ -77,7 +77,7 @@ func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(view)
 		return
 	}
-	s.render(w, r, "channels.html", page{Title: "Channels", Nav: "channels", Channels: &view})
+	s.render(w, r, "channels.html", page{Title: "通知通道", Nav: "channels", Channels: &view})
 }
 func (s *Server) channelMutation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
