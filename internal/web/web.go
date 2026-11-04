@@ -1692,13 +1692,14 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data.HTTPSInstaller = strings.HasPrefix(s.hubBase, "https://")
 	data.TailscaleInstaller = strings.HasPrefix(s.hubBase, "http://100.")
 	data.AgentInstallers = agentInstallerCommands(s.agentBundles, s.hubBase)
+	data.Nav = canonicalPageNav(name, data)
 	if len(data.SubNav.Items) == 0 {
 		data.SubNav = subNavigationFor(data)
 	}
 	if !data.Access.CanAdmin {
 		items := data.SubNav.Items[:0]
 		for _, item := range data.SubNav.Items {
-			if item.Href != "/tenant/disk-policies" {
+			if item.Href != "/tenant/disk-policies" && item.Href != "/secrets" {
 				items = append(items, item)
 			}
 		}
@@ -1716,6 +1717,16 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 }
 
+func canonicalPageNav(name string, data page) string {
+	if data.Nav == "machines-enrollment" && (name == "join.html" || data.Join != nil || data.Title == "Waiting to join") {
+		return "machines-join"
+	}
+	if data.Nav == "machines" && (name == "readiness.html" || data.Title == "Host readiness" || (data.Readiness != nil && !data.MachineIndex && data.Machine.MachineID == "")) {
+		return "readiness"
+	}
+	return data.Nav
+}
+
 // subNavigationFor keeps the IA in one typed place instead of duplicating a
 // slightly different set of links in every template.  Fragment destinations
 // intentionally point at evidence that is already on the rendered page; later
@@ -1723,6 +1734,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 func subNavigationFor(data page) subNavigation {
 	switch data.Nav {
 	case "machines":
+		if data.Title == "Host readiness" || (data.Readiness != nil && !data.MachineIndex && data.Machine.MachineID == "") {
+			return troubleshootingSubNavigation("Host readiness")
+		}
 		current := "概觀"
 		if data.MachineList != nil && data.MachineList.CurrentLabel != "" && data.MachineList.HasFilters {
 			current = data.MachineList.CurrentLabel
@@ -1730,88 +1744,36 @@ func subNavigationFor(data page) subNavigation {
 				current = "所有裝置"
 			}
 		}
-		return makeSubNavigation("裝置子選單", current, []subNavigationItem{
-			{Label: "概觀", Href: "/machines#fleet-kpis"},
-			{Label: "所有裝置", Href: "/machines#machines"},
-			{Label: "監視", Href: "/machines#findings"},
-			{Label: "註冊裝置", Href: "/machines/enrollment"},
-			{Label: "Waiting to join", Href: "/machines/join"},
-			{Label: "組態", Href: "/machines/configuration"},
-			{Label: "合規性", Href: "/machines/compliance"},
-			{Label: "生命週期", Href: "/machines/lifecycle"},
-			{Label: "更新", Href: "/updates"},
-			{Label: "代理程式活動", Href: "/jobs"},
-			{Label: "已退役", Href: "/machines?lifecycle=retired#machines"},
-		}...)
+		return devicesSubNavigation(current)
 	case "machines-enrollment":
-		return makeSubNavigation("裝置子選單", "註冊裝置", []subNavigationItem{
-			{Label: "概觀", Href: "/machines#fleet-kpis"},
-			{Label: "所有裝置", Href: "/machines#machines"},
-			{Label: "監視", Href: "/machines#findings"},
-			{Label: "註冊裝置", Href: "/machines/enrollment"},
-			{Label: "Waiting to join", Href: "/machines/join"},
-			{Label: "組態", Href: "/machines/configuration"},
-			{Label: "合規性", Href: "/machines/compliance"},
-			{Label: "生命週期", Href: "/machines/lifecycle"},
-			{Label: "更新", Href: "/updates"},
-			{Label: "代理程式活動", Href: "/jobs"},
-			{Label: "已退役", Href: "/machines?lifecycle=retired#machines"},
-		}...)
+		if data.Join != nil || data.Title == "Waiting to join" {
+			return devicesSubNavigation("Waiting to join")
+		}
+		return devicesSubNavigation("註冊裝置")
+	case "machines-join", "join":
+		return devicesSubNavigation("Waiting to join")
 	case "machines-lifecycle":
-		return makeSubNavigation("裝置子選單", "生命週期", []subNavigationItem{
-			{Label: "概觀", Href: "/machines#fleet-kpis"},
-			{Label: "所有裝置", Href: "/machines#machines"},
-			{Label: "監視", Href: "/machines#findings"},
-			{Label: "註冊裝置", Href: "/machines/enrollment"},
-			{Label: "Waiting to join", Href: "/machines/join"},
-			{Label: "組態", Href: "/machines/configuration"},
-			{Label: "合規性", Href: "/machines/compliance"},
-			{Label: "生命週期", Href: "/machines/lifecycle"},
-			{Label: "更新", Href: "/updates"},
-			{Label: "代理程式活動", Href: "/jobs"},
-			{Label: "已退役", Href: "/machines?lifecycle=retired#machines"},
-		}...)
+		return devicesSubNavigation("名冊整理")
 	case "machines-configuration":
-		return makeSubNavigation("裝置子選單", "組態", []subNavigationItem{
-			{Label: "概觀", Href: "/machines#fleet-kpis"},
-			{Label: "所有裝置", Href: "/machines#machines"},
-			{Label: "監視", Href: "/machines#findings"},
-			{Label: "註冊裝置", Href: "/machines/enrollment"},
-			{Label: "Waiting to join", Href: "/machines/join"},
-			{Label: "組態", Href: "/machines/configuration"},
-			{Label: "合規性", Href: "/machines/compliance"},
-			{Label: "生命週期", Href: "/machines/lifecycle"},
-			{Label: "更新", Href: "/updates"},
-			{Label: "代理程式活動", Href: "/jobs"},
-			{Label: "已退役", Href: "/machines?lifecycle=retired#machines"},
-		}...)
+		return devicesSubNavigation("組態")
 	case "machines-compliance":
-		return makeSubNavigation("裝置子選單", "合規性", []subNavigationItem{
-			{Label: "概觀", Href: "/machines#fleet-kpis"},
-			{Label: "所有裝置", Href: "/machines#machines"},
-			{Label: "監視", Href: "/machines#findings"},
-			{Label: "註冊裝置", Href: "/machines/enrollment"},
-			{Label: "Waiting to join", Href: "/machines/join"},
-			{Label: "組態", Href: "/machines/configuration"},
-			{Label: "合規性", Href: "/machines/compliance"},
-			{Label: "生命週期", Href: "/machines/lifecycle"},
-			{Label: "更新", Href: "/updates"},
-			{Label: "代理程式活動", Href: "/jobs"},
-			{Label: "已退役", Href: "/machines?lifecycle=retired#machines"},
-		}...)
+		return devicesSubNavigation("合規性")
+	case "channels":
+		return devicesSubNavigation("Channels")
 	case "machines-diagnostics":
-		return makeSubNavigation("疑難排解子選單", "裝置診斷",
-			subNavigationItem{Label: "裝置診斷", Href: "/machines/diagnostics"},
-		)
+		return troubleshootingSubNavigation("裝置診斷")
+	case "readiness", "machines-readiness":
+		return troubleshootingSubNavigation("Host readiness")
+	case "tailnet":
+		return endpointSecuritySubNavigation("Tailnet")
+	case "secrets":
+		return endpointSecuritySubNavigation("Secrets")
 	case "jobs":
-		return makeSubNavigation("代理程式子選單", "概觀",
-			subNavigationItem{Label: "概觀", Href: "/jobs#agent-overview"},
-			subNavigationItem{Label: "活動", Href: "/jobs#job-ledger"},
-			subNavigationItem{Label: "裝置註冊", Href: "/machines/enrollment"},
-			subNavigationItem{Label: "設定檔", Href: "/apps?view=profiles"},
-			subNavigationItem{Label: "部署", Href: "/deployments"},
-			subNavigationItem{Label: "稽核記錄", Href: "/audit"},
-		)
+		return agentsSubNavigation("概觀")
+	case "signins":
+		return agentsSubNavigation("Sign-ins")
+	case "loops":
+		return agentsSubNavigation("Attention / Loops")
 	case "jobs-detail":
 		if data.Job == nil {
 			return subNavigation{}
@@ -1974,6 +1936,47 @@ func subNavigationFor(data page) subNavigation {
 	default:
 		return subNavigation{}
 	}
+}
+
+func devicesSubNavigation(current string) subNavigation {
+	return makeSubNavigation("裝置子選單", current,
+		subNavigationItem{Label: "概觀", Href: "/machines#fleet-kpis"},
+		subNavigationItem{Label: "所有裝置", Href: "/machines#machines"},
+		subNavigationItem{Label: "監視", Href: "/machines#findings"},
+		subNavigationItem{Label: "註冊裝置", Href: "/machines/enrollment"},
+		subNavigationItem{Label: "Waiting to join", Href: "/machines/join"},
+		subNavigationItem{Label: "組態", Href: "/machines/configuration"},
+		subNavigationItem{Label: "合規性", Href: "/machines/compliance"},
+		subNavigationItem{Label: "名冊整理", Href: "/machines/lifecycle"},
+		subNavigationItem{Label: "更新", Href: "/updates"},
+		subNavigationItem{Label: "Channels", Href: "/channels"},
+		subNavigationItem{Label: "已退役", Href: "/machines?lifecycle=retired#machines"},
+	)
+}
+
+func troubleshootingSubNavigation(current string) subNavigation {
+	return makeSubNavigation("疑難排解子選單", current,
+		subNavigationItem{Label: "裝置診斷", Href: "/machines/diagnostics"},
+		subNavigationItem{Label: "Host readiness", Href: "/readiness"},
+	)
+}
+
+func endpointSecuritySubNavigation(current string) subNavigation {
+	nav := makeSubNavigation("端點安全性子選單", current,
+		subNavigationItem{Label: "Tailnet", Href: "/settings/tailnet"},
+		subNavigationItem{Label: "Secrets", Href: "/secrets"},
+	)
+	nav.Title = "端點安全性"
+	return nav
+}
+
+func agentsSubNavigation(current string) subNavigation {
+	return makeSubNavigation("代理程式子選單", current,
+		subNavigationItem{Label: "概觀", Href: "/jobs#agent-overview"},
+		subNavigationItem{Label: "活動", Href: "/jobs#job-ledger"},
+		subNavigationItem{Label: "Sign-ins", Href: "/signins"},
+		subNavigationItem{Label: "Attention / Loops", Href: "/attention/loops"},
+	)
 }
 
 // reportsSubNavigation 是報告那一欄的選單。入口寫在一個地方，因為它們指的是

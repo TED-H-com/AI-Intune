@@ -106,7 +106,7 @@ func TestNavigationLanguagePreferencePersistsEnglishAdminCenterShell(t *testing.
 		`<span>Endpoint security</span>`, `<span>Agents</span>`, `<span>Reports</span>`,
 		`<span>Tenant administration</span>`, `<span>Troubleshooting &#43; support</span>`,
 		`title="Source device `,
-		`aria-label="Devices navigation"`, `>Overview</a>`, `>All devices</a>`,
+		`aria-label="Devices navigation"`, `>Overview</a>`, `>All devices</a>`, `>Roster cleanup</a>`,
 		`aria-label="Switch management-center navigation to Traditional Chinese">繁體中文</button>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -114,6 +114,13 @@ func TestNavigationLanguagePreferencePersistsEnglishAdminCenterShell(t *testing.
 		}
 	}
 	assertOneNavigationLanguageForm(t, body, "zh-Hant", "/machines?state=Degraded")
+
+	endpointEnglish := getWithNavigationLocale(t, server, "/settings/tailnet", cookie)
+	if endpointEnglish.Code != http.StatusOK ||
+		!strings.Contains(endpointEnglish.Body.String(), `aria-label="Endpoint security navigation"`) ||
+		!strings.Contains(endpointEnglish.Body.String(), `<div class="workload-title">Endpoint security</div>`) {
+		t.Fatalf("English endpoint security navigation missing localized rail: %s", endpointEnglish.Body.String())
+	}
 	// The evidence-rich page body has not been translated in this slice. Its
 	// explicit language boundary prevents the navigation preference from
 	// mislabelling Traditional Chinese evidence as English.
