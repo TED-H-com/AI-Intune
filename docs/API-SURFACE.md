@@ -723,6 +723,13 @@ and performing this seven-day acceptance are separate operator actions.
 `GET /v1/operator/jobs-summary`, `GET /v1/operator/approvals-summary`, and
 `GET /v1/operator/hub-status` require only `view`, return no-store JSON
 (`schema_version=1`), and never enqueue work or write audit/approval records.
+
+**Example usage for `GET /v1/operator/hub-status`:**
+```bash
+# Retrieve basic hub health, uptime, and version facts
+curl -X GET "https://hub.example.com/v1/operator/hub-status" \
+     -H "Authorization: Bearer <operator_token>"
+```
 The matching MCP tools are `jobs_summary`, `approvals_summary`, and `hub_status`.
 
 A process-owned supervision service caches successful redacted DTOs for 30s;
@@ -1382,6 +1389,14 @@ requests per client IP per minute, and fails closed at 20 waiting/approved
 requests globally. IPs use the existing trusted-proxy resolver. Join codes and
 256-bit device secrets expire after 15 minutes; poll delivers approval once,
 atomically marking the request redeemed. All join responses use no-store.
+
+**Example usage for `POST /v1/join/start`:**
+```bash
+# Start a new join session from an endpoint
+curl -X POST "https://hub.example.com/v1/join/start" \
+     -H "Content-Type: application/json" \
+     -d '{"os": "windows", "arch": "amd64"}'
+```
 The script downloads the bundle while pending, then checks its SHA-256 from
 the approved payload before extraction. Bundle access requires the matching
 pending/approved, unexpired device secret, OS and architecture; redemption ends

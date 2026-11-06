@@ -179,6 +179,15 @@ read current state → preview exact impact → confirm typed target
 → apply with idempotency key → commit domain state + receipt + audit together
 ```
 
+## Core Modules
+
+AI-Intune is composed of several key modules that work together to provide evidence-first control:
+
+*   **`cmd/clawctl-hub`**: The central control ledger and web console. It handles inventory, observations, job dispatch, and metrics. It provides the UI, CLI endpoint, and operator APIs. It does not proxy model traffic.
+*   **`cmd/clawctl-agent`**: The statically compiled agent installed on managed endpoints. It performs system probes, implements typed adapters for workloads, executes jobs, and conducts independent verifications.
+*   **`internal/store`**: The SQLite persistence layer. It maintains the durable ledger of fleet state, policies, job evidence, and audit logs. It uses `modernc.org/sqlite` and incorporates optimizations like transaction batching for high performance.
+*   **`internal/agentadapter`**: Defines the typed contracts and adapters used by the agent to manage specific AI workloads (e.g., OpenClaw, Hermes). It translates Hub intents into concrete OS-level actions without relying on arbitrary shell scripts.
+
 ## Quick start
 
 ### Autopilot quick start (recommended)
@@ -475,17 +484,50 @@ Engineering and operations handoff notes are private working notes and are not p
 
 ## Development
 
+### Building the Project
+
+Use the provided `Makefile` to compile binaries. Binaries will be output to the `build/` directory.
+
 ```bash
-make test        # all Go tests plus the complete ops test suite
-make vet         # Go static analysis
-make build       # local Hub and Agent
-make cross       # Linux amd64 and arm64 Agent binaries
-make agent-bundles
+make build       # Build local Hub, Agent, and Operator binaries
+make hub         # Build only the Hub
+make agent       # Build only the Agent
+make operator    # Build only the Operator
+make cross       # Cross-compile Agent binaries for Linux amd64 and arm64
+make cross-darwin  # Cross-compile Agent binaries for macOS
+make cross-windows # Cross-compile Agent binaries for Windows
+make agent-bundles # Build Linux agent bundles and run packaging scripts
 ```
 
-`make test` puts the Go test temporary directory on `/dev/shm` when it exists. Running `go test ./...` directly with `TMPDIR` on disk makes the Store, Hub, Web, operator, and Agent packages exceed the default 10-minute package timeout.
-
 The Agent is built with `CGO_ENABLED=0` so the management plane does not share the runtime failure domain of the Node applications it manages.
+
+### Testing and Linting
+
+Testing requires both Go tests and operational shell scripts to pass.
+
+```bash
+make test        # Run all Go tests and the complete ops test suite
+make test-go     # Run only Go tests
+make test-ops    # Run only operational tests
+make vet         # Run Go static analysis
+make fmt         # Format Go source code
+```
+
+`make test` (and `make test-go`) puts the Go test temporary directory on `/dev/shm` when it exists to optimize performance. Running `go test ./...` directly with `TMPDIR` on a standard disk can cause packages like the Store, Hub, Web, Operator, and Agent to exceed the default 10-minute timeout. For targeted tests, run within specific package directories (e.g., `cd internal/store && go test -v .`).
+
+### Running Locally
+
+To start a local development environment, use the provided Docker Compose configuration or build and run the Hub directly:
+
+```bash
+make build
+./build/clawctl-hub
+```
+
+To probe the local system with the Agent, you can run:
+```bash
+make probe       # Run a read-only probe on the local machine
+```
 
 ## License
 
