@@ -1960,14 +1960,24 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 		return fmt.Errorf("store: observation machine: %w", err)
 	}
 
-	var prepared [][]any
+	type observationRow struct {
+		id       string
+		machine  string
+		measured string
+		recv     string
+		kind     string
+		subject  string
+		payload  string
+		source   string
+	}
+	var prepared []observationRow
 	measured, recv := fmtTime(b.MeasuredAt), fmtTime(receivedAt)
 	put := func(kind, subject string, v any) error {
 		payload, err := json.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("store: marshal %s/%s: %w", kind, subject, err)
 		}
-		prepared = append(prepared, []any{newID(), machineID, measured, recv, kind, subject, string(payload), SourceAgentMeasurement})
+		prepared = append(prepared, observationRow{newID(), machineID, measured, recv, kind, subject, string(payload), SourceAgentMeasurement})
 		return nil
 	}
 
@@ -2089,31 +2099,64 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 			return err
 		}
 	}
-	var values []string
-	var args []any
+	args := make([]any, 0, 100*8)
+
+	// Pre-compute query strings
+	const queryPrefix = "INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES "
+	const singleValues = "(?,?,?,?,?,?,?,?)"
+
+	var query100 string
+	{
+		var b strings.Builder
+		b.WriteString(queryPrefix)
+		for i := 0; i < 100; i++ {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(singleValues)
+		}
+		query100 = b.String()
+	}
+
 	flush := func() error {
-		if len(values) == 0 {
+		count := len(args) / 8
+		if count == 0 {
 			return nil
 		}
-		_, err := tx.Exec("INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES "+strings.Join(values, ","), args...)
-		values = nil
-		args = nil
+
+		var query string
+		if count == 100 {
+			query = query100
+		} else {
+			var b strings.Builder
+			b.WriteString(queryPrefix)
+			for i := 0; i < count; i++ {
+				if i > 0 {
+					b.WriteString(",")
+				}
+				b.WriteString(singleValues)
+			}
+			query = b.String()
+		}
+
+		_, err := tx.Exec(query, args...)
+		args = args[:0]
 		if isForeignKeyErr(err) {
 			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
 		}
 		return err
 	}
+
 	for _, row := range prepared {
-		if interval > 0 && (row[4] == KindCLITool || row[4] == KindSystemd) {
-			old, ok := previous[snapshotKey{row[4].(string), row[5].(string)}]
+		if interval > 0 && (row.kind == KindCLITool || row.kind == KindSystemd) {
+			old, ok := previous[snapshotKey{row.kind, row.subject}]
 			age := receivedAt.Sub(old.received)
-			if ok && old.payload == row[6] && age >= 0 && age < interval {
+			if ok && old.payload == row.payload && age >= 0 && age < interval {
 				continue
 			}
 		}
-		values = append(values, "(?,?,?,?,?,?,?,?)")
-		args = append(args, row...)
-		if len(values) == 100 {
+		args = append(args, row.id, row.machine, row.measured, row.recv, row.kind, row.subject, row.payload, row.source)
+		if len(args) == 100*8 {
 			if err := flush(); err != nil {
 				return fmt.Errorf("store: insert observations: %w", err)
 			}
