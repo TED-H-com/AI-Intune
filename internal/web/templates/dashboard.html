@@ -22,14 +22,14 @@
     <a class="metric-card" id="kpi-managed" href="/machines?lifecycle=active#machines">
       <div class="metric-label">受管理裝置</div>
       <div class="metric-value">{{.Dashboard.Expected}}</div>
-      <div class="metric-note"><span class="metric-state"><span class="dot blue" aria-hidden="true"></span>納入狀態判斷的分母</span></div>
+      <div class="metric-note"><span class="metric-state"><span class="dot blue" aria-hidden="true"></span>納入狀態評估</span></div>
     </a>
     <a class="metric-card" id="kpi-reporting" href="/machines?lifecycle=active&amp;reporting=true#machines">
       <div class="metric-label">正在回報</div>
       <div class="metric-value">{{.Dashboard.Reporting}} / {{.Dashboard.Expected}}</div>
       <div class="metric-note">
         <span class="metric-state"><span class="dot {{if eq .Dashboard.Reporting .Dashboard.Expected}}green{{else}}amber{{end}}" aria-hidden="true"></span>
-        {{if eq .Dashboard.Reporting .Dashboard.Expected}}分母內每台都有回報{{else}}有機器沒有回報{{end}}</span>
+        {{if eq .Dashboard.Reporting .Dashboard.Expected}}所有受管理裝置皆有回報{{else}}有機器沒有回報{{end}}</span>
       </div>
     </a>
     <a class="metric-card" id="kpi-attention" href="/machines?lifecycle=active&amp;state=Degraded&amp;state=Unreachable&amp;state=NeverReported&amp;state=IdentityConflict#machines">
@@ -37,7 +37,7 @@
       <div class="metric-value">{{.Dashboard.Attention}}</div>
       <div class="metric-note">
         <span class="metric-state"><span class="dot {{if eq .Dashboard.Attention 0}}green{{else}}red{{end}}" aria-hidden="true"></span>
-        {{if eq .Dashboard.Attention 0}}沒有機器需要查看{{else}}分母內不是「在線」的機器{{end}}</span>
+        {{if eq .Dashboard.Attention 0}}沒有機器需要查看{{else}}受管理裝置中有狀態異常{{end}}</span>
       </div>
     </a>
     <a class="metric-card" id="kpi-findings" href="#findings">
@@ -51,50 +51,11 @@
   </div>
 </section>
 
-<div class="dashboard-grid">
-  <section class="panel" aria-labelledby="fleet-reading-title">
-    <div class="panel-title"><h2 id="fleet-reading-title">狀態判讀</h2><a href="#machines">檢視機器名冊 →</a></div>
-    <div class="headline">
-      {{range .Headline}}<p>{{.}}</p>{{end}}
-    </div>
-  </section>
-  <aside class="dashboard-stack" aria-label="部署摘要">
-    <section class="panel" aria-labelledby="deployment-summary-title">
-      <div class="panel-title"><h2 id="deployment-summary-title">部署</h2><a href="/deployments">檢視全部 →</a></div>
-      {{if .Dashboard.DeploymentsKnown}}
-      <p style="margin:0 0 10px"><b>{{.Dashboard.ActiveDeployments}}</b> 張進行中；<b>{{.Dashboard.StuckDeployments}}</b> 張卡住。</p>
-      {{end}}
-      <ul class="signal-list">
-      {{range .DeploymentHeadlines}}
-        <li {{if .Unknown}}data-state="unknown"{{end}}><span class="dot {{if .Unknown}}amber{{else if .Stuck}}red{{else}}blue{{end}}" aria-hidden="true"></span><span>
-          {{if .DeploymentID}}<a href="/deployments/{{.DeploymentID}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}
-        </span></li>
-      {{end}}
-      </ul>
-    </section>
-  </aside>
-</div>
-
-{{if .HubInFleet}}
-<div class="caveat">
-  <b>Hub 與監控同在 {{.HubInFleet}}。</b>
-</div>
-{{end}}
-
-<details class="panel small" style="margin-top:14px">
-  <summary>Hub 這 24 小時對自己的紀錄（疑難排解）</summary>
-  <p style="margin:10px 0 4px"><a href="/audit">檢視動作紀錄 →</a></p>
-  {{if .HubEvents}}
-  <ul style="margin:4px 0 0 18px">
-    {{range .HubEvents}}<li><span class="mono dim">{{.At.Local.Format "01-02 15:04:05"}}</span> <span class="dim">{{hubEventLabel .Kind}}</span> {{.Detail}}</li>{{end}}
-  </ul>
-  {{else}}
-  <span class="dim">24 小時內 0 筆 Hub 事件。</span>
-  {{end}}
-</details>
+{{if not .MachineIndex}}{{template "fleet-context" .}}{{end}}
 
 {{if .MachineIndex}}
 {{template "machines-index.html" .}}
+<section class="fleet-context" aria-label="狀態與部署摘要">{{template "fleet-context" .}}</section>
 {{else}}
 <div class="section-title">
   <h2 id="machines" class="section-anchor" tabindex="-1">名冊</h2>
@@ -105,7 +66,7 @@
   </p>
   {{end}}
 </div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 <table>
 <thead><tr>
   <th style="width:200px">機器</th><th style="width:110px">狀態</th>
@@ -156,7 +117,7 @@
 <div class="panel">
   <p style="margin-top:0">
     這 <b>{{len .Overview.Retired}}</b> 台不算分母、不亮燈、不進早報。
-    <span class="dim small">但它們留在這裡。</span>
+    <span class="dim small">可查看退役前的資料。</span>
   </p>
   <table>
     <tr><th style="width:200px">機器</th><th style="width:150px">退役時間</th><th>當初的名字與位址</th></tr>
@@ -259,7 +220,7 @@
 
 {{if .Tools.Rows}}
 <h2 style="margin:18px 0 6px">工具版本</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th style="width:96px">工具</th>
   {{range .Tools.Labels}}<th>{{.}}</th>{{end}}
@@ -317,3 +278,48 @@
 </p>
 
 {{template "foot" .}}{{end}}
+
+{{define "fleet-context"}}
+<div class="dashboard-grid">
+  <section class="panel" aria-labelledby="fleet-reading-title">
+    <div class="panel-title"><h2 id="fleet-reading-title">狀態判讀</h2><a href="#machines">檢視機器名冊 →</a></div>
+    <div class="headline">
+      {{range .Headline}}<p>{{.}}</p>{{end}}
+    </div>
+  </section>
+  <aside class="dashboard-stack" aria-label="部署摘要">
+    <section class="panel" aria-labelledby="deployment-summary-title">
+      <div class="panel-title"><h2 id="deployment-summary-title">部署</h2><a href="/deployments">檢視全部 →</a></div>
+      {{if .Dashboard.DeploymentsKnown}}
+      <p style="margin:0 0 10px"><b>{{.Dashboard.ActiveDeployments}}</b> 張進行中；<b>{{.Dashboard.StuckDeployments}}</b> 張卡住。</p>
+      {{end}}
+      <ul class="signal-list">
+      {{range .DeploymentHeadlines}}
+        <li {{if .Unknown}}data-state="unknown"{{end}}><span class="dot {{if .Unknown}}amber{{else if .Stuck}}red{{else}}blue{{end}}" aria-hidden="true"></span><span>
+          {{if .DeploymentID}}<a href="/deployments/{{.DeploymentID}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}
+        </span></li>
+      {{end}}
+      </ul>
+    </section>
+  </aside>
+</div>
+
+{{if .HubInFleet}}
+<div class="caveat">
+  <b>Hub 與監控同在 {{.HubInFleet}}。</b>
+</div>
+{{end}}
+
+<details class="panel small" style="margin-top:14px">
+  <summary>Hub 這 24 小時對自己的紀錄（疑難排解）</summary>
+  <p style="margin:10px 0 4px"><a href="/audit">檢視動作紀錄 →</a></p>
+  {{if .HubEvents}}
+  <ul style="margin:4px 0 0 18px">
+    {{range .HubEvents}}<li><span class="mono dim">{{.At.Local.Format "01-02 15:04:05"}}</span> <span class="dim">{{hubEventLabel .Kind}}</span> {{.Detail}}</li>{{end}}
+  </ul>
+  {{else}}
+  <span class="dim">24 小時內 0 筆 Hub 事件。</span>
+  {{end}}
+</details>
+
+{{end}}

@@ -1209,12 +1209,12 @@ func TestDashboardMachineFilterIsVisibleAndClearable(t *testing.T) {
 
 	body := get(t, s, "/machines?machines=attention")
 	for _, want := range []string{
-		`<option value="active" selected>Active</option>`,
+		`<option value="active" selected>使用中</option>`,
 		`name="state" value="Degraded" checked`,
 		`name="state" value="Unreachable" checked`,
-		`符合 filter 0 / registry ceiling 內 1 台`,
+		`符合篩選 0 台 · 已載入 1 台`,
 		`href="/machines#machines">清除</a>`,
-		`目前 filter 沒有符合的機器`,
+		`沒有符合篩選條件的裝置`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("attention 篩選頁缺少 %q", want)

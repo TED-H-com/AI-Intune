@@ -1,15 +1,15 @@
 {{define "lifecycle.html"}}{{template "head" .}}
 <div class="page-heading"><div>
   <h1>裝置生命週期</h1>
-  <p>管理 active 與 retired 狀態。</p>
+  <p>檢視裝置狀態，預覽退役或恢復管理。</p>
 </div></div>
 
-<div class="kpis" style="margin-bottom:18px">
-  <div class="kpi"><span class="n">{{.Lifecycle.Active}}</span><span class="l">active 名冊列</span></div>
-  <div class="kpi"><span class="n">{{.Lifecycle.Retired}}</span><span class="l">retired 名冊列</span></div>
+<div class="metric-grid metric-grid-pair">
+  <div class="metric-card"><span class="metric-label">使用中的裝置</span><span class="metric-value">{{.Lifecycle.Active}}</span><span class="metric-note">納入管理名冊</span></div>
+  <div class="metric-card"><span class="metric-label">已退役裝置</span><span class="metric-value">{{.Lifecycle.Retired}}</span><span class="metric-note">保留歷史資料</span></div>
 </div>
 
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr>
   <th>裝置</th><th style="width:100px">狀態</th><th style="width:100px">revision</th>

@@ -22,6 +22,13 @@ const (
 )
 
 type navigationLocaleView struct {
+	SignoutLabel    string
+	AccountLabel    string
+	SecretsLabel    string
+	ChannelsLabel   string
+	AttentionLabel  string
+	SigninsLabel    string
+	ReadinessLabel  string
 	Tag             string
 	ContentTag      string
 	PageTitle       string
@@ -82,9 +89,16 @@ func navigationLocaleFor(r *http.Request, title string) navigationLocaleView {
 	}
 	target := navigationLocaleEnglish
 	view := navigationLocaleView{
+		SignoutLabel:    "登出",
+		AccountLabel:    "帳號安全性",
+		SecretsLabel:    "密鑰管理",
+		ChannelsLabel:   "通知管道",
+		AttentionLabel:  "待處理事項",
+		SigninsLabel:    "登入狀態",
+		ReadinessLabel:  "整備檢查",
 		Tag:             string(navigationLocaleTraditionalChinese),
 		ContentTag:      string(navigationLocaleTraditionalChinese),
-		PageTitle:       title,
+		PageTitle:       traditionalNavigationText(title),
 		ToggleLabel:     "English",
 		ToggleTitle:     "將管理中心導覽切換為英文",
 		SkipLabel:       "跳到主要內容",
@@ -108,6 +122,13 @@ func navigationLocaleFor(r *http.Request, title string) navigationLocaleView {
 	if locale == navigationLocaleEnglish {
 		target = navigationLocaleTraditionalChinese
 		view = navigationLocaleView{
+			SignoutLabel:    "Sign out",
+			AccountLabel:    "Account security",
+			SecretsLabel:    "Secrets",
+			ChannelsLabel:   "Channels",
+			AttentionLabel:  "Attention / Loops",
+			SigninsLabel:    "Sign-ins",
+			ReadinessLabel:  "Readiness",
 			Tag:             string(navigationLocaleEnglish),
 			ContentTag:      string(navigationLocaleTraditionalChinese),
 			PageTitle:       englishNavigationText(title),
@@ -251,13 +272,17 @@ func englishNavigationText(value string) string {
 }
 
 func localizeSubNavigation(nav *subNavigation, locale navigationLocale) {
-	if nav == nil || locale != navigationLocaleEnglish {
+	if nav == nil {
 		return
 	}
-	nav.Label = englishNavigationText(nav.Label)
-	nav.Title = englishNavigationText(nav.Title)
+	translate := traditionalNavigationText
+	if locale == navigationLocaleEnglish {
+		translate = englishNavigationText
+	}
+	nav.Label = translate(nav.Label)
+	nav.Title = translate(nav.Title)
 	for index := range nav.Items {
-		nav.Items[index].Label = englishNavigationText(nav.Items[index].Label)
+		nav.Items[index].Label = translate(nav.Items[index].Label)
 	}
 }
 
@@ -313,4 +338,40 @@ func navigationReturnTarget(target string) (string, error) {
 		return "", errors.New("return target is not a local request URI")
 	}
 	return parsed.RequestURI(), nil
+}
+
+// navigationGroup keeps detail pages selected in their parent workload.
+func navigationGroup(nav string) string {
+	switch {
+	case nav == "machines-diagnostics":
+		return "support"
+	case nav == "updates" || nav == "machines" || strings.HasPrefix(nav, "machines-"):
+		return "machines"
+	case strings.HasPrefix(nav, "tenant-"):
+		return "tenant"
+	case strings.HasSuffix(nav, "-report"):
+		return "reports"
+	}
+	switch nav {
+	case "reports", "checks", "changes", "tickets", "audit":
+		return "reports"
+	default:
+		return nav
+	}
+}
+
+func init() { funcs["navigationGroup"] = navigationGroup }
+
+var traditionalNavigationTexts = map[string]string{
+	"Waiting to join": "等待加入", "Schedules": "排程", "Disk policies": "磁碟原則",
+	"Disk alerts": "磁碟警示", "Approvals": "核准", "Certificates": "憑證",
+	"Checks / 檢查": "檢查", "Host readiness": "整備檢查", "Sign-ins": "登入狀態",
+	"Channels": "通知管道", "Secrets": "密鑰管理", "Attention / Loops": "待處理事項",
+}
+
+func traditionalNavigationText(value string) string {
+	if translated, ok := traditionalNavigationTexts[value]; ok {
+		return translated
+	}
+	return value
 }

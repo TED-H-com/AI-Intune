@@ -71,14 +71,13 @@ agent-bundles-windows: cross-windows
 # 那它就等於沒有 —— 一支沒有人跑的測試跟一支沒寫的測試，防護力一樣。
 test: test-go test-ops
 
-# ⚠ Store、Hub、Web、operator 與 agent 的測試都開真的 SQLite（WAL，每次 commit 都 fsync）。
-# TMPDIR 在磁碟上時，這五包各自超過 go test 預設的 10 分鐘，有短逾時的測試也會假失敗
-# （2026-09-30 實測：store 在 /dev/shm 上 13 秒，在磁碟上 600 秒逾時）。有 /dev/shm 就把
-# 這一次的暫存目錄開在那裡、跑完刪掉；沒有就沿用呼叫者的 TMPDIR。
+# SQLite/Git test data stays on disk and is removed when the run exits.
+# Allow disk-backed SQLite suites more than Go's default ten-minute timeout.
 test-go:
-	@tmp=$$(mktemp -d /dev/shm/clawctl-test.XXXXXX 2>/dev/null) && \
-		trap 'rm -rf "$$tmp"' EXIT && export TMPDIR="$$tmp"; \
-		$(GO) test ./...
+	@mkdir -p "$(HOME)/agent-work/tmp/go-test" && \
+		tmp=$$(mktemp -d "$(HOME)/agent-work/tmp/go-test/clawctl.XXXXXX") && \
+		trap 'rm -rf "$$tmp"' EXIT && export TMPDIR="$$tmp" && \
+		$(GO) test -timeout 30m ./...
 
 # ⚠ 不連網、不碰 ~/.config、不碰任何真的機器。理由見 ops/test-ops.sh 開頭。
 test-ops:

@@ -46,7 +46,7 @@
 
 {{if $p.Misattributed}}
 <h2 id="misattributed" class="section-anchor" tabindex="-1">看到的版號不是正在跑的那一份</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>資源</th><th>機器</th><th>指派的</th><th>看到的</th><th>這一格是什麼</th>
   <th>量版號的那個檔案</th><th>正在跑的那個檔案</th><th>下一步</th></tr></thead>
@@ -74,7 +74,7 @@
 
 {{if $p.Differing}}
 <h2 id="differing" class="section-anchor" tabindex="-1">指派的跟看到的不一樣</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>資源</th><th>機器</th><th>這一格是什麼</th><th>指派的</th><th>看到的</th>
   <th>版號講的是哪一份</th><th>指派給誰</th></tr></thead>
@@ -104,7 +104,7 @@
 
 {{if $p.Unassigned}}
 <h2 id="unassigned" class="section-anchor" tabindex="-1">沒有被指派過的</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>資源</th><th>沒有被指派過</th><th>這是什麼</th></tr></thead>
 <tbody>
@@ -123,7 +123,7 @@
 
 {{if $p.Matrix.Rows}}
 <h2 id="matrix" class="section-anchor" tabindex="-1">資源 × 機器</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th style="width:120px">資源</th>
   {{range $p.Matrix.Labels}}<th>{{.}}</th>{{end}}
@@ -161,7 +161,7 @@
 {{end}}
 
 <h2 id="states" class="section-anchor" tabindex="-1">每一格是什麼</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>這一格是什麼</th><th>幾格</th><th>意思</th><th>下一步</th></tr></thead>
 <tbody>
@@ -178,7 +178,7 @@
 </div>
 
 <h2 id="runtimes" class="section-anchor" tabindex="-1">看到的版號講的是哪一份</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>這一格是什麼</th><th>幾格</th><th>意思</th><th>下一步</th></tr></thead>
 <tbody>
@@ -198,7 +198,7 @@
 {{range $r.Resources}}
 <h2 id="resource-{{.ResourceKind}}-{{.ResourceID}}" class="section-anchor" tabindex="-1">{{.Name}}</h2>
 <p class="small">{{.Headline}}{{if .NextStep}} {{.NextStep}}{{end}}</p>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>機器</th><th>這一格是什麼</th><th>指派的</th><th>看到的</th>
   <th>版號講的是哪一份</th><th>指派給誰</th><th>Hub 收到的時刻</th></tr></thead>

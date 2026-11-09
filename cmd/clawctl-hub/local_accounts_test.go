@@ -112,7 +112,7 @@ func TestLocalAccountLifecycle(t *testing.T) {
 		}
 	}
 	w = accountRequest(h, "GET", "/", "", c)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "Sign out") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "登出") {
 		t.Fatalf("dashboard: %d %s", w.Code, w.Body.String())
 	}
 	a, err := st.LookupSession(c.Value)

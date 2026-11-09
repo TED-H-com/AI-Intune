@@ -37,7 +37,7 @@
     <h2 id="job-state-counts-title">狀態摘要</h2>
     <p class="active-filter">Hub 評估時間 {{$p.Result.EvaluatedAt.Local.Format "2006-01-02 15:04:05"}}</p>
   </div>
-  <div class="panel" style="padding:4px 6px">
+  <div class="panel table-panel">
     <table>
       <thead><tr>{{range $p.Result.StateCounts}}<th>{{.State}}</th>{{end}}</tr></thead>
       <tbody><tr>{{range $p.Result.StateCounts}}<td>{{.Count}}</td>{{end}}</tr></tbody>
@@ -49,7 +49,7 @@
   <h2 id="job-ledger" class="section-anchor" tabindex="-1">工作單帳本</h2>
   <p class="active-filter">符合 {{$p.Result.Total}} 張；本頁 {{len $p.Result.Items}} 張</p>
 </div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 {{if $p.Result.Items}}
 <table>
 <thead><tr>

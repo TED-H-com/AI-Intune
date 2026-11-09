@@ -17,6 +17,12 @@ import (
 )
 
 var forbiddenInterfaceCopy = []string{
+	"They do not prove that a provider will accept the next request",
+	"An administrator can start a sign-in",
+	"Human admin required",
+	"A human admin must approve or reject items",
+	"registry ceiling 內",
+	"符合 filter",
 	"temporary guard",
 	"temporary explanation",
 	"暫時設定",

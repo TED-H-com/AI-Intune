@@ -46,7 +46,7 @@
   <p style="margin-top:0">跨故障域證據：已開單的 {{$d.Independent.OpenedTargets}} 台中，{{$d.Independent.PassedTargets}} 台有第二個 producer 回報通過；可用 producer {{$d.Independent.LiveProducers}}。</p>
   <p class="small dim">{{range $d.Independent.Verdicts}}<span class="{{independentVerdictClass .Verdict}}">{{.Verdict}}</span> {{.Targets}} 台　{{end}}</p>
 </div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 <table>
 <caption class="sr-only">此 deployment 的 included targets、工作單與跨故障域證據</caption>
 <thead><tr><th scope="col">機器</th><th scope="col">批次</th><th scope="col">job</th><th scope="col">狀態</th><th scope="col">terminal_at</th><th scope="col">跨故障域</th></tr></thead>

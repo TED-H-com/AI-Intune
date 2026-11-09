@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,10 @@ func TestDeepDiskScreenshotFixtures(t *testing.T) {
 			t.Fatalf("invalid fixture %s: %s", f.name, body)
 		}
 		if f.name == "disk-report-viewer" {
-			for _, want := range []string{"2.0 GiB", "Partial report", "Scan budget reached", "human admin", `disabled`, "disk-report-scroll", "disk-report-table", "disk-report-filters", "skipped: no O_NOATIME permission", "Excluded protected", "weak"} {
+			if bytes.Contains(body, []byte(`name="item_ids"`)) || regexp.MustCompile(`<input[^>]*\sdisabled(?:[\s=>])`).Match(body) {
+				t.Fatal("viewer sees unavailable selection controls")
+			}
+			for _, want := range []string{"2.0 GiB", "Partial report", "Scan budget reached", "Pending review", `read-only`, "disk-report-scroll", "disk-report-table", "disk-report-filters", "skipped: no O_NOATIME permission", "Excluded protected", "weak"} {
 				if !bytes.Contains(body, []byte(want)) {
 					t.Fatalf("missing %s", want)
 				}

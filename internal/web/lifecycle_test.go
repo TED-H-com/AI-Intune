@@ -34,8 +34,8 @@ func TestLifecycleSubmenuListsActiveAndRetiredRegistryRows(t *testing.T) {
 			t.Errorf("lifecycle submenu missing %q", want)
 		}
 	}
-	if !strings.Contains(body, ">1</span><span class=\"l\">active 名冊列</span>") ||
-		!strings.Contains(body, ">1</span><span class=\"l\">retired 名冊列</span>") {
+	if !strings.Contains(body, `<span class="metric-label">使用中的裝置</span><span class="metric-value">1</span>`) ||
+		!strings.Contains(body, `<span class="metric-label">已退役裝置</span><span class="metric-value">1</span>`) {
 		t.Fatalf("lifecycle submenu counts are wrong: %s", body)
 	}
 	if strings.Contains(body, "分母意圖") || strings.Contains(body, ">expected<") ||

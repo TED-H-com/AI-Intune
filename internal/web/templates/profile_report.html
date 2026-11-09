@@ -46,7 +46,7 @@
 
 {{if $p.Unknown}}
 <h2 id="unknown" class="section-anchor" tabindex="-1">點名了一個這個 Hub 沒有見過的版本</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>profile</th><th>套件</th><th>版號</th><th>這是什麼</th><th>下一步</th></tr></thead>
 <tbody>
@@ -67,7 +67,7 @@
 
 {{if $p.Misattributed}}
 <h2 id="misattributed" class="section-anchor" tabindex="-1">看得到，而看到的版號量的是沒在跑的那一份</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>profile</th><th>套件</th><th>版號</th><th>機隊上看到幾台</th><th>其中量錯檔案</th><th>這一版在這個 Hub 身上是什麼</th></tr></thead>
 <tbody>
@@ -89,7 +89,7 @@
 
 {{if $p.Unassigned}}
 <h2 id="unassigned" class="section-anchor" tabindex="-1">發佈了，一台都沒指派</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>profile</th><th>發佈的時刻</th><th>發佈的人</th><th>下一步</th></tr></thead>
 <tbody>
@@ -109,7 +109,7 @@
 
 <h2 id="states" class="section-anchor" tabindex="-1">每一版現在是什麼</h2>
 {{if $p.States}}
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>這一版現在是什麼</th><th>幾版</th><th>意思</th><th>下一步</th></tr></thead>
 <tbody>
@@ -130,7 +130,7 @@
 
 {{if $p.PackageStates}}
 <h2 id="package-states" class="section-anchor" tabindex="-1">它們點名的版本，這個 Hub 見過沒有</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>這一版在這個 Hub 身上是什麼</th><th>幾格</th><th>意思</th><th>下一步</th></tr></thead>
 <tbody>
@@ -151,7 +151,7 @@
 {{range $r.Profiles}}
 <h2 id="profile-{{.ProfileID}}-{{.Revision}}" class="section-anchor" tabindex="-1">{{.ProfileID}} rev {{.Revision}}</h2>
 <p class="small">{{.Headline}}{{if .NextStep}} {{.NextStep}}{{end}}</p>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>套件</th><th>版號</th><th>這一版在這個 Hub 身上是什麼</th><th>指派過幾次</th><th>最後一次指派</th><th>機隊上看到幾台</th></tr></thead>
 <tbody>
@@ -171,7 +171,7 @@
 </table>
 </div>
 {{if .Machines}}
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>穿著這一版的機器</th><th>指派的時刻</th><th>指派的人</th><th>指派</th></tr></thead>
 <tbody>

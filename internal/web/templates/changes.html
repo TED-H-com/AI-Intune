@@ -55,7 +55,7 @@
     <h2 id="change-counts-title">Kind counts</h2>
     <p class="active-filter">精確篩選後 {{$p.Result.Total}} 筆；本頁 {{len $p.Rows}} 筆</p>
   </div>
-  <div class="panel" style="padding:4px 6px;overflow-x:auto">
+  <div class="panel table-panel">
     <table>
       <thead><tr>{{range $p.Result.KindCounts}}<th scope="col">{{.Kind}}</th>{{end}}</tr></thead>
       <tbody><tr>{{range $p.Result.KindCounts}}<td>{{.Count}}</td>{{end}}</tr></tbody>
