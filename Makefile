@@ -81,7 +81,10 @@ test-go:
 
 # ⚠ 不連網、不碰 ~/.config、不碰任何真的機器。理由見 ops/test-ops.sh 開頭。
 test-ops:
-	./ops/test-ops.sh
+	@mkdir -p "$(HOME)/agent-work/tmp/ops-test" && \
+		tmp=$$(mktemp -d "$(HOME)/agent-work/tmp/ops-test/clawctl.XXXXXX") && \
+		trap 'rm -rf "$$tmp"' EXIT && export TMPDIR="$$tmp" && \
+		./ops/test-ops.sh
 
 vet:
 	$(GO) vet ./...
