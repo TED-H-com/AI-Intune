@@ -1,18 +1,18 @@
 package main
 
 import (
-	"html/template"
 	"net/http"
 	"strings"
 
 	"github.com/teddashh/AI-Intune/internal/clientip"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
+	"github.com/teddashh/AI-Intune/internal/web"
 )
 
 var userPatterns = []string{"GET /account/users", "POST /account/users/create", "POST /account/users/disable", "POST /account/users/enable", "POST /account/users/email", "POST /account/users/rename"}
 var userActions = map[string]string{"create": "created", "disable": "disabled", "enable": "enabled", "email": "email-changed", "rename": "renamed"}
-var usersForm = template.Must(template.New("users").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Admin users</title><a href="/account/security">Account security</a><h1>Admin users</h1><p role="alert">{{.Error}}</p><table><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>MFA enrolled</th><th>Created</th></tr>{{range .Users}}<tr><td>{{.Username}}</td><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if .Disabled}}disabled{{else}}active{{end}}</td><td>{{if .MFAEnrolled}}yes{{else}}no{{end}}</td><td>{{.CreatedAt}}</td></tr>{{end}}</table>{{range .Actions}}<h2>{{.}}</h2><form method="post" action="/account/users/{{.}}"><label>Username <input name="username" required maxlength="64"></label>{{if eq . "create"}}<label>Email (optional) <input name="email" maxlength="254"></label><label>Initial password <input type="password" name="initial_password" required minlength="12" maxlength="256"></label>{{end}}{{if eq . "email"}}<label>Email (empty clears) <input name="email" maxlength="254"></label>{{end}}{{if eq . "rename"}}<label>New username <input name="new_username" required maxlength="64"></label>{{end}}<p>Fresh MFA is needed for this sensitive account action.</p><label>Your current password <input type="password" name="password" required maxlength="256"></label><label>Your authenticator code <input name="code" maxlength="6" autocomplete="one-time-code"></label><button>{{.}}</button></form>{{end}}</html>`))
+var usersForm = web.NewAccountTemplate("users", `{{template "account-head" "Admin users"}}<a href="/account/security">Account security</a><h1>Admin users</h1>{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}<div class="table-scroll"><table><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>MFA enrolled</th><th>Created</th></tr>{{range .Users}}<tr><td>{{.Username}}</td><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if .Disabled}}disabled{{else}}active{{end}}</td><td>{{if .MFAEnrolled}}yes{{else}}no{{end}}</td><td>{{.CreatedAt}}</td></tr>{{end}}</table></div>{{range .Actions}}<h2>{{if eq . "create"}}Create admin{{else if eq . "disable"}}Disable user{{else if eq . "enable"}}Enable user{{else if eq . "email"}}Update email{{else if eq . "rename"}}Rename user{{end}}</h2><form method="post" action="/account/users/{{.}}"><label>Username <input name="username" required maxlength="64"></label>{{if eq . "create"}}<label>Email (optional) <input name="email" maxlength="254"></label><label>Initial password <input type="password" name="initial_password" required minlength="12" maxlength="256"></label>{{end}}{{if eq . "email"}}<label>Email (empty clears) <input name="email" maxlength="254"></label>{{end}}{{if eq . "rename"}}<label>New username <input name="new_username" required maxlength="64"></label>{{end}}<p>Fresh MFA is needed for this sensitive account action.</p><label>Your current password <input type="password" name="password" required maxlength="256"></label><label>Your authenticator code <input name="code" maxlength="6" autocomplete="one-time-code"></label><button {{if eq . "disable"}}class="danger"{{end}}>{{if eq . "create"}}Create admin{{else if eq . "disable"}}Disable user{{else if eq . "enable"}}Enable user{{else if eq . "email"}}Update email{{else if eq . "rename"}}Rename user{{end}}</button></form>{{end}}{{template "account-foot" .}}`)
 
 func registerUserRoutes(mux *http.ServeMux, st *store.Store, resolver clientip.Resolver, cloud ...cloudBoundaryConfig) []string {
 	limiter := newIPLimiter(10, 5)

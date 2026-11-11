@@ -2,23 +2,23 @@
 {{$a := .Apps}}
 
 {{if eq $a.View "overview"}}
-<div class="page-heading"><div><h1>應用概觀</h1><p>Store packages、Profiles、機器指派與執行觀測。</p></div></div>
+<div class="page-heading"><div><h1>應用概觀</h1><p>管理應用程式套件、設定檔、裝置指派與執行觀測。</p></div></div>
 {{with $a.Overview}}
 <div class="metric-grid">
-  <a class="metric-card" href="/apps?view=openclaw"><span class="metric-label">名冊中的 active 機器</span><span class="metric-value">{{.ActiveMachines}}</span><span class="metric-note">逐台查看 OpenClaw 觀測。</span></a>
+  <a class="metric-card" href="/apps?view=openclaw"><span class="metric-label">使用中的裝置</span><span class="metric-value">{{.ActiveMachines}}</span><span class="metric-note">逐台查看 OpenClaw 觀測。</span></a>
   <a class="metric-card" href="/apps?view=openclaw"><span class="metric-label">量到版本</span><span class="metric-value">{{.ObservedInstalls}}</span><span class="metric-note">其餘機器：未知。</span></a>
   <a class="metric-card" href="/apps?view=openclaw"><span class="metric-label">clawctl release</span><span class="metric-value">{{.ManagedReleases}}</span><span class="metric-note">機器回報的 managed release。</span></a>
   <a class="metric-card" href="/apps?view=openclaw"><span class="metric-label">機器觀測到的版本數</span><span class="metric-value">{{.KnownVersions}}</span><span class="metric-note">去重後的機器版本。</span></a>
 </div>
 {{end}}
 <div class="panel">
-  <h2 style="margin-top:0">從這裡往下鑽</h2>
-  <p><a href="/apps?view=store">Store</a> 發布套件；<a href="/apps?view=profiles">Profiles</a> 組合完整軟體集合；<a href="/apps?view=assignments">Assignments</a> 指派到機器。</p>
+  <h2 style="margin-top:0">套件與指派</h2>
+  <p><a href="/apps?view=store">應用程式目錄</a> 發布套件；<a href="/apps?view=profiles">設定檔</a> 組合軟體集合；<a href="/apps?view=assignments">指派</a> 套用到裝置。</p>
 </div>
 
 {{else if eq $a.View "openclaw"}}
 <div class="page-heading"><div><h1>OpenClaw</h1><p>Active 機器最近一次 OpenClaw 觀測。</p></div></div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 <table>
 <caption class="sr-only">OpenClaw 機器觀測</caption>
 <thead><tr><th scope="col">機器</th><th scope="col">目前版本</th><th scope="col">clawctl release</th><th scope="col">node</th><th scope="col">最近 succeeded job</th><th scope="col">channel</th></tr></thead>
@@ -42,7 +42,7 @@
 <div class="page-heading"><div><h1>Standard Store</h1><p>已驗證、可由 Agent 執行的固定版本套件。</p></div></div>
 {{with $a.Store}}
 <div class="section-title"><h2>Packages</h2><p class="active-filter">{{len .Packages}} 個版本</p></div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 {{if .Packages}}
 <table><caption class="sr-only">Standard Store packages</caption>
 <thead><tr><th scope="col">Package</th><th scope="col">類型</th><th scope="col">相依</th><th scope="col">平台</th><th scope="col">Artifact</th></tr></thead>
@@ -106,7 +106,7 @@
 </section>
 <p class="small dim">{{$r.Caveat}}</p>
 {{if $r.NextStep}}<p class="small">{{$r.NextStep}}</p>{{end}}
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 {{if $r.Profiles}}<table><caption class="sr-only">Machine profiles</caption>
 <thead><tr><th scope="col">Profile</th><th scope="col">直接套件</th><th scope="col">現在穿在幾台身上</th>
   <th scope="col">這一格是什麼</th><th scope="col">發布時間</th></tr></thead>
@@ -157,7 +157,7 @@
 {{else}}<p class="empty">需要至少一台 active 機器與一個 Profile。<a href="/machines">查看機器名冊</a>，並<a href="/apps?view=profiles">發布 Profile</a> 後回來指派。</p>{{end}}
 </div>
 {{end}}
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table><caption class="sr-only">每一台現在穿著哪一版</caption>
 <thead><tr><th scope="col">機器</th><th scope="col">平台</th><th scope="col">現在穿著的 Profile</th>
   <th scope="col">指派時間</th><th scope="col">指派人</th></tr></thead>
@@ -180,7 +180,7 @@
 {{else}}
 {{with $a.Artifacts}}
 <div class="section-title"><h2>Catalog</h2><p class="active-filter">本頁 {{len .Items}} 項；符合條件共 {{.Total}} 項</p></div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 {{if .Items}}
 <table>
 <caption class="sr-only">Hub artifact catalog</caption>
@@ -222,7 +222,7 @@
 <div class="page-heading"><div><h1>Operations</h1><p>Artifact intake 狀態與進度。</p></div></div>
 {{with $a.Operations}}
 <div class="section-title"><h2>Fetch 帳本</h2><p class="active-filter">本頁 {{len .Items}} 項；帳本共 {{.Total}} 項</p></div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 {{if .Items}}
 <table>
 <caption class="sr-only">Artifact fetch operations</caption>

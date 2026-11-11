@@ -1,8 +1,7 @@
 {{define "loops.html"}}{{template "head" .}}
-<h1>Attention / Loops</h1>
-<p>Repeated identical calls without reported progress, detected from agent call activity. Review affected workloads below.</p>
+<div class="page-heading"><div><h1>Attention / Loops</h1><p>Review repeated calls without reported progress.</p></div></div>
 <div class="panel"><h2>Detection policy</h2><p>Open an episode when calls exceed the threshold within the sliding window. Policy changes apply on the next activity report. Rates are calls per minute averaged over the configured window.</p>
-{{if .Access.CanAdmin}}<form method="post" action="/attention/loops"><input type="hidden" name="action" value="policy"><label>Call threshold <input type="number" name="threshold" min="2" max="100000" value="{{.Loops.Policy.Threshold}}" required></label><label>Window (seconds) <input type="number" name="window_seconds" min="60" max="3600" value="{{.Loops.Policy.WindowSeconds}}" required></label><button>Save detection policy</button></form>{{else}}<p>Threshold: {{.Loops.Policy.Threshold}} calls; window: {{.Loops.Policy.WindowSeconds}} seconds. Ask an administrator to change this policy.</p>{{end}}</div>
+{{if .Access.CanAdmin}}<form class="action-form" method="post" action="/attention/loops"><input type="hidden" name="action" value="policy"><label>Call threshold <input type="number" name="threshold" min="2" max="100000" value="{{.Loops.Policy.Threshold}}" required></label><label>Window (seconds) <input type="number" name="window_seconds" min="60" max="3600" value="{{.Loops.Policy.WindowSeconds}}" required></label><button>Save detection policy</button></form>{{else}}<p>Threshold: {{.Loops.Policy.Threshold}} calls; window: {{.Loops.Policy.WindowSeconds}} seconds. </p>{{end}}</div>
 {{template "loop_episodes" .}}
 {{template "foot" .}}{{end}}
 {{define "loop_episodes"}}{{if .Loops}}<div class="panel" id="loops"><h2>Loop episodes</h2>

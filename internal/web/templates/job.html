@@ -50,7 +50,7 @@
 <div class="panel"><pre class="copy">{{$v.Evidence.Desired.Spec.Text}}</pre>{{if $v.Evidence.Desired.Spec.Truncated}}<p class="small dim">（已截斷至 {{jobEvidenceLimitLabel $v.Evidence.Desired.Spec.MaxBytes}}；帳本原文 {{$v.Evidence.Desired.Spec.Bytes}} bytes）</p>{{end}}{{if evidenceReplaced $v.Evidence.Desired.Spec.Issues}}<p class="small dim">（含已替換的控制／非法字元）</p>{{end}}</div>
 
 <h2 id="job-events" class="section-anchor" tabindex="-1">事件</h2>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 {{if $v.Evidence.Events.Items}}
 <table>
 <thead><tr><th>seq</th><th>phase</th><th>來源</th><th>occurred_at</th><th>received_at（Hub）</th></tr></thead>

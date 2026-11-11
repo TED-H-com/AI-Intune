@@ -1048,7 +1048,7 @@ func TestServiceTokenCustomScriptScopeError(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("status %d", w.Code)
 	}
-	for _, want := range []string{`role="alert"`, `<title>Error: Service tokens</title>`, `id="scope" aria-invalid="true" aria-errormessage="scope-error"`, `id="scope-error">Script-runs requires operate scope.`, `value="custom-agent"`, `value="view" selected`, `value="60" selected`, `value="180" selected`, `192.0.2.0/24`, `value="POST /v1/operator/script-runs" checked`} {
+	for _, want := range []string{`role="alert"`, `<title>Error: Service tokens · AI-Intune</title>`, `id="scope" aria-invalid="true" aria-errormessage="scope-error"`, `id="scope-error">Script-runs requires operate scope.`, `value="custom-agent"`, `value="view" selected`, `value="60" selected`, `value="180" selected`, `192.0.2.0/24`, `value="POST /v1/operator/script-runs" checked`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s", want)
 		}

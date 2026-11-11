@@ -416,7 +416,7 @@
 </div>
 
 <h2>登入憑證</h2>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 <table>
 <thead><tr>
   <th style="width:110px">供應商</th><th style="width:190px">狀態</th>
@@ -458,7 +458,7 @@
 </div>
 
 <h2>CLI 工具</h2>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 <table>
 <thead><tr><th style="width:110px">工具</th><th style="width:150px">版本</th><th>證據</th></tr></thead>
 <tbody>
@@ -601,7 +601,7 @@
 
 {{template "machine_checks" .}}
 <h2 id="jobs" class="section-anchor" tabindex="-1">工作單</h2>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 {{if .Jobs}}
 <table>
 <thead><tr><th>job</th><th>revision</th><th>狀態</th><th>建立</th><th>終態</th><th>digest</th></tr></thead>
@@ -624,7 +624,7 @@
 </div>
 
 <h2>systemd unit</h2>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 <table>
 <thead><tr>
   <th style="width:230px">unit</th><th style="width:120px">狀態</th>
@@ -698,7 +698,7 @@
 </div>
 
 <h2>狀態歷史</h2>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 <table>
 <thead><tr><th style="width:120px">狀態</th><th style="width:170px">進入時間</th><th style="width:120px">持續</th><th>當時的理由</th></tr></thead>
 <tbody>
@@ -721,7 +721,7 @@
 {{if not .ExecutionPolicy.MonitorOnly}}
 {{with .MachineActions}}
 <h2 id="actions" class="section-anchor" tabindex="-1">動作</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>動作</th><th>狀態</th><th>做了會怎樣</th></tr></thead>
 <tbody>

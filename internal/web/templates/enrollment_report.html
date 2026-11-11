@@ -35,7 +35,7 @@
 
 {{if $p.Owed}}
 <h2 id="owed" class="section-anchor" tabindex="-1">還沒到的機器</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>機器</th><th>走到哪一步</th><th>宣告納管</th><th>票</th><th>下一步</th></tr></thead>
 <tbody>
@@ -57,7 +57,7 @@
 {{end}}
 
 <h2 id="stages" class="section-anchor" tabindex="-1">名冊上的每一步</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>走到哪一步</th><th>機器</th><th>這是什麼</th><th>下一步</th></tr></thead>
 <tbody>
@@ -75,7 +75,7 @@
 <p class="small dim">離開分母只有一條路：退役。撤票、票過期都不會讓一列名冊消失——「你說要納管、但它沒來」是事實的一部分。</p>
 
 <h2 id="register" class="section-anchor" tabindex="-1">名冊全部 {{$r.Registered}} 列</h2>
-<div class="panel" style="padding:4px 6px;overflow-x:auto">
+<div class="panel table-panel">
 <table>
 <thead><tr><th>機器</th><th>走到哪一步</th><th>算分母</th><th>宣告納管</th><th>兌換票</th><th>最後一次報到</th></tr></thead>
 <tbody>

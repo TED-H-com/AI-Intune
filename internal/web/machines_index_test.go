@@ -114,7 +114,7 @@ func TestMachineIndexCanonicalFiltersReachTheSharedReadModel(t *testing.T) {
 					t.Errorf("GET %s leaked non-matching machine %s into the index", test.path, id)
 				}
 			}
-			if !strings.Contains(body, "符合 filter 1 / registry ceiling 內 4 台") {
+			if !strings.Contains(body, "符合篩選 1 台 · 已載入 4 台") {
 				t.Errorf("GET %s did not preserve full-fleet and matched totals", test.path)
 			}
 		})
@@ -144,7 +144,7 @@ func TestMachineIndexPagingPreservesFiltersAndCreationCeiling(t *testing.T) {
 
 	seen := map[string]bool{firstIDs[0]: true}
 	for page := 1; ; page++ {
-		if !strings.Contains(body, "符合 filter 3 / registry ceiling 內 3 台") {
+		if !strings.Contains(body, "符合篩選 3 台 · 已載入 3 台") {
 			t.Fatalf("page %d changed the ceiling traversal totals", page)
 		}
 		next := machineIndexNextHref(body)

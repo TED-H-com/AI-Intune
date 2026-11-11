@@ -43,7 +43,7 @@ func TestSigninsWebAdminMFAAndCSRF(t *testing.T) {
 	admin := diskWebPrincipal(true, true, "fixture")
 	admin.MFAVerifiedAt = time.Now()
 	form := url.Values{"target": {"fixture:agy:1"}}
-	if w := request("GET", "/signins", nil, viewer, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "Example host") || strings.Contains(w.Body.String(), "<button>Sign in") {
+	if w := request("GET", "/signins", nil, viewer, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "Example host") || strings.Contains(w.Body.String(), `action="/signins/start"`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if w := request("POST", "/signins/start", form, viewer, "http://example.com"); w.Code != 403 {

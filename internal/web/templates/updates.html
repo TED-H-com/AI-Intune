@@ -13,14 +13,14 @@
 </div>
 
 <div class="section-title"><h2 id="artifacts" class="section-anchor" tabindex="-1">Hub artifact catalog evidence</h2><p class="active-filter">本頁 {{len $u.Artifacts}} 項；符合條件共 {{$u.ArtifactTotal}} 項</p></div>
-<div class="panel" style="padding:4px 6px">
+<div class="panel table-panel">
 {{if $u.Artifacts}}
 <table>
 <thead><tr><th>版本</th><th>狀態</th><th>sha256</th><th>大小</th><th>engines</th><th>部署引用</th><th>收下時間</th></tr></thead>
 <tbody>{{range $u.Artifacts}}
 <tr>
   <td><a href="/apps/artifacts/{{.ArtifactID}}">{{.Version}}</a></td>
-  <td>{{.Status}}{{if .Issue}} · <span class="bad">{{.Issue}}</span>{{end}}</td>
+  <td>{{.Status}}{{if .Issue}} · <span class="st red">{{.Issue}}</span>{{end}}</td>
   <td class="mono">{{short .SHA256 12}}</td><td>{{if .SizeKnown}}{{bytes .Size}}{{else}}未知{{end}}</td><td class="mono">{{.EnginesNode}}</td>
   <td>{{.ActiveDeploymentReferences}} active / {{.DeploymentReferences}} total</td>
   <td class="small dim">{{if .FetchedAt}}{{.FetchedAt.Local.Format "2006-01-02 15:04:05"}}{{else}}未知{{end}}</td>

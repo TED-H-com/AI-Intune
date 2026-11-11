@@ -1,7 +1,6 @@
 package main
 
 import (
-	"html/template"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,9 +9,10 @@ import (
 	"github.com/teddashh/AI-Intune/internal/localauth"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
+	"github.com/teddashh/AI-Intune/internal/web"
 )
 
-var actionMFAForm = template.Must(template.New("step-up").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Confirm your identity</title><h1>Confirm your identity</h1><p>{{.Why}}</p><p role="alert">{{.Error}}</p><form method="post" action="{{.Action}}">{{range $key,$values := .Fields}}{{range $values}}<input type="hidden" name="{{$key}}" value="{{.}}">{{end}}{{end}}<label>Current password <input type="password" name="password" required maxlength="256" autocomplete="current-password"></label><label>Authenticator code <input name="code" required maxlength="6" autocomplete="one-time-code"></label><button>Confirm and continue</button></form></html>`))
+var actionMFAForm = web.NewAccountTemplate("step-up", `{{template "account-head" "Confirm your identity"}}<h1>Confirm your identity</h1><p>{{.Why}}</p>{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}<form method="post" action="{{.Action}}">{{range $key,$values := .Fields}}{{range $values}}<input type="hidden" name="{{$key}}" value="{{.}}">{{end}}{{end}}<label>Current password <input type="password" name="password" required maxlength="256" autocomplete="current-password"></label><label>Authenticator code <input name="code" required maxlength="6" autocomplete="one-time-code"></label><button>Confirm and continue</button></form>{{template "account-foot" .}}`)
 
 // Account/security handlers retain their own factor checks because those flows
 // may change the factor itself or require the current password independently.

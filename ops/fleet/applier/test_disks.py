@@ -18,6 +18,9 @@ loader.exec_module(module)
 
 class DiskTest(unittest.TestCase):
     def setUp(self):
+        # Model trusted system paths independently of the caller's shell umask.
+        previous_umask = os.umask(0o022)
+        self.addCleanup(os.umask, previous_umask)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / 'root'
