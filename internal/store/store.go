@@ -30,6 +30,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "github.com/go-json-experiment/json"
 	"errors"
 	"fmt"
 	"log"
@@ -1960,10 +1961,10 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 		return fmt.Errorf("store: observation machine: %w", err)
 	}
 
-	var prepared [][]any
+	prepared := make([][]any, 0, len(b.Systemd)+len(b.Artifacts)+len(b.Events)+len(b.Journals)+len(b.AuthHealth)+len(b.Credentials)+len(b.CLITools)+10)
 	measured, recv := fmtTime(b.MeasuredAt), fmtTime(receivedAt)
 	put := func(kind, subject string, v any) error {
-		payload, err := json.Marshal(v)
+		payload, err := jsonv2.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("store: marshal %s/%s: %w", kind, subject, err)
 		}
@@ -2089,15 +2090,15 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 			return err
 		}
 	}
-	var values []string
-	var args []any
+	args := make([]any, 0, 100*8)
+	values := make([]string, 0, 100)
 	flush := func() error {
 		if len(values) == 0 {
 			return nil
 		}
 		_, err := tx.Exec("INSERT INTO observed_state (observation_id,machine_id,measured_at,received_at,kind,subject,payload,source) VALUES "+strings.Join(values, ","), args...)
-		values = nil
-		args = nil
+		values = values[:0]
+		args = args[:0]
 		if isForeignKeyErr(err) {
 			return fmt.Errorf("store: observation from %q: %w", machineID, ErrNotFound)
 		}
@@ -2107,12 +2108,20 @@ func (s *Store) RecordObservation(machineID string, b model.ObservationBatch, re
 		if interval > 0 && (row[4] == KindCLITool || row[4] == KindSystemd) {
 			old, ok := previous[snapshotKey{row[4].(string), row[5].(string)}]
 			age := receivedAt.Sub(old.received)
-			if ok && old.payload == row[6] && age >= 0 && age < interval {
+			payloadStr, _ := row[6].(string)
+			if payloadBytes, ok := row[6].([]byte); ok {
+				payloadStr = string(payloadBytes)
+			}
+			if ok && old.payload == payloadStr && age >= 0 && age < interval {
 				continue
 			}
 		}
 		values = append(values, "(?,?,?,?,?,?,?,?)")
-		args = append(args, row...)
+		payloadStr, _ := row[6].(string)
+		if payloadBytes, ok := row[6].([]byte); ok {
+			payloadStr = string(payloadBytes)
+		}
+		args = append(args, row[0], row[1], row[2], row[3], row[4], row[5], payloadStr, row[7])
 		if len(values) == 100 {
 			if err := flush(); err != nil {
 				return fmt.Errorf("store: insert observations: %w", err)
