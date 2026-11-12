@@ -721,8 +721,8 @@ OpenClaw 則只比較 window 兩端最新 observation。排序與 `(from,to]` me
 時間，agent `measured_at` 另列且不參與判定。Opaque cursor 固定 exact filters、window/evaluation
 instant 與五個 source ceilings；retention 若刪除 continuation 所依賴的 observation，舊 traversal
 以 `410` 直接失效。Exact filters 下推到 Store，`total`／`matched_total` 與 kind counts 都只計篩選後
-集合。單次查詢硬限 253,000 筆 observation window rows、每個 selected source 253,000 筆 timestamp
-metadata、10,000 endpoint keys、10,000 transitions、32 MiB candidate metadata、32 MiB endpoint
+集合。單次查詢硬限 250,000 筆 observation window rows、每個 selected source 250,000 筆 malformed
+timestamps、10,000 endpoint keys、10,000 transitions、32 MiB candidate metadata、32 MiB endpoint
 payload、兩個並行 reader 與 10 秒；過寬／忙碌／逾時分別是 `422`／`429`／`503`。
 Safe projection 不輸出 raw payload、hostname/account、path/PID/argv/free-form text；未知 credential／
 CLI／systemd subject 固定遮罩且不能 query，並把 retention、舊 ledger registry/state transition

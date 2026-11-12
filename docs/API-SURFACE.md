@@ -248,7 +248,7 @@ Cursor 綁 exact filters、window/evaluation instant 與 registry/lifecycle/stat
 續頁期間若 retention 刪除 observation row，server 回 `410 CHANGE_TRAVERSAL_GONE`，而不是位移資料。
 Exact filters 下推至 Store；`total`、相容欄位 `matched_total` 與 kind counts 都描述篩選後完整 traversal，
 兩個 total 必須相等。單次 read 最多檢查 250,000 筆 window observation、每個 selected source
-250,000 筆 timestamp metadata、10,000 endpoint keys、10,000 transitions、32 MiB candidate metadata
+250,000 筆 malformed timestamps、10,000 endpoint keys、10,000 transitions、32 MiB candidate metadata
 與 32 MiB endpoint payload，超過即回 `422 CHANGE_READ_TOO_BROAD`；最多兩個
 並行 reader，忙碌回 `429`，10 秒逾時回 `503`。Safe DTO 只含固定 typed fields；credential／CLI／
 systemd subject 僅保留公開 allowlist，未知值固定成 `(redacted subject)` 且不可作 query filter。

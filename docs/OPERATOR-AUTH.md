@@ -497,7 +497,7 @@ kind、subject、`(from,to]` 秒精度 window、limit 與 cursor 在進 Store �
 30 天與每頁 100 筆。Cursor 固定 filters/window 與各 append source ceiling，但 retention 可以讓舊
 traversal 以 `410` fail closed，所以不稱為 snapshot。Exact filters 在 Store 下推，兩個 total 與 kind
 counts 都描述篩選後 traversal。單次成本限 250,000 筆 observation window rows、每個 selected source
-250,000 筆 timestamp metadata、10,000 endpoint keys、10,000 transitions、32 MiB candidate metadata、
+250,000 筆 malformed timestamps、10,000 endpoint keys、10,000 transitions、32 MiB candidate metadata、
 32 MiB endpoint payload、兩個並行 reader 與 10 秒；超限／忙碌／逾時分別回
 `422`／`429`／`503`。Registry/state 是逐筆 transition；agent observation 是 endpoint delta，排序只信
 Hub receipt/transition time。DTO 不含 raw payload、hostname/account、path、PID、argv 或 free-form reason；
