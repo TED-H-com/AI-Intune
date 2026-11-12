@@ -76,6 +76,53 @@ func TestOpenServeStoreRejectsUnrelatedSQLiteBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestOpenServeStoreAndOpenExistingCheckIdentityAfterOpen(t *testing.T) {
+	source := readRepoFile(t, "main.go")
+	for _, signature := range []string{
+		"func openServeStore(path string) (*store.Store, error) {",
+		"func openExisting(path string) (*store.Store, error) {",
+	} {
+		t.Run(signature, func(t *testing.T) {
+			body := sourceFunctionBody(t, source, signature)
+			openAt := strings.Index(body, "store.Open(")
+			if openAt < 0 {
+				t.Fatal("function does not call store.Open(")
+			}
+			before, after := body[:openAt], body[openAt:]
+			if got := strings.Count(before, "store.ValidateExistingLedger("); got != 1 {
+				t.Fatalf("ValidateExistingLedger before store.Open = %d, want 1", got)
+			}
+			if strings.Contains(before, "store.ValidateLedgerIdentity(") {
+				t.Fatal("ValidateLedgerIdentity runs before store.Open")
+			}
+			identityAt := strings.Index(after, "store.ValidateLedgerIdentity(")
+			if identityAt < 0 {
+				t.Fatal("ValidateLedgerIdentity does not run after store.Open")
+			}
+			if got := strings.Count(after, "store.ValidateLedgerIdentity("); got != 1 {
+				t.Fatalf("ValidateLedgerIdentity after store.Open = %d, want 1", got)
+			}
+			if strings.Contains(after, "store.ValidateExistingLedger(") {
+				t.Fatal("ValidateExistingLedger runs after store.Open")
+			}
+		})
+	}
+}
+
+func sourceFunctionBody(t *testing.T, source, signature string) string {
+	t.Helper()
+	at := strings.Index(source, signature)
+	if at < 0 {
+		t.Fatalf("source has no %s", signature)
+	}
+	rest := source[at:]
+	next := strings.Index(rest[len(signature):], "\nfunc ")
+	if next < 0 {
+		return rest
+	}
+	return rest[:len(signature)+next]
+}
+
 func TestOpenServeStoreAllowsExplicitFirstInstallUnderWriterLock(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {

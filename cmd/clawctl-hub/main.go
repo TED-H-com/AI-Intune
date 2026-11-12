@@ -1438,9 +1438,13 @@ func loadExpectations(st *store.Store) *expect.Set {
 // ---------------------------------------------------------------- 小工具
 
 // openServeStore is called only while serve owns the process-lifetime writer
-// lock.  An existing regular SQLite file is not sufficient identity: prove it
-// has a complete, historically reachable clawctl schema before Store.Open can
-// enable WAL or run migrations.  The post-open checks are cooperative-race
+// lock.  When the database file already exists, ValidateExistingLedger runs
+// before Store.Open and requires PRAGMA quick_check(1) plus a complete,
+// historically reachable clawctl schema, so Open cannot enable WAL or run
+// migrations on a non-ledger.  After Store.Open, including a first install
+// where the file did not exist, ValidateLedgerIdentity checks that schema
+// identity again and confirms the file is still a clawctl ledger after
+// migrations.  The post-open path and inode checks are cooperative-race
 // assertions; the private state directory and writer protocol forbid sibling
 // processes from renaming these paths while the lock is held.
 func openServeStore(path string) (*store.Store, error) {
@@ -1478,7 +1482,7 @@ func openServeStore(path string) (*store.Store, error) {
 	if err := ledgerlock.ValidateUpgradeTarget(path); err != nil {
 		return fail(fmt.Errorf("ledger path/sidecar identity rejected after writable open: %w", err))
 	}
-	if err := store.ValidateExistingLedger(path); err != nil {
+	if err := store.ValidateLedgerIdentity(path); err != nil {
 		return fail(fmt.Errorf("clawctl ledger identity rejected after migration: %w", err))
 	}
 	return st, nil
@@ -1519,7 +1523,7 @@ func openExisting(path string) (*store.Store, error) {
 		}
 		return nil, errors.Join(fmt.Errorf("database %s changed between validation and writable open: %w", path, err), closeErr)
 	}
-	if err := store.ValidateExistingLedger(path); err != nil {
+	if err := store.ValidateLedgerIdentity(path); err != nil {
 		return nil, errors.Join(fmt.Errorf("database %s identity rejected after migration: %w", path, err), st.Close())
 	}
 	return st, nil

@@ -2,9 +2,13 @@ package store
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -130,7 +134,7 @@ func TestValidateExistingLedgerAgentSessions(t *testing.T) {
 	t.Run("absent", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "historical.sqlite")
 		createManifestLedger(t, path, ledgerFixtureOptions{})
-		if err := ValidateExistingLedger(path); err != nil {
+		if err := validateLedgerBothWays(t, path); err != nil {
 			t.Fatalf("ledger without agent_sessions: %v", err)
 		}
 	})
@@ -142,7 +146,7 @@ func TestValidateExistingLedgerAgentSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 		closeCheckpointedLedger(t, st, path)
-		if err := ValidateExistingLedger(path); err != nil {
+		if err := validateLedgerBothWays(t, path); err != nil {
 			t.Fatalf("ledger Open creates: %v", err)
 		}
 	})
@@ -220,7 +224,7 @@ func TestValidateExistingLedgerAgentSessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			closeCheckpointedLedger(t, st, path)
-			err = ValidateExistingLedger(path)
+			err = validateLedgerBothWays(t, path)
 			if err == nil || !strings.Contains(err.Error(), "agent_sessions") {
 				t.Fatalf("malformed agent_sessions error=%v", err)
 			}
@@ -251,7 +255,7 @@ func TestValidateExistingLedgerValidatesOptionalJobDependencyTableWhenPresent(t 
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateExistingLedger(path); err == nil ||
+	if err := validateLedgerBothWays(t, path); err == nil ||
 		!strings.Contains(err.Error(), "job_dependencies") {
 		t.Fatalf("malformed optional table error=%v", err)
 	}
@@ -274,7 +278,7 @@ func TestValidateExistingLedgerDesiredStateRevisionIndexClosedSet(t *testing.T) 
 		t.Run(fixture.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "candidate.sqlite")
 			createManifestLedger(t, path, fixture.options)
-			err := ValidateExistingLedger(path)
+			err := validateLedgerBothWays(t, path)
 			if fixture.wantOK && err != nil {
 				t.Fatalf("valid historical shape: %v", err)
 			}
@@ -552,7 +556,7 @@ func assertFixtureColumns(t *testing.T, path string, expectedOptional []string) 
 func assertLedgerAcceptedReadOnlyAndOpenable(t *testing.T, path string, allowWALSidecarChanges bool) {
 	t.Helper()
 	before := snapshotLedgerFiles(t, path)
-	if err := ValidateExistingLedger(path); err != nil {
+	if err := validateLedgerBothWays(t, path); err != nil {
 		t.Fatalf("legitimate ledger rejected: %v", err)
 	}
 	afterValidation := snapshotLedgerFiles(t, path)
@@ -585,7 +589,7 @@ func assertLedgerAcceptedReadOnlyAndOpenable(t *testing.T, path string, allowWAL
 	assertSQLiteSchemaObject(t, copyPath, "index", "ix_catalog_manifests_published", true)
 	assertSQLiteSchemaObject(t, copyPath, "table", "machine_profiles", true)
 	assertSQLiteSchemaObject(t, copyPath, "index", "ix_machine_profiles_published", true)
-	if err := ValidateExistingLedger(copyPath); err != nil {
+	if err := validateLedgerBothWays(t, copyPath); err != nil {
 		t.Fatalf("migrated copy no longer identifies as a ledger: %v", err)
 	}
 
@@ -639,7 +643,7 @@ func assertSQLiteSchemaObject(t *testing.T, path, objectType, name string, expec
 func assertLedgerRejectedWithoutMutation(t *testing.T, path string) {
 	t.Helper()
 	before := snapshotLedgerFiles(t, path)
-	if err := ValidateExistingLedger(path); err == nil {
+	if err := validateLedgerBothWays(t, path); err == nil {
 		t.Fatal("non-clawctl database accepted")
 	}
 	assertLedgerSnapshotEqual(t, before, snapshotLedgerFiles(t, path), "ledger identity check modified rejected files")
@@ -747,7 +751,7 @@ func TestValidateExistingLedgerRejectsAnAdditiveColumnWhoseDefaultChanged(t *tes
 				t.Fatal(err)
 			}
 
-			err = ValidateExistingLedger(path)
+			err = validateLedgerBothWays(t, path)
 			if tc.wantOK {
 				if err != nil {
 					t.Fatalf("把同一個預設值原樣加回去仍然被拒，代表拒絕的原因是重建這個動作本身，不是預設值變了；下面那個 case 就無法歸因: %v", err)
@@ -759,4 +763,244 @@ func TestValidateExistingLedgerRejectsAnAdditiveColumnWhoseDefaultChanged(t *tes
 			}
 		})
 	}
+}
+
+// validateLedgerBothWays runs ValidateExistingLedger and ValidateLedgerIdentity
+// on the same fixture and returns the ValidateExistingLedger result. The
+// fixtures that use it are intact SQLite files or not ledgers at all, so the two
+// must agree on acceptance; createDamagedLedger is the case where they differ.
+func validateLedgerBothWays(t *testing.T, path string) error {
+	t.Helper()
+	existing := ValidateExistingLedger(path)
+	identity := ValidateLedgerIdentity(path)
+	if (existing == nil) != (identity == nil) {
+		t.Fatalf("ValidateExistingLedger = %v, ValidateLedgerIdentity = %v; want the same acceptance", existing, identity)
+	}
+	return existing
+}
+
+func TestValidateLedgerIdentitySkipsQuickCheck(t *testing.T) {
+	path := createDamagedLedger(t)
+	err := ValidateExistingLedger(path)
+	if err == nil || !strings.Contains(err.Error(), "quick_check") {
+		t.Fatalf("ValidateExistingLedger error = %v, want the quick_check rejection", err)
+	}
+	if err := ValidateLedgerIdentity(path); err != nil {
+		t.Fatalf("ValidateLedgerIdentity rejected a ledger whose schema is intact: %v", err)
+	}
+}
+
+func TestSequentialMainDatabaseReadReadsWholeFileWithoutChangingIt(t *testing.T) {
+	for _, fixture := range []struct {
+		name   string
+		create func(*testing.T) string
+		wantOK bool
+	}{
+		{name: "valid ledger", create: createCheckpointedLedger, wantOK: true},
+		{name: "damaged ledger", create: createDamagedLedger},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			path := fixture.create(t)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := fileSHA256(t, path)
+			if n := sequentialReadMainDatabase(path); n != info.Size() {
+				t.Fatalf("read %d bytes, want the whole file (%d)", n, info.Size())
+			}
+			if after := fileSHA256(t, path); after != before {
+				t.Fatal("sequential read changed the database file")
+			}
+			err = ValidateExistingLedger(path)
+			if fixture.wantOK && err != nil {
+				t.Fatalf("valid ledger rejected: %v", err)
+			}
+			if !fixture.wantOK && (err == nil || !strings.Contains(err.Error(), "quick_check")) {
+				t.Fatalf("damaged ledger error = %v, want the quick_check rejection", err)
+			}
+		})
+	}
+
+	t.Run("file larger than the read buffer", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "large.sqlite")
+		data := bytes.Repeat([]byte("clawctl\n"), (5<<20)/16+3)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if n := sequentialReadMainDatabase(path); n != int64(len(data)) {
+			t.Fatalf("read %d bytes, want the whole file (%d)", n, len(data))
+		}
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("sequential read changed the file (read back: %v)", err)
+		}
+	})
+
+	for _, fixture := range []struct {
+		name string
+		path func(*testing.T) string
+	}{
+		{name: "missing path", path: func(t *testing.T) string { return filepath.Join(t.TempDir(), "missing.sqlite") }},
+		{name: "directory", path: func(t *testing.T) string { return t.TempDir() }},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			path := fixture.path(t)
+			if n := sequentialReadMainDatabase(path); n != 0 {
+				t.Fatalf("read %d bytes from a path that is not a regular file", n)
+			}
+			// Both fail before quick_check, and ValidateLedgerIdentity does no
+			// sequential read: the same error shows the read changed nothing.
+			existing, identity := ValidateExistingLedger(path), ValidateLedgerIdentity(path)
+			if existing == nil || identity == nil || existing.Error() != identity.Error() {
+				t.Fatalf("ValidateExistingLedger = %v, ValidateLedgerIdentity = %v; want the same rejection", existing, identity)
+			}
+			if fixture.name == "missing path" {
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("validation created the missing path: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateExistingLedgerReadsSequentiallyBeforeQuickCheck keeps the
+// sequential read in front of quick_check: without it a cold start reads the
+// whole database in B-tree order, which no other test would notice.
+func TestValidateExistingLedgerReadsSequentiallyBeforeQuickCheck(t *testing.T) {
+	b, err := os.ReadFile("ledger_validate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(b)
+	body := func(signature string) string {
+		at := strings.Index(source, signature)
+		if at < 0 {
+			t.Fatalf("ledger_validate.go has no %s", signature)
+		}
+		rest := source[at+len(signature):]
+		if next := strings.Index(rest, "\nfunc "); next >= 0 {
+			rest = rest[:next]
+		}
+		return rest
+	}
+	existing := body("func ValidateExistingLedger(path string) error {")
+	readAt := strings.Index(existing, "sequentialReadMainDatabase(path)")
+	checkAt := strings.Index(existing, "PRAGMA quick_check(1)")
+	if readAt < 0 || checkAt < 0 || readAt > checkAt {
+		t.Fatalf("ValidateExistingLedger must call sequentialReadMainDatabase(path) before PRAGMA quick_check(1) (read at %d, check at %d)", readAt, checkAt)
+	}
+	identity := body("func ValidateLedgerIdentity(path string) error {")
+	if strings.Contains(identity, "quick_check") || strings.Contains(identity, "sequentialReadMainDatabase") {
+		t.Fatal("ValidateLedgerIdentity must not read the whole database")
+	}
+}
+
+func createCheckpointedLedger(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ledger.sqlite")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCheckpointedLedger(t, st, path)
+	return path
+}
+
+// createDamagedLedger returns a checkpointed ledger whose audit_log root page
+// header is overwritten: PRAGMA quick_check fails while the schema, and so the
+// identity checks, stay intact.
+func createDamagedLedger(t *testing.T) string {
+	t.Helper()
+	const table = "audit_log"
+	if ledgerIdentityReadsTable(table) {
+		t.Fatalf("fixture table %s is checked by the ledger identity checks", table)
+	}
+	path := createCheckpointedLedger(t)
+	damageTableRootPage(t, path, table)
+	assertQuickCheckFails(t, path)
+	return path
+}
+
+func ledgerIdentityReadsTable(name string) bool {
+	for _, table := range baselineLedgerTables {
+		if table.name == name {
+			return true
+		}
+	}
+	for _, table := range optionalLedgerTables {
+		if table.name == name {
+			return true
+		}
+	}
+	for _, additive := range additiveLedgerColumns {
+		if additive.table == name {
+			return true
+		}
+	}
+	return false
+}
+
+func damageTableRootPage(t *testing.T, path, table string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", rollbackReadOnlyDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pageSize, rootPage int
+	err = db.QueryRow(`PRAGMA page_size`).Scan(&pageSize)
+	if err == nil {
+		err = db.QueryRow(`SELECT rootpage FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&rootPage)
+	}
+	closeErr := db.Close()
+	if err != nil || closeErr != nil {
+		t.Fatalf("read %s root page: query=%v close=%v", table, err, closeErr)
+	}
+	if rootPage < 2 || pageSize < 512 {
+		t.Fatalf("%s root page %d page size %d", table, rootPage, pageSize)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset := int64(rootPage-1) * int64(pageSize)
+	_, writeErr := f.WriteAt([]byte{0, 0, 0, 0, 0, 0, 0, 0}, offset)
+	closeErr = f.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("overwrite %s page header: write=%v close=%v", table, writeErr, closeErr)
+	}
+}
+
+func assertQuickCheckFails(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", rollbackReadOnlyDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var integrity string
+	err = tx.QueryRow(`PRAGMA quick_check(1)`).Scan(&integrity)
+	if err == nil && integrity == "ok" {
+		t.Fatal("quick_check returned ok on the damaged fixture")
+	}
+}
+
+func fileSHA256(t *testing.T, path string) string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, f); err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(sum.Sum(nil))
 }
