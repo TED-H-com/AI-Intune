@@ -176,8 +176,12 @@ func TestServiceTokenManagementPlaintextOnce(t *testing.T) {
 	}
 
 	hash := sha256.Sum256([]byte(serviceTokenCopyScript))
-	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'sha256-"+base64.StdEncoding.EncodeToString(hash[:])+"'") || !strings.Contains(w.Body.String(), serviceTokenCopyScript) {
-		t.Fatal("copy script missing exact CSP hash")
+	copyHash := "sha256-" + base64.StdEncoding.EncodeToString(hash[:])
+	policy := w.Header().Get("Content-Security-Policy")
+	wantScriptSrc := "'" + web.ReasonScriptHash() + "' '" + web.SigninRefreshScriptHash() + "' '" + copyHash + "'"
+	want := "script-src " + wantScriptSrc + strings.TrimPrefix(lockedOperatorContentSecurityPolicy, "script-src '"+web.ReasonScriptHash()+"' '"+web.SigninRefreshScriptHash()+"'")
+	if strings.Count(policy, "script-src") != 1 || policy != want || !strings.Contains(w.Body.String(), serviceTokenCopyScript) {
+		t.Fatalf("copy script CSP=%q", policy)
 	}
 
 	page := accountRequest(h, "GET", "/account/service-tokens", "", cookie)

@@ -1045,10 +1045,29 @@ func operatorPolicyAdmissible(pattern string, policy operatorRoutePolicy) bool {
 	return operatorSecurityProfileValid(pattern, policy.SecurityProfile)
 }
 
+// lockedOperatorContentSecurityPolicyWithHashes returns the locked operator
+// policy. extraHashes are sha256- source values, without quotes, placed in
+// the single script-src directive after the reason and sign-in refresh hashes.
+func lockedOperatorContentSecurityPolicyWithHashes(extraHashes ...string) string {
+	var policy strings.Builder
+	policy.WriteString("script-src '")
+	policy.WriteString(web.ReasonScriptHash())
+	policy.WriteString("' '")
+	policy.WriteString(web.SigninRefreshScriptHash())
+	policy.WriteByte('\'')
+	for _, hash := range extraHashes {
+		policy.WriteString(" '")
+		policy.WriteString(hash)
+		policy.WriteByte('\'')
+	}
+	policy.WriteString("; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+	return policy.String()
+}
+
 // lockedOperatorContentSecurityPolicy is the policy every non-terminal
 // operator response sends. Only fixed audit and sign-in refresh scripts are allowed;
 // no outbound connection is permitted.
-var lockedOperatorContentSecurityPolicy = "script-src '" + web.ReasonScriptHash() + "' '" + web.SigninRefreshScriptHash() + "'; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+var lockedOperatorContentSecurityPolicy = lockedOperatorContentSecurityPolicyWithHashes()
 
 // The script hashes are fixed at process start from the embedded bytes. The
 // authority is the listener pinned on this boundary, so only the scheme is
