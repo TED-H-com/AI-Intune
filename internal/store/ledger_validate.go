@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -440,11 +441,39 @@ type ledgerIndexColumnInvariant struct {
 	descending int
 }
 
+// sequentialReadMainDatabase reads the main database file once from start to
+// end so the following quick_check runs from the page cache instead of reading
+// pages from disk in B-tree order. It returns the number of bytes read and
+// ignores every error; the integrity and identity checks that follow stay the
+// only authority.
+func sequentialReadMainDatabase(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return 0
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	buf := make([]byte, 1<<20)
+	var total int64
+	for {
+		n, err := f.Read(buf)
+		total += int64(n)
+		if err != nil {
+			return total
+		}
+	}
+}
+
 // ValidateExistingLedger identifies an existing clawctl evidence ledger
-// without migrating or otherwise writing it. It is the content half of the
-// stopped-service break-glass preflight; pathname ownership/alias checks live
-// in ledgerlock so the two checks can be repeated independently around locks
-// and the systemd stopped proof.
+// without migrating or otherwise writing it. It requires PRAGMA quick_check(1)
+// to return "ok", then applies the same schema identity checks as
+// ValidateLedgerIdentity in that same read-only transaction. It is the content
+// half of the stopped-service break-glass preflight; pathname ownership/alias
+// checks live in ledgerlock so the two checks can be repeated independently
+// around locks and the systemd stopped proof.
 //
 // clawctl had no application_id in its first release. Its durable identity is
 // therefore the complete Phase 1 schema: all 17 tables, stable column metadata,
@@ -452,17 +481,12 @@ type ledgerIndexColumnInvariant struct {
 // identity: schema.sql safely recreates them. The small compatibility lists
 // above come from committed additive migrations, not heuristics.
 func ValidateExistingLedger(path string) error {
-	db, err := sql.Open("sqlite", rollbackReadOnlyDSN(path))
+	sequentialReadMainDatabase(path)
+	db, tx, err := beginLedgerIdentityRead(path)
 	if err != nil {
-		return fmt.Errorf("store: open ledger identity read-only: %w", err)
+		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
-
-	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return fmt.Errorf("store: begin ledger identity read: %w", err)
-	}
 	defer tx.Rollback()
 
 	var integrity string
@@ -472,7 +496,50 @@ func ValidateExistingLedger(path string) error {
 	if integrity != "ok" {
 		return fmt.Errorf("store: ledger quick_check failed: %s", integrity)
 	}
+	if err := validateLedgerIdentityTx(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: finish ledger identity read: %w", err)
+	}
+	return nil
+}
 
+// ValidateLedgerIdentity checks clawctl ledger schema identity for path:
+// baseline tables, additive columns, optional tables when present, and
+// schema_meta version "1". The check uses the read-only ledger DSN and one
+// read-only transaction.
+func ValidateLedgerIdentity(path string) error {
+	db, tx, err := beginLedgerIdentityRead(path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	defer tx.Rollback()
+	if err := validateLedgerIdentityTx(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: finish ledger identity read: %w", err)
+	}
+	return nil
+}
+
+func beginLedgerIdentityRead(path string) (*sql.DB, *sql.Tx, error) {
+	db, err := sql.Open("sqlite", rollbackReadOnlyDSN(path))
+	if err != nil {
+		return nil, nil, fmt.Errorf("store: open ledger identity read-only: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("store: begin ledger identity read: %w", err)
+	}
+	return db, tx, nil
+}
+
+func validateLedgerIdentityTx(tx dbTx) error {
 	for _, table := range baselineLedgerTables {
 		if err := validateLedgerTable(tx, table); err != nil {
 			return err
@@ -506,10 +573,6 @@ func ValidateExistingLedger(path string) error {
 	}
 	if version != "1" {
 		return fmt.Errorf("store: unsupported clawctl ledger schema version %q", version)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: finish ledger identity read: %w", err)
 	}
 	return nil
 }
