@@ -12,9 +12,15 @@ import (
 
 const usageTestHash = "0123456789abcdef0123456789abcdef"
 
+// usageTestNow is the store clock in usageFixture. The fixture periods on
+// 2026-10-13 stay inside every default usage retention horizon from this
+// instant, whatever the date the tests run on.
+var usageTestNow = time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
+
 func usageFixture(t *testing.T) (*Store, string, UsageFileSnapshot) {
 	t.Helper()
 	s := newTestStore(t)
+	s.nowFn = func() time.Time { return usageTestNow }
 	machine := mustEnroll(t, s, "usage-test", s.now())
 	a := UsageAggregate{Tool: "codex",
 		AccountID:    "unknown",
