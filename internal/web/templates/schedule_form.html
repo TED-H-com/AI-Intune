@@ -3,7 +3,7 @@
 {{if $v.Error}}<div class="panel"><p class="st amber" role="alert" style="white-space: pre-line">{{$v.Error}}</p></div>{{end}}
 <div class="panel"><form class="disk-form" method="post" action="/tenant/schedules/preview">
 <input type="hidden" name="id" value="{{$e.ID}}"><input type="hidden" name="expected_revision" value="{{$e.ExpectedRevision}}"><input type="hidden" name="operation" value="upsert">
-<label><span class="field-label">名稱</span><input name="name" value="{{$e.Name}}" pattern="[a-z0-9][a-z0-9-]{0,62}" maxlength="63" required><span class="small dim">小寫英數字與連字號；名稱唯一。</span></label>
+<label><span class="field-label">名稱</span><input name="name" value="{{$e.Name}}" pattern="[a-z0-9][a-z0-9\-]{0,62}" maxlength="63" required><span class="small dim">小寫英數字與連字號；名稱唯一。</span></label>
 <label><span class="field-label">Script catalog</span><select name="script_id" required>{{range $v.Scripts}}<option value="{{.ID}}" {{if .Selected}}selected{{end}} {{if and (eq .Mode "write") (not $v.Admin)}}disabled{{end}}>{{.ID}} · {{.Mode}}{{if eq .Mode "write"}} ⚠ Write · Admin required{{end}}</option>{{end}}</select></label>
 <label><span class="field-label">Args · JSON object</span><textarea style="width:100%" name="args" rows="8" class="mono" required>{{printf "%s" $e.Args}}</textarea></label><p class="small dim">fleet-probe-v1 / fleet-probe-v2 使用 {}。預覽會依 catalog schema 驗證 JSON。</p>
 <details><summary>Catalog schemas</summary>{{range $v.Scripts}}<h3>{{.ID}} · {{.Mode}}</h3><pre class="copy">{{.Schema}}</pre>{{end}}</details>

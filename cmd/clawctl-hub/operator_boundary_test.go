@@ -5,11 +5,13 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
+	"github.com/teddashh/AI-Intune/internal/totp"
 	"github.com/teddashh/AI-Intune/internal/web"
 	"github.com/teddashh/AI-Intune/internal/web/terminalassets"
 )
@@ -2161,6 +2164,119 @@ func TestContentSecurityPolicyNamesPinnedListenerNotRequestHost(t *testing.T) {
 			t.Fatalf("script-src=%q, want %q", scriptSrcBody(got), wantScriptSrc)
 		}
 	})
+}
+
+// TestContentSecurityPolicyDirectivesAreUnique fails when a
+// Content-Security-Policy the Hub emits names any directive twice. Browsers
+// keep the first directive of a given name and ignore the later one.
+func TestContentSecurityPolicyDirectivesAreUnique(t *testing.T) {
+	profiles := operatorSecurityProfiles(t)
+	authority := testOperatorAuthority
+	plain := httptest.NewRequest(http.MethodGet, "http://"+authority+"/", nil)
+	plain.Host = authority
+	withTLS := plain.Clone(plain.Context())
+	withTLS.TLS = &tls.ConnectionState{}
+	boundary := newOperatorBoundary(http.NewServeMux(), nil, nil, nil, authority)
+	for _, profile := range profiles {
+		for _, req := range []*http.Request{nil, plain, withTLS} {
+			label := fmt.Sprintf("contentSecurityPolicy profile=%d nil=%t tls=%t", profile, req == nil, req != nil && req.TLS != nil)
+			assertUniqueCSPDirectives(t, label, contentSecurityPolicy(profile, authority, req))
+		}
+		for _, req := range []*http.Request{plain, withTLS} {
+			rec := httptest.NewRecorder()
+			boundary.writeSecurityHeaders(rec, req, profile)
+			assertUniqueCSPDirectives(t, fmt.Sprintf("writeSecurityHeaders profile=%d", profile), rec.Header().Get("Content-Security-Policy"))
+		}
+	}
+
+	t.Setenv("CLAWCTL_PUBLIC_URL", "https://hub.example.com")
+	config, err := cloudConfiguration(authModeBoth, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloudBoundary := newOperatorBoundary(http.NewServeMux(), nil, nil, nil, config.public.Authority(), config)
+	for _, profile := range profiles {
+		for _, host := range []string{config.public.Authority(), config.tailnetAuthority} {
+			if host == "" {
+				continue
+			}
+			req := httptest.NewRequest(http.MethodGet, "https://"+host+"/", nil)
+			req.Host = host
+			rec := httptest.NewRecorder()
+			cloudBoundary.writeSecurityHeaders(rec, req, profile)
+			assertUniqueCSPDirectives(t, fmt.Sprintf("cloud profile=%d host=%s", profile, host), rec.Header().Get("Content-Security-Policy"))
+		}
+	}
+
+	h, st := localAccountHandler(t)
+	actor, err := st.CreateFirstAdmin("alice", usersPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factor, err := st.BeginTOTPEnrollment(actor.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enroll, _ := totp.Code(factor, time.Now().Unix()/30-1)
+	if _, err = st.ConfirmTOTP(actor.AccountID, enroll); err != nil {
+		t.Fatal(err)
+	}
+	code, _ := totp.Code(factor, time.Now().Unix()/30)
+	fields := url.Values{"name": {"agent"}, "scope": {"view"}, "expiry_days": {"90"}, "password": {usersPassword}, "code": {code}, "preset": {"hermes-default"}}
+	w := accountRequest(h, "POST", "/account/service-tokens/create", fields.Encode(), adminSession(t, st))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), serviceTokenCopyScript) {
+		t.Fatalf("service token success status=%d", w.Code)
+	}
+	sum := sha256.Sum256([]byte(serviceTokenCopyScript))
+	policy := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "sha256-"+base64.StdEncoding.EncodeToString(sum[:])) {
+		t.Fatalf("service token success CSP=%q", policy)
+	}
+	assertUniqueCSPDirectives(t, "service token success", policy)
+}
+
+func operatorSecurityProfiles(t *testing.T) []operatorSecurityProfile {
+	t.Helper()
+	var profiles []operatorSecurityProfile
+	for candidate := operatorSecurityProfile(0); candidate < 32; candidate++ {
+		if operatorSecurityProfileValid("GET /", candidate) || operatorSecurityProfileValid(operatorTerminalDocumentPattern, candidate) {
+			profiles = append(profiles, candidate)
+		}
+	}
+	found := map[operatorSecurityProfile]bool{}
+	for _, profile := range profiles {
+		found[profile] = true
+	}
+	for _, profile := range []operatorSecurityProfile{operatorSecurityLocked, operatorSecurityTerminal} {
+		if !found[profile] {
+			t.Fatalf("security profile %d was not covered", profile)
+		}
+	}
+	if len(profiles) == 0 {
+		t.Fatal("no security profiles")
+	}
+	return profiles
+}
+
+func assertUniqueCSPDirectives(t *testing.T, label, policy string) {
+	t.Helper()
+	if policy == "" {
+		t.Errorf("%s: empty Content-Security-Policy", label)
+		return
+	}
+	seen := map[string]int{}
+	for _, part := range strings.Split(policy, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(part, " ")
+		name = strings.ToLower(name)
+		seen[name]++
+		if seen[name] > 1 {
+			t.Errorf("%s: directive %q appears %d times in %q", label, name, seen[name], policy)
+		}
+	}
 }
 
 func scriptContents(html string) []string {

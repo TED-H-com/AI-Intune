@@ -23,7 +23,7 @@
   <h2>Add or update channel</h2>
   <p>Use an existing name to replace its configuration. Enter credential references such as <code>env://TELEGRAM_BOT_TOKEN</code>.</p>
   <form class="disk-form" method="post" action="/channels/save">
-    <label><span class="field-label">Name</span><input name="id" required pattern="[a-zA-Z0-9_-]{1,64}" maxlength="64"></label>
+    <label><span class="field-label">Name</span><input name="id" required pattern="[a-zA-Z0-9_\-]{1,64}" maxlength="64"></label>
     <label><span class="field-label">Kind</span><select name="kind"><option value="discord">Discord</option><option value="telegram">Telegram</option><option value="webhook">Webhook</option></select></label>
     <p class="dim small">Discord bot: token and channel references. Discord webhook: URL reference.</p>
     <label><span class="field-label">Bot token reference</span><input name="token_ref" placeholder="env://TELEGRAM_BOT_TOKEN"></label>
@@ -63,7 +63,7 @@
   {{if .Access.CanAdmin}}
   <h3>Add or update bot</h3><p>Use an existing name to update its record.</p>
   <form class="disk-form" method="post" action="/channels/bot-save">
-    <label><span class="field-label">Name</span><input name="name" required maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}"></label>
+    <label><span class="field-label">Name</span><input name="name" required maxlength="64" pattern="[a-zA-Z0-9_\-]{1,64}"></label>
     <label><span class="field-label">Kind</span><select name="kind"><option>discord</option><option>telegram</option></select></label>
     <label><span class="field-label">Host machine ID</span><input name="machine_id" required></label>
     <label><span class="field-label">Agent type</span><select name="agent_type"><option>hermes</option><option>openclaw</option><option>other</option></select></label>

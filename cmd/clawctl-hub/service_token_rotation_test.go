@@ -59,7 +59,7 @@ func TestServiceTokenFormFieldsAndErrors(t *testing.T) {
 	get := httptest.NewRequest("GET", "/account/service-tokens", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, operatorauth.WithPrincipal(get, principal))
-	for _, label := range []string{"Name</label>", "Scope</label>", "Expiry</label>", "Allowed routes", "Optional source CIDRs", "Current password", "Authenticator code", "hermes-default", `pattern="[a-zA-Z0-9_-]{1,64}"`} {
+	for _, label := range []string{"Name</label>", "Scope</label>", "Expiry</label>", "Allowed routes", "Optional source CIDRs", "Current password", "Authenticator code", "hermes-default", `pattern="[a-zA-Z0-9_\-]{1,64}"`} {
 		if !strings.Contains(rec.Body.String(), label) {
 			t.Error("missing", label)
 		}
