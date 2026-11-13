@@ -50,6 +50,11 @@ CREATE INDEX IF NOT EXISTS ix_registry_expected
   ON machine_registry (expected, retired_at);
 CREATE INDEX IF NOT EXISTS ix_registry_change_read
   ON machine_registry (created_at DESC, machine_id);
+-- Malformed Hub created_at values only. The Changes timestamp audit reads this
+-- index, so its cost follows malformed rows rather than the retained registry.
+CREATE INDEX IF NOT EXISTS ix_registry_created_malformed
+  ON machine_registry (machine_id, created_at)
+  WHERE NOT (length(created_at) = 20 AND created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%SZ',created_at) IS created_at AND substr(created_at,12,2) < '24' AND created_at<>'0001-01-01T00:00:00Z');
 
 -- 即時 agent session 的授權投影。BAT Server 沒有使用者 ACL，所以每一列都要
 -- 留下 Hub 實際核對過的 tailnet 使用者；關閉後保留作為稽核與留存揭露。
@@ -88,6 +93,11 @@ CREATE INDEX IF NOT EXISTS ix_registry_lifecycle_machine
   ON machine_registry_lifecycle_events (machine_id, event_id DESC);
 CREATE INDEX IF NOT EXISTS ix_registry_lifecycle_change_machine
   ON machine_registry_lifecycle_events (machine_id, occurred_at DESC, event_id DESC);
+-- Malformed Hub occurred_at values only. The Changes timestamp audit reads this
+-- index, so its cost follows malformed lifecycle rows.
+CREATE INDEX IF NOT EXISTS ix_registry_lifecycle_occurred_malformed
+  ON machine_registry_lifecycle_events (machine_id, occurred_at)
+  WHERE NOT (length(occurred_at) = 20 AND occurred_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%SZ',occurred_at) IS occurred_at AND substr(occurred_at,12,2) < '24' AND occurred_at<>'0001-01-01T00:00:00Z');
 
 -- 看過的 /etc/machine-id 是不可自動復原的身分證據，不是 latest health sample。
 -- observed_state 會受 retention 清理；若只從最近 N 筆重算，clone 停止回報後衝突
@@ -277,6 +287,11 @@ CREATE INDEX IF NOT EXISTS ix_observed_changes_machine
   ON observed_state (machine_id, kind, received_at DESC, subject);
 CREATE INDEX IF NOT EXISTS ix_observed_changes_subject
   ON observed_state (kind, subject, received_at DESC, machine_id);
+-- Malformed Hub received_at values only. The Changes timestamp audit reads this
+-- index, so its cost follows malformed observations rather than retained history.
+CREATE INDEX IF NOT EXISTS ix_observed_received_malformed
+  ON observed_state (machine_id, kind, subject, received_at)
+  WHERE NOT (length(received_at) = 20 AND received_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%SZ',received_at) IS received_at AND substr(received_at,12,2) < '24' AND received_at<>'0001-01-01T00:00:00Z');
 
 -- ---------------------------------------------------------------- 憑證與票
 
@@ -474,6 +489,11 @@ CREATE INDEX IF NOT EXISTS ix_state_transition_change_read
   ON machine_state_transition_events (entered_at DESC, event_id DESC, machine_id);
 CREATE INDEX IF NOT EXISTS ix_state_transition_change_machine
   ON machine_state_transition_events (machine_id, entered_at DESC, event_id DESC);
+-- Malformed Hub entered_at values only. The Changes timestamp audit reads this
+-- index, so its cost follows malformed state transitions.
+CREATE INDEX IF NOT EXISTS ix_state_entered_malformed
+  ON machine_state_transition_events (machine_id, entered_at)
+  WHERE NOT (length(entered_at) = 20 AND entered_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%SZ',entered_at) IS entered_at AND substr(entered_at,12,2) < '24' AND entered_at<>'0001-01-01T00:00:00Z');
 
 INSERT OR IGNORE INTO machine_state_transition_events
   (machine_id,state,entered_at,history_rowid)

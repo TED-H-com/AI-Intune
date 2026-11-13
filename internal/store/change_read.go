@@ -612,10 +612,9 @@ func populateChangeReadDisplayNames(ctx context.Context, tx dbTx, ceiling int64,
 	return nil
 }
 
-// auditMalformedChangeHubTimes deliberately reads only indexed metadata, never
-// payload or free-text evidence. Malformed Hub coordinates cannot safely be
-// constrained by an indexed time window, so every matching row below the
-// frozen ceiling is counted rather than silently disappearing from coverage.
+// auditMalformedChangeHubTimes counts malformed Hub coordinates below the
+// frozen ceiling. The query names the partial index whose predicate is
+// changeReadMalformedTimeSQL, so the cap bounds malformed rows visited.
 func auditMalformedChangeHubTimes(ctx context.Context, tx dbTx, query string, args []any, label string, maxRows int) (int, map[string]bool, error) {
 	query += ` LIMIT ?`
 	args = append(args, maxRows+1)
@@ -650,17 +649,52 @@ func auditMalformedChangeHubTimes(ctx context.Context, tx dbTx, query string, ar
 	return malformed, invalidMachines, nil
 }
 
-func readRegistryCreationChanges(ctx context.Context, tx dbTx, from, to time.Time, ceiling int64, machineFilter string, auditLimit, maxRows int) ([]ChangeReadRecord, int, int, error) {
-	auditQuery := `SELECT machine_id,created_at FROM machine_registry`
-	if machineFilter == "" {
-		auditQuery += ` INDEXED BY ix_registry_change_read`
-	}
-	auditQuery += ` WHERE rowid <= ?`
-	auditArgs := []any{ceiling}
+// Audit builders omit the LIMIT appended by auditMalformedChangeHubTimes.
+func changeReadRegistryCreatedAuditQuery(ceiling int64, machineFilter string) (string, []any) {
+	query := `SELECT machine_id,created_at FROM machine_registry INDEXED BY ` +
+		changeReadRegistryCreatedMalformedIndex + ` WHERE rowid <= ?`
+	args := []any{ceiling}
 	if machineFilter != "" {
-		auditQuery += ` AND machine_id = ?`
-		auditArgs = append(auditArgs, machineFilter)
+		query += ` AND machine_id = ?`
+		args = append(args, machineFilter)
 	}
+	query += ` AND ` + changeReadMalformedTimeSQL("created_at")
+	return query, args
+}
+
+func changeReadRegistryLifecycleAuditQuery(ceiling int64, machineFilter string) (string, []any) {
+	query := `SELECT machine_id,occurred_at FROM machine_registry_lifecycle_events INDEXED BY ` +
+		changeReadRegistryLifecycleMalformedIndex + ` WHERE event_id <= ?`
+	args := []any{ceiling}
+	if machineFilter != "" {
+		query += ` AND machine_id = ?`
+		args = append(args, machineFilter)
+	}
+	query += ` AND ` + changeReadMalformedTimeSQL("occurred_at")
+	return query, args
+}
+
+func changeReadStateEnteredAuditQuery(ceiling int64, machineFilter string) (string, []any) {
+	query := `SELECT machine_id,entered_at FROM machine_state_transition_events INDEXED BY ` +
+		changeReadStateEnteredMalformedIndex + ` WHERE event_id <= ?`
+	args := []any{ceiling}
+	if machineFilter != "" {
+		query += ` AND machine_id = ?`
+		args = append(args, machineFilter)
+	}
+	query += ` AND ` + changeReadMalformedTimeSQL("entered_at")
+	return query, args
+}
+
+func changeReadObservationAuditQuery(ceiling int64, selection changeReadSelection) (string, []any) {
+	filterSQL, filterArgs := changeReadObservationFilterSQL(selection)
+	query := `SELECT machine_id,received_at FROM observed_state INDEXED BY ` + changeReadObservedReceivedMalformedIndex +
+		` WHERE rowid <= ?` + filterSQL + ` AND ` + changeReadMalformedTimeSQL("received_at")
+	return query, append([]any{ceiling}, filterArgs...)
+}
+
+func readRegistryCreationChanges(ctx context.Context, tx dbTx, from, to time.Time, ceiling int64, machineFilter string, auditLimit, maxRows int) ([]ChangeReadRecord, int, int, error) {
+	auditQuery, auditArgs := changeReadRegistryCreatedAuditQuery(ceiling, machineFilter)
 	malformed, _, err := auditMalformedChangeHubTimes(ctx, tx, auditQuery, auditArgs, "registry created_at", auditLimit)
 	if err != nil {
 		return nil, 0, 0, err
@@ -715,18 +749,7 @@ SELECT rowid,machine_id,display_name,created_at
 }
 
 func readRegistryLifecycleChanges(ctx context.Context, tx dbTx, from, to time.Time, ceiling int64, machineFilter string, auditLimit, maxRows int) ([]ChangeReadRecord, int, int, error) {
-	auditQuery := `SELECT machine_id,occurred_at FROM machine_registry_lifecycle_events INDEXED BY `
-	if machineFilter == "" {
-		auditQuery += `ix_registry_lifecycle_read`
-	} else {
-		auditQuery += `ix_registry_lifecycle_change_machine`
-	}
-	auditQuery += ` WHERE event_id <= ?`
-	auditArgs := []any{ceiling}
-	if machineFilter != "" {
-		auditQuery += ` AND machine_id = ?`
-		auditArgs = append(auditArgs, machineFilter)
-	}
+	auditQuery, auditArgs := changeReadRegistryLifecycleAuditQuery(ceiling, machineFilter)
 	malformed, _, err := auditMalformedChangeHubTimes(ctx, tx, auditQuery, auditArgs, "registry lifecycle occurred_at", auditLimit)
 	if err != nil {
 		return nil, 0, 0, err
@@ -794,18 +817,7 @@ SELECT event_id,machine_id,event_type,occurred_at
 }
 
 func readStateChanges(ctx context.Context, tx dbTx, from, to time.Time, ceiling int64, machineFilter string, auditLimit, maxRows int) ([]ChangeReadRecord, int, int, error) {
-	auditQuery := `SELECT machine_id,entered_at FROM machine_state_transition_events INDEXED BY `
-	if machineFilter == "" {
-		auditQuery += `ix_state_transition_change_read`
-	} else {
-		auditQuery += `ix_state_transition_change_machine`
-	}
-	auditQuery += ` WHERE event_id <= ?`
-	auditArgs := []any{ceiling}
-	if machineFilter != "" {
-		auditQuery += ` AND machine_id = ?`
-		auditArgs = append(auditArgs, machineFilter)
-	}
+	auditQuery, auditArgs := changeReadStateEnteredAuditQuery(ceiling, machineFilter)
 	malformed, invalidMachines, err := auditMalformedChangeHubTimes(ctx, tx, auditQuery, auditArgs, "state entered_at", auditLimit)
 	if err != nil {
 		return nil, 0, 0, err
@@ -910,11 +922,9 @@ type changeReadObservationEndpoints struct {
 func readObservationEndpointChanges(ctx context.Context, tx dbTx, from, to time.Time, ceiling int64, historyPruned bool, selection changeReadSelection) ([]ChangeReadRecord, int, int, error) {
 	filterSQL, filterArgs := changeReadObservationFilterSQL(selection)
 	indexName := changeReadObservationIndex(selection)
-	auditArgs := append([]any{ceiling}, filterArgs...)
+	auditQuery, auditArgs := changeReadObservationAuditQuery(ceiling, selection)
 	malformed, _, err := auditMalformedChangeHubTimes(ctx, tx,
-		`SELECT machine_id,received_at FROM observed_state INDEXED BY `+indexName+
-			` WHERE rowid <= ?`+filterSQL,
-		auditArgs, "observation received_at", selection.timestampAuditLimit)
+		auditQuery, auditArgs, "observation received_at", selection.timestampAuditLimit)
 	if err != nil {
 		return nil, 0, 0, err
 	}
@@ -1181,6 +1191,24 @@ func reserveChangeReadBytes(total *int64, bytes int64, limit int, dimension stri
 func changeReadCanonicalTimeSQL(column string) string {
 	return `length(` + column + `) = 20 AND ` + column +
 		` GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z'`
+}
+
+const (
+	changeReadRegistryCreatedMalformedIndex   = "ix_registry_created_malformed"
+	changeReadRegistryLifecycleMalformedIndex = "ix_registry_lifecycle_occurred_malformed"
+	changeReadStateEnteredMalformedIndex      = "ix_state_entered_malformed"
+	changeReadObservedReceivedMalformedIndex  = "ix_observed_received_malformed"
+)
+
+// changeReadMalformedTimeSQL matches parseChangeReadHubTime on every string.
+// strftime accepts Go's zero time and round-trips hour 24, so both are excluded
+// explicitly. In the canonical form the hour is characters 12-13. schema.sql
+// copies this text into the partial indexes.
+func changeReadMalformedTimeSQL(column string) string {
+	return `NOT (` + changeReadCanonicalTimeSQL(column) +
+		` AND strftime('%Y-%m-%dT%H:%M:%SZ',` + column + `) IS ` + column +
+		` AND substr(` + column + `,12,2) < '24'` +
+		` AND ` + column + `<>'0001-01-01T00:00:00Z')`
 }
 
 func changeReadTooBroad(dimension string, limit int) error {

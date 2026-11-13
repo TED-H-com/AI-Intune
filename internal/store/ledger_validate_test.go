@@ -23,6 +23,32 @@ const (
 		run_status:TEXT:0:-:0 total_tokens:INTEGER:0:-:0 last_error_text:TEXT:0:-:0`
 )
 
+func TestValidateExistingLedgerAcceptsMalformedChangeTimeIndexes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ledger.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		changeReadRegistryCreatedMalformedIndex,
+		changeReadRegistryLifecycleMalformedIndex,
+		changeReadStateEnteredMalformedIndex,
+		changeReadObservedReceivedMalformedIndex,
+	} {
+		var count int
+		if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("index %s count=%d", name, count)
+		}
+	}
+	closeCheckpointedLedger(t, st, path)
+	if err := ValidateExistingLedger(path); err != nil {
+		t.Fatalf("ledger with malformed change-time indexes: %v", err)
+	}
+}
+
 func TestValidateExistingLedgerAcceptsHistoricalShapesReadOnlyAndStoreOpenRecoversCopy(t *testing.T) {
 	if len(baselineLedgerTables) != 17 {
 		t.Fatalf("baseline manifest has %d tables, want the 17 tables created by 1c08e24", len(baselineLedgerTables))

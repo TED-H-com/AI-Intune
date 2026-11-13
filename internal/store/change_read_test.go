@@ -824,6 +824,261 @@ VALUES(?,?,?,?)`, "filter-noise", state.Online, "unselected malformed state", "m
 	}
 }
 
+func TestReadChangesUnfilteredTimestampAuditIgnoresCanonicalHistory(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	from := now.Add(-24 * time.Hour)
+	const auditLimit = 2
+
+	t.Run("observations", func(t *testing.T) {
+		st := newTestStore(t)
+		mustUpsertChangeMachine(t, st, "canonical-history", now)
+		for i := 0; i < auditLimit+1; i++ {
+			at := now.Add(-48*time.Hour - time.Duration(i)*time.Second)
+			insertChangeObservation(t, st, fmt.Sprintf("canonical-old-%d", i), "canonical-history", KindIdentity, "host",
+				mustChangePayload(t, model.Identity{OS: "debian", Kernel: fmt.Sprintf("old-%d", i)}), fmtTime(at), fmtTime(at))
+		}
+		current := now.Add(-time.Minute)
+		insertChangeObservation(t, st, "canonical-current", "canonical-history", KindIdentity, "host",
+			mustChangePayload(t, model.Identity{OS: "ubuntu"}), fmtTime(current), fmtTime(current))
+
+		selection := mustChangeReadSelection(t, ChangeReadRequest{})
+		selection.timestampAuditLimit = auditLimit
+		records, malformed, unplaceable, err := readObservationEndpointsForTest(t, st, from, now, selection)
+		if err != nil {
+			t.Fatalf("unfiltered observation read: %v", err)
+		}
+		if malformed != 0 || unplaceable != 0 || len(records) != 1 || records[0].Subject != "host" || !records[0].FromKnown {
+			t.Fatalf("canonical history outside the window changed the read: records=%+v malformed=%d unplaceable=%d",
+				records, malformed, unplaceable)
+		}
+	})
+
+	t.Run("state transitions", func(t *testing.T) {
+		st := newTestStore(t)
+		machineID := "canonical-state-history"
+		mustUpsertChangeMachine(t, st, machineID, now.Add(-72*time.Hour))
+		outside := []state.State{state.Online, state.Degraded, state.Online}
+		if len(outside) <= auditLimit {
+			t.Fatalf("outside transitions=%d, want more than audit limit %d", len(outside), auditLimit)
+		}
+		for i, value := range outside {
+			at := now.Add(-48*time.Hour - time.Duration(i+1)*time.Minute)
+			if err := st.RecordStateTransition(machineID, value, fmt.Sprintf("old-%d", i), at); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := st.RecordStateTransition(machineID, state.Degraded, "inside", now.Add(-time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx := context.Background()
+		tx, err := st.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		ceilings, err := currentChangeReadCeilings(ctx, tx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records, malformed, unplaceable, err := readStateChanges(ctx, tx, from, now, ceilings.StateHistory, "", auditLimit, MaxChangeReadTransitionRows)
+		if err != nil {
+			t.Fatalf("unfiltered state read: %v", err)
+		}
+		if malformed != 0 || unplaceable != 0 || len(records) != 1 || records[0].To != string(state.Degraded) || !records[0].FromKnown {
+			t.Fatalf("canonical state history outside the window changed the read: records=%+v malformed=%d unplaceable=%d",
+				records, malformed, unplaceable)
+		}
+	})
+}
+
+func TestChangeReadMalformedTimeSQLMatchesParser(t *testing.T) {
+	st := newTestStore(t)
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "year zero", value: "0000-01-01T00:00:00Z"},
+		{name: "upper bound", value: "9999-12-31T23:59:59Z"},
+		{name: "leap day", value: "2024-02-29T12:00:00Z"},
+		{name: "ordinary canonical", value: "2026-09-08T12:00:00Z"},
+		{name: "zero time plus one second", value: "0001-01-01T00:00:01Z"},
+		{name: "go zero time", value: "0001-01-01T00:00:00Z"},
+		{name: "non-leap 29 February", value: "2026-02-29T00:00:00Z"},
+		{name: "30 February", value: "2026-02-30T00:00:00Z"},
+		{name: "31 April", value: "2026-04-31T00:00:00Z"},
+		{name: "hour 24", value: "2026-01-01T24:00:00Z"},
+		{name: "minute 60", value: "2026-01-01T00:60:00Z"},
+		{name: "second 60", value: "2026-01-01T00:00:60Z"},
+		{name: "fractional second", value: "2026-01-01T00:00:00.5Z"},
+		{name: "zero fraction", value: "2026-01-01T00:00:00.000000000Z"},
+		{name: "numeric utc offset", value: "2026-01-01T00:00:00+00:00"},
+		{name: "other offset", value: "2026-06-01T15:04:05-07:00"},
+		{name: "lowercase t", value: "2026-01-01t00:00:00Z"},
+		{name: "lowercase z", value: "2026-01-01T00:00:00z"},
+		{name: "space instead of T", value: "2026-01-01 00:00:00Z"},
+		{name: "leading space", value: " 2026-01-01T00:00:00Z"},
+		{name: "trailing space", value: "2026-01-01T00:00:00Z "},
+		{name: "empty", value: ""},
+		{name: "19 bytes", value: "2026-01-01T00:00:00"},
+		{name: "21 bytes", value: "2026-01-01T00:00:00ZZ"},
+		{name: "non-ascii digits", value: "２０２６-０１-０１T００:００:００Z"},
+	}
+	expr := changeReadMalformedTimeSQL("raw")
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			var typeName string
+			var flag int
+			err := st.DB().QueryRow(`WITH probe(raw) AS (SELECT ?) SELECT typeof(`+expr+`), `+expr+` FROM probe`, test.value).
+				Scan(&typeName, &flag)
+			if err != nil {
+				t.Fatalf("predicate: %v", err)
+			}
+			if typeName != "integer" || (flag != 0 && flag != 1) {
+				t.Fatalf("predicate type=%s flag=%d", typeName, flag)
+			}
+			_, ok := parseChangeReadHubTime(test.value)
+			want := 0
+			if !ok {
+				want = 1
+			}
+			if flag != want {
+				t.Fatalf("sql malformed=%d, parse ok=%t", flag, ok)
+			}
+		})
+	}
+}
+
+func TestReadChangesCountsGlobAndCalendarMalformedHubTimes(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	canonical := fmtTime(now.Add(-time.Minute))
+
+	t.Run("observations", func(t *testing.T) {
+		st := newTestStore(t)
+		mustUpsertChangeMachine(t, st, "calendar-observations", now.Add(-48*time.Hour))
+		payload := mustChangePayload(t, model.Identity{OS: "debian"})
+		insertChangeObservation(t, st, "glob-received", "calendar-observations", KindIdentity, "glob-bad",
+			payload, canonical, "not-a-received-time")
+		insertChangeObservation(t, st, "calendar-received", "calendar-observations", KindIdentity, "calendar-bad",
+			payload, canonical, "2026-02-30T00:00:00Z")
+		insertChangeObservation(t, st, "valid-received", "calendar-observations", KindIdentity, "valid-host",
+			mustChangePayload(t, model.Identity{OS: "ubuntu"}), canonical, canonical)
+
+		result, err := st.ReadChanges(ChangeReadRequest{
+			From: now.Add(-time.Hour), To: now, Kinds: []string{KindIdentity},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.MalformedTimestamps != 2 || result.UnplaceableTimestamps != 2 || len(result.Records) != 1 ||
+			result.Records[0].Subject != "valid-host" {
+			t.Fatalf("glob and calendar received_at counts: malformed=%d unplaceable=%d records=%+v",
+				result.MalformedTimestamps, result.UnplaceableTimestamps, result.Records)
+		}
+	})
+
+	t.Run("state transitions", func(t *testing.T) {
+		st := newTestStore(t)
+		machineID := "calendar-state"
+		mustUpsertChangeMachine(t, st, machineID, now.Add(-48*time.Hour))
+		if err := st.RecordStateTransition(machineID, state.Online, "inside", now.Add(-time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.DB().Exec(`
+INSERT INTO machine_state_transition_events(machine_id,state,entered_at) VALUES
+  (?,?,'not-a-state-time'),
+  (?,?,'2026-02-30T00:00:00Z')`,
+			machineID, string(state.Degraded), machineID, string(state.Unreachable)); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := st.ReadChanges(ChangeReadRequest{
+			From: now.Add(-time.Hour), To: now,
+			Kinds: []string{ChangeReadKindState}, Subject: ChangeReadSubjectState,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.MalformedTimestamps != 2 || result.UnplaceableTimestamps != 2 || len(result.Records) != 1 ||
+			result.Records[0].To != string(state.Online) ||
+			!containsString(result.Records[0].Issues, "state_history_has_unplaceable_timestamp") {
+			t.Fatalf("glob and calendar entered_at counts: malformed=%d unplaceable=%d records=%+v",
+				result.MalformedTimestamps, result.UnplaceableTimestamps, result.Records)
+		}
+	})
+}
+
+func TestReadChangesMachineFilterSkipsOtherMachineMalformedHubTimes(t *testing.T) {
+	st := newTestStore(t)
+	now := time.Date(2026, 9, 8, 20, 0, 0, 0, time.UTC)
+	const (
+		targetID = "timestamp-audit-target"
+		otherID  = "timestamp-audit-other"
+	)
+	mustUpsertChangeMachine(t, st, targetID, now)
+	mustUpsertChangeMachine(t, st, otherID, now)
+
+	updated, err := st.DB().Exec(
+		`UPDATE machine_registry SET created_at='not-a-created-time' WHERE machine_id=?`, otherID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected, err := updated.RowsAffected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affected != 1 {
+		t.Fatalf("created_at update affected %d rows", affected)
+	}
+
+	from, to := now.Add(-time.Hour), now
+	registry := ChangeReadRequest{
+		From: from, To: to,
+		Kinds: []string{ChangeReadKindRegistry}, Subject: ChangeReadSubjectLife,
+	}
+	stateRead := ChangeReadRequest{
+		From: from, To: to,
+		Kinds: []string{ChangeReadKindState}, Subject: ChangeReadSubjectState,
+	}
+	count := func(label string, request ChangeReadRequest, want int) {
+		t.Helper()
+		result, err := st.ReadChanges(request)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if result.MalformedTimestamps != want || result.UnplaceableTimestamps != want {
+			t.Fatalf("%s malformed=%d unplaceable=%d, want %d",
+				label, result.MalformedTimestamps, result.UnplaceableTimestamps, want)
+		}
+	}
+
+	// One registry request runs the created_at and occurred_at audits together.
+	// The lifecycle row is inserted after this pair, so the created_at row is
+	// the only malformed Hub time those two counts include.
+	count("unfiltered registry created_at", registry, 1)
+	registry.MachineID = targetID
+	count("machine-filtered registry created_at", registry, 0)
+
+	if _, err := st.DB().Exec(`
+INSERT INTO machine_registry_lifecycle_events(machine_id,event_type,occurred_at)
+VALUES(?,?,'not-a-lifecycle-time')`, otherID, ChangeReadRetired); err != nil {
+		t.Fatal(err)
+	}
+	registry.MachineID = ""
+	count("unfiltered registry lifecycle occurred_at", registry, 2)
+	registry.MachineID = targetID
+	count("machine-filtered registry lifecycle occurred_at", registry, 0)
+
+	if _, err := st.DB().Exec(`
+INSERT INTO machine_state_transition_events(machine_id,state,entered_at)
+VALUES(?,?,'not-a-state-time')`, otherID, string(state.Degraded)); err != nil {
+		t.Fatal(err)
+	}
+	count("unfiltered state entered_at", stateRead, 1)
+	stateRead.MachineID = targetID
+	count("machine-filtered state entered_at", stateRead, 0)
+}
+
 func TestReadChangesObservationBoundsFailClosedBeforePayload(t *testing.T) {
 	now := time.Date(2026, 9, 8, 19, 20, 0, 0, time.UTC)
 
@@ -900,9 +1155,8 @@ func TestReadChangesObservationBoundsFailClosedBeforePayload(t *testing.T) {
 		mustUpsertChangeMachine(t, st, "audit-cap", now)
 		payload := mustChangePayload(t, model.Identity{OS: "debian"})
 		for i := 0; i < 3; i++ {
-			at := now.Add(-time.Duration(i+1) * time.Hour)
 			insertChangeObservation(t, st, fmt.Sprintf("audit-cap-%d", i), "audit-cap", KindIdentity,
-				"identity", payload, fmtTime(at), fmtTime(at))
+				"identity", payload, fmt.Sprintf("malformed-measured-%d", i), fmt.Sprintf("malformed-received-%d", i))
 		}
 		selection := mustChangeReadSelection(t, ChangeReadRequest{MachineID: "audit-cap", Kinds: []string{KindIdentity}})
 		selection.timestampAuditLimit = 2
@@ -1027,6 +1281,68 @@ SELECT event_id,machine_id,state,entered_at
 	ORDER BY entered_at DESC,event_id DESC LIMIT ?`, 1, "2026-09-08T00:00:00Z", "2026-09-09T00:00:00Z", 2)
 	if !strings.Contains(stateWindow, "INDEX ix_state_transition_change_read") {
 		t.Fatalf("state window is not indexed: %s", stateWindow)
+	}
+
+	for _, indexed := range []struct {
+		column string
+		index  string
+	}{
+		{"created_at", changeReadRegistryCreatedMalformedIndex},
+		{"occurred_at", changeReadRegistryLifecycleMalformedIndex},
+		{"entered_at", changeReadStateEnteredMalformedIndex},
+		{"received_at", changeReadObservedReceivedMalformedIndex},
+	} {
+		predicate := changeReadMalformedTimeSQL(indexed.column)
+		if !strings.Contains(schemaSQL, "CREATE INDEX IF NOT EXISTS "+indexed.index+"\n") {
+			t.Fatalf("schema.sql is missing %s", indexed.index)
+		}
+		if !strings.Contains(schemaSQL, "WHERE "+predicate) {
+			t.Fatalf("schema.sql predicate for %s differs from the audit query", indexed.column)
+		}
+	}
+	type changeReadAuditPlan struct {
+		name  string
+		query string
+		args  []any
+		index string
+	}
+	audits := make([]changeReadAuditPlan, 0, 10)
+	addAudit := func(name, index, query string, args []any) {
+		query += ` LIMIT ?`
+		args = append(args, 2)
+		audits = append(audits, changeReadAuditPlan{name: name, index: index, query: query, args: args})
+	}
+	query, args := changeReadRegistryCreatedAuditQuery(1, "")
+	addAudit("registry audit unfiltered", changeReadRegistryCreatedMalformedIndex, query, args)
+	query, args = changeReadRegistryCreatedAuditQuery(1, "machine")
+	addAudit("registry audit machine", changeReadRegistryCreatedMalformedIndex, query, args)
+	query, args = changeReadRegistryLifecycleAuditQuery(1, "")
+	addAudit("lifecycle audit unfiltered", changeReadRegistryLifecycleMalformedIndex, query, args)
+	query, args = changeReadRegistryLifecycleAuditQuery(1, "machine")
+	addAudit("lifecycle audit machine", changeReadRegistryLifecycleMalformedIndex, query, args)
+	query, args = changeReadStateEnteredAuditQuery(1, "")
+	addAudit("state audit unfiltered", changeReadStateEnteredMalformedIndex, query, args)
+	query, args = changeReadStateEnteredAuditQuery(1, "machine")
+	addAudit("state audit machine", changeReadStateEnteredMalformedIndex, query, args)
+	for _, observation := range []struct {
+		name    string
+		request ChangeReadRequest
+	}{
+		{name: "observation audit unfiltered", request: ChangeReadRequest{}},
+		{name: "observation audit machine", request: ChangeReadRequest{MachineID: "machine"}},
+		{name: "observation audit subject", request: ChangeReadRequest{Subject: "codex"}},
+		{name: "observation audit both", request: ChangeReadRequest{MachineID: "machine", Subject: "codex"}},
+	} {
+		query, args = changeReadObservationAuditQuery(1, mustChangeReadSelection(t, observation.request))
+		addAudit(observation.name, changeReadObservedReceivedMalformedIndex, query, args)
+	}
+	for _, audit := range audits {
+		t.Run(audit.name, func(t *testing.T) {
+			plan := explainChangeReadPlan(t, st, audit.query, audit.args...)
+			if !strings.Contains(plan, "INDEX "+audit.index) {
+				t.Fatalf("audit plan does not use %s: %s", audit.index, plan)
+			}
+		})
 	}
 }
 
