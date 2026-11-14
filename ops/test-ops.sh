@@ -2492,6 +2492,11 @@ fi
 missing=""
 stages=0
 for s in $(grep -o '"\$HERE/[^"]*\.sh"' "$ROOT/ops/prometheus/install.sh" | sed 's|"\$HERE/||; s|"$||'); do
+	# listen.sh is sourced, mode 0644. It is not one of the stage scripts.
+	if [ "$s" = "listen.sh" ]; then
+		[ -f "$ROOT/ops/prometheus/$s" ] || missing="$missing $s"
+		continue
+	fi
 	stages=$((stages + 1))
 	[ -x "$ROOT/ops/prometheus/$s" ] || missing="$missing $s"
 done
@@ -2545,6 +2550,266 @@ run env -u CLAWCTL_GRAFANA_ADDR -u GF_ADMIN -u GF_PASS HOME="$TMP/grafana-home2"
 expect 'install-grafana-docker.sh names a rejected Grafana login' 1 has 'Grafana rejected the login admin (HTTP 401). Export GF_PASS'
 run env -u CLAWCTL_GRAFANA_ADDR -u GF_ADMIN GF_PASS=secret HOME="$TMP/grafana-home2" PATH="$TMP/grafana-bin2:$PATH" "$ROOT/ops/prometheus/install-grafana-docker.sh"
 expect 'install-grafana-docker.sh verifies provisioning with GF_PASS' 0 has_both 'Dashboard ✓' 'Reruns of this script log in with GF_ADMIN / GF_PASS'
+
+# --- ops/prometheus/listen.sh: tailnet address, defaults edits, systemd retry.
+# Sourced only inside bash -c so this script's own shell state stays put.
+# A real tailscale may be in /usr/bin or /bin, so the PATH for these
+# checks is a stub directory (or, when tailscale must be absent, symlinks to
+# the other tools and no tailscale binary).
+listen_bash=$(command -v bash)
+listen_sh=$ROOT/ops/prometheus/listen.sh
+mkdir -p "$TMP/listen-bin" "$TMP/listen-nostail" "$TMP/listen"
+cat >"$TMP/listen-bin/tailscale" <<'EOF'
+#!/bin/sh
+printf '%s' "${TAILSCALE_FIXTURE-}"
+EOF
+cat >"$TMP/listen-bin/ip" <<'EOF'
+#!/bin/sh
+printf '%s' "${IP_FIXTURE-}"
+EOF
+chmod 755 "$TMP/listen-bin/tailscale" "$TMP/listen-bin/ip"
+ln -s /bin/grep "$TMP/listen-bin/grep"
+ln -s /bin/grep "$TMP/listen-nostail/grep"
+ln -s "$TMP/listen-bin/ip" "$TMP/listen-nostail/ip"
+
+listen_output_eq() { [ "$output" = "$1" ]; }
+listen_bytes() {
+	local got
+	got=$(cat -- "$1"; printf x)
+	got=${got%x}
+	[ "$got" = "$2" ]
+}
+listen_ip_line() {
+	printf '%s\n' "2: tailscale0    inet $1/32 scope global tailscale0"
+}
+
+run env CLAWCTL_MONITOR_ADDR=100.64.0.7 \
+	IP_FIXTURE="$(listen_ip_line 100.64.0.7)" \
+	PATH="$TMP/listen-bin" \
+	"$listen_bash" -c 'set -euo pipefail; . "$1"; monitor_address' _ "$listen_sh"
+expect 'listen.sh: monitor_address prints CLAWCTL_MONITOR_ADDR when the interface has it' 0 listen_output_eq '100.64.0.7'
+
+run env -u CLAWCTL_MONITOR_ADDR \
+	TAILSCALE_FIXTURE="$(printf '%s\n' '100.64.0.8' 'fd7a:115c:a1e0::8')" \
+	IP_FIXTURE="$(listen_ip_line 100.64.0.8)" \
+	PATH="$TMP/listen-bin" \
+	"$listen_bash" -c 'set -euo pipefail; . "$1"; monitor_address' _ "$listen_sh"
+expect 'listen.sh: monitor_address uses the first line of tailscale ip -4' 0 listen_output_eq '100.64.0.8'
+
+run env -u CLAWCTL_MONITOR_ADDR TAILSCALE_FIXTURE= PATH="$TMP/listen-bin" \
+	"$listen_bash" -c 'set -euo pipefail; . "$1"; monitor_address' _ "$listen_sh"
+expect 'listen.sh: monitor_address fails when tailscale prints nothing' 1 has 'No tailnet IPv4 address'
+
+run env -u CLAWCTL_MONITOR_ADDR PATH="$TMP/listen-nostail" \
+	"$listen_bash" -c 'set -euo pipefail; . "$1"; monitor_address' _ "$listen_sh"
+expect 'listen.sh: monitor_address fails when tailscale is not on PATH' 1 has 'No tailnet IPv4 address'
+
+run env CLAWCTL_MONITOR_ADDR=100.64.0.999 PATH="$TMP/listen-bin" \
+	"$listen_bash" -c 'set -euo pipefail; . "$1"; monitor_address' _ "$listen_sh"
+expect 'listen.sh: monitor_address rejects an octet above 255' 1 has 'must be an IPv4 address: 100.64.0.999'
+
+run env CLAWCTL_MONITOR_ADDR=100.64.0.7 \
+	IP_FIXTURE="$(listen_ip_line 100.64.0.70)" \
+	PATH="$TMP/listen-bin" \
+	"$listen_bash" -c 'set -euo pipefail; . "$1"; monitor_address' _ "$listen_sh"
+expect 'listen.sh: monitor_address rejects an interface address that only starts with it' 1 has 'No interface of this host has 100.64.0.7. '
+
+run env CLAWCTL_MONITOR_ADDR=0.64.0.7 \
+	IP_FIXTURE="$(listen_ip_line 100.64.0.7)" \
+	PATH="$TMP/listen-bin" \
+	"$listen_bash" -c 'set -euo pipefail; . "$1"; monitor_address' _ "$listen_sh"
+expect 'listen.sh: monitor_address rejects an interface address that only ends with it' 1 has 'No interface of this host has 0.64.0.7. '
+
+rm -f "$TMP/listen/missing" "$TMP/listen/missing.bak-t1"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 127.0.0.1:9090' _ "$listen_sh" "$TMP/listen/missing"
+listen_missing_ok() {
+	listen_bytes "$TMP/listen/missing" 'ARGS="--web.listen-address=127.0.0.1:9090"
+' && [ ! -e "$TMP/listen/missing.bak-t1" ]
+}
+expect 'listen.sh: set_args_flag creates ARGS in a missing file' 0 listen_missing_ok
+
+printf '%s\n' '# comment' '' 'ARGS=""' >"$TMP/listen/comment"
+cp -a "$TMP/listen/comment" "$TMP/listen/comment.orig"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 127.0.0.1:9090' _ "$listen_sh" "$TMP/listen/comment"
+listen_comment_ok() {
+	listen_bytes "$TMP/listen/comment" '# comment
+
+ARGS="--web.listen-address=127.0.0.1:9090"
+' && cmp -s "$TMP/listen/comment.bak-t1" "$TMP/listen/comment.orig"
+}
+expect 'listen.sh: set_args_flag keeps comments and backs up the original' 0 listen_comment_ok
+
+printf '%s\n' 'ARGS="--collector.textfile.directory=/x --web.listen-address=:9100"' >"$TMP/listen/replace"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 100.64.0.7:9100' _ "$listen_sh" "$TMP/listen/replace"
+listen_replace_ok() {
+	listen_bytes "$TMP/listen/replace" 'ARGS="--collector.textfile.directory=/x --web.listen-address=100.64.0.7:9100"
+'
+}
+expect 'listen.sh: set_args_flag replaces a FLAG= word' 0 listen_replace_ok
+
+cp -a "$TMP/listen/replace" "$TMP/listen/replace.after"
+run env STAMP=t2 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 100.64.0.7:9100' _ "$listen_sh" "$TMP/listen/replace"
+listen_already_ok() {
+	has 'already set' &&
+		[ ! -e "$TMP/listen/replace.bak-t2" ] &&
+		cmp -s "$TMP/listen/replace" "$TMP/listen/replace.after"
+}
+expect 'listen.sh: set_args_flag reports already set and skips the backup' 0 listen_already_ok
+
+printf '%s\n' 'ARGS="--web.listen-address 0.0.0.0:9100 --log.level=info"' >"$TMP/listen/twoword"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 100.64.0.7:9100' _ "$listen_sh" "$TMP/listen/twoword"
+listen_twoword_ok() {
+	listen_bytes "$TMP/listen/twoword" 'ARGS="--log.level=info --web.listen-address=100.64.0.7:9100"
+'
+}
+expect 'listen.sh: set_args_flag replaces the two-word form of a flag' 0 listen_twoword_ok
+
+printf '%s\n' 'ARGS="--log.level=info"' >"$TMP/listen/emptyv"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --cluster.listen-address ""' _ "$listen_sh" "$TMP/listen/emptyv"
+listen_emptyv_ok() {
+	listen_bytes "$TMP/listen/emptyv" 'ARGS="--log.level=info --cluster.listen-address="
+'
+}
+expect 'listen.sh: set_args_flag appends an empty value' 0 listen_emptyv_ok
+
+printf '%s\n' "ARGS='x'" >"$TMP/listen/quoted"
+cp -a "$TMP/listen/quoted" "$TMP/listen/quoted.orig"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 127.0.0.1:9090' _ "$listen_sh" "$TMP/listen/quoted"
+listen_quoted_ok() {
+	has 'cannot edit ARGS' && cmp -s "$TMP/listen/quoted" "$TMP/listen/quoted.orig"
+}
+expect 'listen.sh: set_args_flag refuses a single-quoted ARGS line' 1 listen_quoted_ok
+
+printf '%s\n' 'ARGS="--a=1"' 'ARGS="--b=2"' >"$TMP/listen/two"
+cp -a "$TMP/listen/two" "$TMP/listen/two.orig"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 127.0.0.1:9090' _ "$listen_sh" "$TMP/listen/two"
+listen_two_ok() {
+	has 'cannot edit ARGS' && cmp -s "$TMP/listen/two" "$TMP/listen/two.orig"
+}
+expect 'listen.sh: set_args_flag refuses two ARGS lines' 1 listen_two_ok
+
+printf '%s\n' 'ARGS="--log.level=info"' >"$TMP/listen/space"
+cp -a "$TMP/listen/space" "$TMP/listen/space.orig"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address "a b"' _ "$listen_sh" "$TMP/listen/space"
+listen_space_ok() {
+	has 'invalid value' && cmp -s "$TMP/listen/space" "$TMP/listen/space.orig"
+}
+expect 'listen.sh: set_args_flag rejects a value with whitespace' 1 listen_space_ok
+
+printf '%s\n' 'ARGS=""' >"$TMP/listen/mode"
+chmod 0640 "$TMP/listen/mode"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --web.listen-address 127.0.0.1:9090' _ "$listen_sh" "$TMP/listen/mode"
+listen_mode_ok() {
+	[ "$(stat -c '%a' "$TMP/listen/mode")" = 640 ] &&
+		listen_bytes "$TMP/listen/mode" 'ARGS="--web.listen-address=127.0.0.1:9090"
+'
+}
+expect 'listen.sh: set_args_flag keeps the existing file mode' 0 listen_mode_ok
+
+printf '%s\n' '# keep' 'GF_PATHS_DATA=/var/lib/grafana' >"$TMP/listen/env"
+run env STAMP=t1 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_env_line "$2" GF_SERVER_HTTP_ADDR 100.64.0.7' _ "$listen_sh" "$TMP/listen/env"
+listen_env_ok() {
+	listen_bytes "$TMP/listen/env" '# keep
+GF_PATHS_DATA=/var/lib/grafana
+GF_SERVER_HTTP_ADDR=100.64.0.7
+'
+}
+expect 'listen.sh: set_env_line appends a missing variable' 0 listen_env_ok
+
+printf '%s\n' '# keep' 'GF_SERVER_HTTP_ADDR=0.0.0.0' 'OTHER=1' 'GF_SERVER_HTTP_ADDR=10.0.0.1' >"$TMP/listen/env2"
+run env STAMP=t18 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_env_line "$2" GF_SERVER_HTTP_ADDR 100.64.0.7' _ "$listen_sh" "$TMP/listen/env2"
+listen_env2_ok() {
+	listen_bytes "$TMP/listen/env2" '# keep
+GF_SERVER_HTTP_ADDR=100.64.0.7
+OTHER=1
+' && listen_bytes "$TMP/listen/env2.bak-t18" '# keep
+GF_SERVER_HTTP_ADDR=0.0.0.0
+OTHER=1
+GF_SERVER_HTTP_ADDR=10.0.0.1
+'
+}
+expect 'listen.sh: set_env_line replaces the first assignment and drops later ones' 0 listen_env2_ok
+
+run env STAMP=t19 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_env_line "$2" GF_SERVER_HTTP_ADDR 100.64.0.7' _ "$listen_sh" "$TMP/listen/env2"
+listen_env_again_ok() {
+	has 'already set' && [ ! -e "$TMP/listen/env2.bak-t19" ]
+}
+expect 'listen.sh: set_env_line reports already set and skips a new backup' 0 listen_env_again_ok
+
+run env STAMP=t20 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_env_line "$2" GF_SERVER_HTTP_ADDR "100.64.0.7 x"' _ "$listen_sh" "$TMP/listen/env2"
+listen_env_space_ok() {
+	has 'invalid value for GF_SERVER_HTTP_ADDR: 100.64.0.7 x' &&
+		listen_bytes "$TMP/listen/env2" '# keep
+GF_SERVER_HTTP_ADDR=100.64.0.7
+OTHER=1
+' && [ ! -e "$TMP/listen/env2.bak-t20" ]
+}
+expect 'listen.sh: set_env_line rejects a value with whitespace' 1 listen_env_space_ok
+
+listen_dropin='# Written by ops/prometheus/listen.sh. grafana-server listens on the tailnet address,
+# which exists only after Tailscale is up: retry every 5 seconds until it does.
+[Unit]
+After=tailscaled.service
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+'
+rm -rf "$TMP/listen/systemd"
+run "$listen_bash" -c 'set -euo pipefail; . "$1"; retry_until_bound grafana-server "$2"; retry_until_bound grafana-server "$2"' _ "$listen_sh" "$TMP/listen/systemd"
+listen_retry_ok() {
+	local path="$TMP/listen/systemd/grafana-server.service.d/clawctl-listen.conf"
+	listen_bytes "$path" "$listen_dropin" &&
+		has "grafana-server restarts every 5 seconds until it can listen ($path)" &&
+		has "grafana-server retry drop-in already present ($path)" &&
+		[ "$(stat -c '%a' "$TMP/listen/systemd/grafana-server.service.d")" = 755 ] &&
+		[ "$(stat -c '%a' "$path")" = 644 ]
+}
+expect 'listen.sh: retry_until_bound writes the drop-in and leaves an identical one in place' 0 listen_retry_ok
+
+listen_exact_lines() {
+	local file=$1 stripped line
+	shift
+	stripped=$(sed $'s/^\t*//' "$file")
+	for line in "$@"; do
+		if ! grep -Fxq -- "$line" <<<"$stripped"; then
+			output="missing exact line in ${file}: ${line}"
+			return 1
+		fi
+	done
+}
+rc=0
+output=''
+expect 'listen.sh: install-prometheus.sh sets the listen addresses' 0 \
+	listen_exact_lines "$ROOT/ops/prometheus/install-prometheus.sh" \
+	'set_args_flag /etc/default/prometheus --web.listen-address 127.0.0.1:9090' \
+	'set_args_flag /etc/default/prometheus-node-exporter --web.listen-address "$ADDR:9100"' \
+	'retry_until_bound prometheus-node-exporter'
+expect 'listen.sh: install-alertmanager.sh sets the listen addresses' 0 \
+	listen_exact_lines "$ROOT/ops/prometheus/install-alertmanager.sh" \
+	'set_args_flag /etc/default/prometheus-alertmanager --web.listen-address 127.0.0.1:9093' \
+	'set_args_flag /etc/default/prometheus-alertmanager --cluster.listen-address ""'
+expect 'listen.sh: install-grafana.sh sets the listen address' 0 \
+	listen_exact_lines "$ROOT/ops/prometheus/install-grafana.sh" \
+	'set_env_line "$DEFAULTS" GF_SERVER_HTTP_ADDR "$ADDR"' \
+	'retry_until_bound grafana-server'
+
+listen_no_old_urls() {
+	local f needle hit=""
+	for f in install.sh install-prometheus.sh install-alertmanager.sh install-grafana.sh; do
+		for needle in 'localhost:3000' 'localhost:9090/-/healthy' 'localhost:9100' 'localhost:9093/api'; do
+			if grep -qF -- "$needle" "$ROOT/ops/prometheus/$f"; then
+				hit="$hit ${f}:${needle}"
+			fi
+		done
+	done
+	if [ -n "$hit" ]; then
+		output=$hit
+		return 1
+	fi
+}
+expect 'listen.sh: installers do not probe the moved localhost URLs' 0 listen_no_old_urls
 
 # --- ops/check-metrics.sh：沒有 parser 的時候要**大聲**，不是安靜跳過。
 #
