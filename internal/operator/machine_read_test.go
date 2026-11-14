@@ -955,3 +955,42 @@ func TestUnmeasuredLoadStaysUnknownInTheProjection(t *testing.T) {
 		}
 	}
 }
+
+func TestMachineDetailDoesNotCountWindowEdgeCheckinAsInvalid(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	t0 := time.Date(2026, 9, 9, 19, 0, 0, 0, time.UTC)
+	machineID, token, err := st.CreateEnrollTokenFor("window-edge", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.RedeemEnrollToken(token, model.EnrollRequest{
+		SchemaVersion: model.SchemaVersion, EnrollToken: token,
+		Hostname: "window-edge", UnixUser: "operator", OS: "linux", Arch: "amd64",
+	}, t0.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		at := t0.Add(time.Duration(i) * time.Second)
+		if err := st.RecordCheckin(machineID, model.Checkin{
+			SchemaVersion: model.SchemaVersion, SentAt: at, AgentVersion: "v3",
+			BootID: "boot-one", AgentSeq: int64(i + 1), AgentStartedAt: t0.Add(-time.Hour),
+			DiskFreeBytes: 50, DiskTotalBytes: 100,
+		}, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := New(st).MachineDetail(machineID, t0.Add(store.DetailCheckinWindow).Add(500*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := result.Checkins
+	if page.RowsSeen != 1 || page.Invalid != 0 || len(page.Items) != 1 ||
+		page.Items[0].AgentSeq == nil || *page.Items[0].AgentSeq != 2 || page.Truncated {
+		t.Fatalf("checkins = %+v, want one valid, untruncated check-in with sequence 2", page)
+	}
+}

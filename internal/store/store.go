@@ -3632,6 +3632,18 @@ func (s *Store) Detail(machineID string, now time.Time) (Detail, error) {
 	return d, nil
 }
 
+// detailCheckinWindowStart is the first stored second inside the detail
+// check-in window that ends at now. Hub times are stored in whole seconds, so a
+// window that starts between two seconds begins at the later one: the earlier
+// one is older than the window.
+func detailCheckinWindowStart(now time.Time) time.Time {
+	start := now.Add(-DetailCheckinWindow)
+	if whole := start.Truncate(time.Second); !whole.Equal(start) {
+		return whole.Add(time.Second)
+	}
+	return start
+}
+
 // checkinPoints 取最近的心跳，由舊到新回傳（sparkline 從左往右畫）。
 func (s *Store) checkinPoints(machineID string, now time.Time) ([]CheckinPoint, error) {
 	rows, err := s.rdb.Query(`
@@ -3640,7 +3652,7 @@ SELECT sent_at, received_at, agent_version, boot_id, agent_seq, uptime_seconds,
   FROM machine_checkins
  WHERE machine_id = ? AND received_at >= ? AND received_at <= ?
  ORDER BY received_at DESC, rowid DESC LIMIT ?`,
-		machineID, fmtTime(now.Add(-DetailCheckinWindow)), fmtTime(now), DetailCheckinLimit+1)
+		machineID, fmtTime(detailCheckinWindowStart(now)), fmtTime(now), DetailCheckinLimit+1)
 	if err != nil {
 		return nil, fmt.Errorf("store: checkin points: %w", err)
 	}
