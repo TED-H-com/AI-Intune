@@ -2,6 +2,13 @@
 
 Status: proposal (2026-10-29). Scope: AI-Intune agent + Hub, BAT connector, bat-server, Fleet Monitor.
 
+The AI-Intune local writer, uploader, Hub ingest and opt-in issue filer are now
+implemented. Their current contracts are documented in the
+[agent logging and upload guide](../../README.md#agent-local-error-log),
+[Hub error API](../ERROR_API.md), and [issue filer guide](../ERROR_ISSUES.md).
+This original proposal also covers BAT writers outside this repository; it is
+not deployment evidence.
+
 ## Problem
 In the last 10 days ~85 AI-Intune commits (11 fixes) and ~100 bat-agent-connector commits (13 fixes) landed; most fixes were found by hand (ssh, screenshots). No machine keeps a structured error record, so the same failure is rediscovered repeatedly.
 

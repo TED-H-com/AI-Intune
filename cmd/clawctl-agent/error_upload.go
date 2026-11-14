@@ -21,7 +21,11 @@ import (
 	"github.com/teddashh/AI-Intune/internal/errlog"
 )
 
-const errorUploadBytes = 256 << 10
+const (
+	errorUploadBytes         = 256 << 10
+	errorUploadSourceBytes   = 4 << 20
+	errorUploadSourceBatches = 10
+)
 
 type errorUploadCursor struct {
 	File     string `json:"file"`
@@ -29,6 +33,7 @@ type errorUploadCursor struct {
 	Offset   int64  `json:"offset"`
 	Size     int64  `json:"size"`
 	Anchor   string `json:"anchor"`
+	Skipping bool   `json:"skipping,omitempty"`
 }
 type errorUploadState struct {
 	Cursors map[string]errorUploadCursor `json:"cursors"`
@@ -140,17 +145,18 @@ func (u *errorUploader) upload(ctx context.Context) error {
 	if u.now().Before(u.state.RetryAt) {
 		return nil
 	}
-	// Bound work per pass as well as batch memory. Remaining data resumes next tick.
-	budget := 100
 	// Prune before reading so a continuously busy spool cannot grow cursor state.
 	live := map[string]bool{}
 	for _, base := range u.paths {
 		for rotation := 5; rotation >= 0; rotation-- {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			path := base
 			if rotation > 0 {
 				path = fmt.Sprintf("%s.%d", base, rotation)
 			}
-			f, err := os.Open(path)
+			f, err := openErrorUploadFile(path)
 			if err != nil {
 				continue
 			}
@@ -169,13 +175,20 @@ func (u *errorUploader) upload(ctx context.Context) error {
 		}
 	}
 	for _, base := range u.paths {
+		// Each source gets its own allowance so an agent backlog cannot starve
+		// BAT logs. Count input bytes too, including invalid and oversized lines.
+		budget := errorUploadSourceBatches
+		remaining := int64(errorUploadSourceBytes)
 		// The shared writer retains the active file plus four numbered rotations.
 		for rotation := 5; rotation >= 0; rotation-- {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			path := base
 			if rotation > 0 {
 				path = fmt.Sprintf("%s.%d", base, rotation)
 			}
-			f, err := os.Open(path)
+			f, err := openErrorUploadFile(path)
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -200,24 +213,26 @@ func (u *errorUploader) upload(ctx context.Context) error {
 			cursor.File = path
 			cursor.Identity = identity
 			cursor.Size = info.Size()
-			err = u.uploadFile(ctx, f, key, cursor, &budget)
+			err = u.uploadFile(ctx, f, key, cursor, &budget, &remaining)
 			f.Close()
 			if err != nil {
 				return err
 			}
-			if budget == 0 {
-				return nil
+			if budget == 0 || remaining == 0 {
+				break
 			}
 		}
 	}
 	return u.save()
 }
 
-func (u *errorUploader) uploadFile(ctx context.Context, f *os.File, key string, cursor errorUploadCursor, budget *int) error {
+func (u *errorUploader) uploadFile(ctx context.Context, f *os.File, key string, cursor errorUploadCursor, budget *int, remaining *int64) error {
 	if _, err := f.Seek(cursor.Offset, io.SeekStart); err != nil {
 		return err
 	}
-	reader := bufio.NewReaderSize(f, 32<<10)
+	input := &io.LimitedReader{R: f, N: *remaining}
+	defer func() { *remaining = input.N }()
+	reader := bufio.NewReaderSize(input, 32<<10)
 	batch := make([]json.RawMessage, 0, 200)
 	size := 2
 	offset := cursor.Offset
@@ -251,7 +266,7 @@ func (u *errorUploader) uploadFile(ctx context.Context, f *os.File, key string, 
 	// ReadSlice bounds allocations even for corrupt or oversized source lines.
 	var line []byte
 	consumed := int64(0)
-	oversized := false
+	oversized := cursor.Skipping
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -271,6 +286,13 @@ func (u *errorUploader) uploadFile(ctx context.Context, f *os.File, key string, 
 		}
 		if err != nil {
 			if err == io.EOF {
+				// Oversized input is already invalid. Save discard progress so
+				// it cannot monopolize later passes, even across a restart. Keep
+				// ordinary partial lines at their start until a newline arrives.
+				if oversized {
+					offset += consumed
+					cursor.Skipping = true
+				}
 				return flush()
 			}
 			return err
@@ -310,6 +332,7 @@ func (u *errorUploader) uploadFile(ctx context.Context, f *os.File, key string, 
 			}
 		}
 		offset += consumed
+		cursor.Skipping = false
 		if len(raw) > 0 {
 			if len(batch) > 0 {
 				size++

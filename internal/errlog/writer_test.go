@@ -157,3 +157,38 @@ func TestWriterIOFailure(t *testing.T) {
 		t.Fatal("missing IO error")
 	}
 }
+
+func TestWriterRestartAfterPartialRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "errors.jsonl")
+	if err := os.WriteFile(path, []byte(`{"ts":"unfinished`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w, err := NewWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	for i := 0; i < 2; i++ {
+		if err := w.Write(Record{Component: "intune-agent", Level: "error", Code: "agent.job.failed", Msg: "failed"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 || lines[0] != `{"ts":"unfinished` {
+		t.Fatalf("new record was joined to incomplete input: %q", data)
+	}
+	var record Record
+	if err := json.Unmarshal([]byte(lines[1]), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Count != 2 || record.Code != "agent.job.failed" {
+		t.Fatalf("restarted writer record: %+v", record)
+	}
+}

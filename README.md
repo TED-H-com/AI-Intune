@@ -979,6 +979,7 @@ The log rotates at 10 MiB and retains five files in total (the active file and
 `.1` through `.4`). Identical fingerprints are counted in fixed 60-second windows
 and written when the window ends or the writer closes. Records include the
 machine ID, agent version, severity and stable dotted error code.
+On restart, an unterminated final line is separated from new records.
 
 ### Agent error upload
 
@@ -988,6 +989,8 @@ records are redacted again before upload. Source logs remain unchanged. Upload
 positions are stored in `error-upload-cursor.json` beside `agent-state.json` and
 resume after restart, rotation or truncation. A Hub 404 pauses uploads silently
 for one hour, including across agent restarts.
+Each source gets at most 10 batches and 4 MiB of input scanning per pass,
+shared across its rotations. Oversized-line discard progress survives restarts.
 
 BAT logs default to `~/.bat/logs/errors.jsonl` on Linux/macOS and
 `%LOCALAPPDATA%\BAT\logs\errors.jsonl` on Windows. Set `bat_users` in agent.json
