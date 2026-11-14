@@ -113,7 +113,7 @@ func TestCredRefreshHistoryMatchesReference(t *testing.T) {
 	pool := []string{`{"provider":"x"}`, `{"file_mtime":null}`, `{"file_mtime":""}`, `{"file_mtime":"2026-11-01T00:00:00Z"}`, `{"file_mtime":"2026-11-02T00:00:00Z"}`, `{"file_mtime":"2026-11-03T00:00:00.5+08:00"}`, `{"file_mtime":"2026-11-01T00:00:00Z","status":"ok"}`, `{"file_mtime":7}`, `{"file_mtime":7.5}`, `{"file_mtime":true}`, `{"file_mtime":{"a":1}}`, `{"file_mtime":[1,2]}`, `{"file_mtime":"a","file_mtime":"b"}`, `[1,2]`, `"text"`}
 	subjects := []string{"", "claude", "claude-2", "codex", "克勞德"}
 	var last []string
-	for r := 0; r < 150; r++ {
+	for r := 0; r < credRefreshHistoryRounds; r++ {
 		n := 0
 		for _, suffix := range []string{"a", "a1", "b"}[:1+rng.Intn(3)] {
 			id := fmt.Sprintf("r%03d-%s", r, suffix)
@@ -166,8 +166,8 @@ func TestCredRefreshHistoryMatchesReference(t *testing.T) {
 			last = want
 		}
 	}
-	if len(last) < 150 {
-		t.Fatalf("last reference result has %d rows, want at least 150", len(last))
+	if len(last) < credRefreshHistoryRounds {
+		t.Fatalf("last reference result has %d rows, want at least %d", len(last), credRefreshHistoryRounds)
 	}
 }
 
