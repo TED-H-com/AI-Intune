@@ -109,5 +109,5 @@ for g in gs:
 	echo "   (cannot read, check http://localhost:9093)"
 
 echo
-echo "Silence a machine: amtool silence add machine=sampleagent1 -d 720h -c 'Handling manually'"
+echo "Silence a machine: amtool silence add machine=<machine> -d 720h -c 'Handling manually'"
 echo "View current silences: amtool silence query"

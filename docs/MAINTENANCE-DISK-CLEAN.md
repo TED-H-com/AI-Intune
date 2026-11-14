@@ -479,6 +479,11 @@ approve/reject controls are active for human admins in P2-04. No automatic clean
 approval delegation is implemented here. Deployment canaries and freeze windows
 remain private configuration; reports are read-only.
 
+Report fixtures: `bash ops/test-disk-deep-report.sh`. UI fixtures are in
+`docs/screenshots/phase2/p2-03/`; regenerate them with
+`bash ops/screenshots/phase2-deep-disk.sh`. PNG rendering needs Chrome or
+Chromium on `PATH`; without one, the script keeps the HTML fixtures.
+
 ### Deep-report no-atime capability model
 
 The read scanner runs with the agent user identity. Linux permits `O_NOATIME`
@@ -718,3 +723,8 @@ the episode closes with `cleared_reason=mount_missing` (usage still unknown),
 then follows the existing 90-day cleared-alert retention. Fresh evidence resets
 the missing interval. Legacy fabricated conditions expire in indexed batches of
 at most 1,000 per scheduler reconciliation.
+
+UI fixtures are in `docs/screenshots/phase2/p2-05/`, with the test record in
+[VALIDATION.md](screenshots/phase2/p2-05/VALIDATION.md); regenerate them with
+`bash ops/screenshots/phase2-handoff-disk.sh`. PNG rendering needs Chrome or
+Chromium on `PATH`; without one, the script keeps the HTML fixtures.

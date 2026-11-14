@@ -2503,11 +2503,48 @@ else
 	fail 'ops/prometheus/install.sh calls only stage scripts that exist'
 fi
 
+# install-prometheus.sh 原樣安裝 prometheus.yml；alerting 只靠 install-alertmanager.sh
+# 補上的話，單獨重跑第 1 段就會安靜地停掉告警投遞。
+if grep -q '^alerting:' "$ROOT/ops/prometheus/prometheus.yml" &&
+	grep -q 'targets: \["localhost:9093"\]' "$ROOT/ops/prometheus/prometheus.yml"; then
+	pass 'ops/prometheus/prometheus.yml sends alerts to the Alertmanager of install-alertmanager.sh'
+else
+	fail 'ops/prometheus/prometheus.yml sends alerts to the Alertmanager of install-alertmanager.sh'
+fi
+
 run env -u CLAWCTL_FLEET_JSON "$ROOT/ops/prometheus/install-prometheus.sh"
 expect 'install-prometheus.sh refuses to run without a fleet.json' 1 has 'CLAWCTL_FLEET_JSON'
 
 run env CLAWCTL_FLEET_JSON="$ROOT/ops/prometheus/fleet.example.json" CLAWCTL_PROMETHEUS_YML="$TMP/no-such.yml" "$ROOT/ops/prometheus/install-prometheus.sh"
 expect 'install-prometheus.sh refuses a missing Prometheus config' 1 has 'not found'
+
+# --- ops/prometheus/install-grafana-docker.sh：沒有 hub.env 的主機也要走到 Docker 檢查，
+# 退回 127.0.0.1，不能一句話都不說就結束。
+mkdir -p "$TMP/grafana-home" "$TMP/grafana-bin"
+printf '#!/bin/sh\nexit 1\n' >"$TMP/grafana-bin/docker"
+chmod +x "$TMP/grafana-bin/docker"
+run env -u CLAWCTL_GRAFANA_ADDR HOME="$TMP/grafana-home" PATH="$TMP/grafana-bin:$PATH" "$ROOT/ops/prometheus/install-grafana-docker.sh"
+expect 'install-grafana-docker.sh without a hub.env reaches the Docker check' 1 has 'Cannot connect to docker daemon'
+
+# 資料卷留著改過的密碼：重跑時登入被拒要直接講登入，不能說成「資料源沒有 provision」。
+# docker 與 curl 都是替身：docker 一律成功；curl 只在 admin:secret 時讓 /api/user 回 200。
+mkdir -p "$TMP/grafana-home2" "$TMP/grafana-bin2"
+printf '#!/bin/sh\nexit 0\n' >"$TMP/grafana-bin2/docker"
+cat >"$TMP/grafana-bin2/curl" <<'STUB'
+#!/bin/sh
+case "$*" in
+*admin:secret*/api/user*) printf 200 ;;
+*/api/user*) printf 401 ;;
+*/api/datasources/uid/clawctl-prom*) printf '{"uid":"clawctl-prom"}' ;;
+*/api/search*) printf '[{"title":"clawctl"}]' ;;
+*) printf 200 ;;
+esac
+STUB
+chmod +x "$TMP/grafana-bin2/docker" "$TMP/grafana-bin2/curl"
+run env -u CLAWCTL_GRAFANA_ADDR -u GF_ADMIN -u GF_PASS HOME="$TMP/grafana-home2" PATH="$TMP/grafana-bin2:$PATH" "$ROOT/ops/prometheus/install-grafana-docker.sh"
+expect 'install-grafana-docker.sh names a rejected Grafana login' 1 has 'Grafana rejected the login admin (HTTP 401). Export GF_PASS'
+run env -u CLAWCTL_GRAFANA_ADDR -u GF_ADMIN GF_PASS=secret HOME="$TMP/grafana-home2" PATH="$TMP/grafana-bin2:$PATH" "$ROOT/ops/prometheus/install-grafana-docker.sh"
+expect 'install-grafana-docker.sh verifies provisioning with GF_PASS' 0 has_both 'Dashboard ✓' 'Reruns of this script log in with GF_ADMIN / GF_PASS'
 
 # --- ops/check-metrics.sh：沒有 parser 的時候要**大聲**，不是安靜跳過。
 #
