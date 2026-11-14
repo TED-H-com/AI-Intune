@@ -60,7 +60,7 @@ fi
 echo "   $got rule files"
 
 echo "== 3/5 node_exporter textfile collector"
-# clawctl-agent writes .prom files here; node_exporter picks them up.
+# node_exporter exports the metrics of the *.prom files in this directory.
 TEXTFILE_DIR=/var/lib/prometheus/node-exporter
 install -d -m 0755 "$TEXTFILE_DIR"
 DEFAULTS=/etc/default/prometheus-node-exporter
