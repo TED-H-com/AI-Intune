@@ -227,8 +227,8 @@ func parseProcNetTCP(path string, port int) ([]string, error) {
 		if !ok {
 			continue
 		}
-		n, err := strconv.ParseUint(p, 16, 32)
-		if err != nil || int(n) != port {
+		n, err := strconv.ParseUint(p, 16, 16)
+		if err != nil || port < 0 || n != uint64(port) {
 			continue
 		}
 		if ip := hexHostIP(host); ip != nil {

@@ -429,3 +429,28 @@ func TestFindBATSkipsAIIntuneProcess(t *testing.T) {
 		}
 	}
 }
+
+func TestParseProcNetTCPSkipsPortFieldWiderThan16Bits(t *testing.T) {
+	const body = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+  23: 0100007F:10000 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 3127506 1 0000000000000000 100 0 0 10 0
+  24: 0100007F:12694 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 3127507 1 0000000000000000 100 0 0 10 0
+  25: 0100007F:2694 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 3127508 1 0000000000000000 100 0 0 10 0
+`
+	path := filepath.Join(t.TempDir(), "tcp")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, port := range []int{9876, 65536, -1} {
+		got, err := parseProcNetTCP(path, port)
+		if err != nil {
+			t.Fatalf("port %d: %v", port, err)
+		}
+		if port == 9876 {
+			if len(got) != 1 || got[0] != "127.0.0.1" {
+				t.Errorf("port %d: got %v, want [127.0.0.1]", port, got)
+			}
+		} else if len(got) != 0 {
+			t.Errorf("port %d: got %v, want no addresses", port, got)
+		}
+	}
+}

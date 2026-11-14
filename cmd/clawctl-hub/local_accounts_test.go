@@ -251,7 +251,12 @@ func TestEnrollmentIPLimit(t *testing.T) {
 }
 
 func TestSafeLoginNext(t *testing.T) {
-	for _, tt := range []struct{ in, want string }{{"/machines?q=one", "/machines?q=one"}, {"//evil", "/"}, {"https://evil", "/"}, {"/\\evil", "/"}, {"", "/"}} {
+	for _, tt := range []struct{ in, want string }{{"/machines?q=one", "/machines?q=one"}, {"//evil", "/"}, {"https://evil", "/"}, {"/\\evil", "/"}, {"", "/"},
+		{"/\t/evil.example", "/"}, {"/\n/evil.example", "/"}, {"/\r/evil.example", "/"},
+		{"/\\/evil.example", "/"}, {"\\\\evil.example", "/"}, {"/\x00", "/"},
+		{"//", "/"}, {"///evil.example", "/"}, {"http:/evil.example", "/"},
+		{"javascript:alert(1)", "/"}, {"/machines/m-1?view=bot", "/machines/m-1?view=bot"},
+		{"/account/security?enroll=1", "/account/security?enroll=1"}} {
 		if got := safeLoginNext(tt.in); got != tt.want {
 			t.Fatalf("%q: %q", tt.in, got)
 		}
