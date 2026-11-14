@@ -720,34 +720,6 @@ func shortStoreID(value string, n int) string {
 	return string(runes[:n])
 }
 
-type promoteOpenClawWitness struct {
-	receivedAt time.Time
-	install    *model.OpenClawInstall
-	present    bool
-}
-
-// latestPromoteOpenClawWitnesses 把 running version 跟產生它的同一列 Hub received_at 綁在一起。
-// 不能拿另一種 kind 的 fresh 列，替一筆舊的 OpenClaw version 觀測冒充 freshness。
-func (s *Store) latestPromoteOpenClawWitnesses(machineIDs []string) (map[string]promoteOpenClawWitness, error) {
-	out := make(map[string]promoteOpenClawWitness, len(machineIDs))
-	for _, machineID := range machineIDs {
-		obs, ok, err := s.latestObservation(machineID, KindOpenClaw, KindOpenClaw)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		witness := promoteOpenClawWitness{receivedAt: obs.ReceivedAt}
-		if openclaw, ok := unmarshalInto[model.OpenClaw](obs.Payload); ok {
-			witness.install = openclaw.Install
-			witness.present = openclaw.Present
-		}
-		out[machineID] = witness
-	}
-	return out, nil
-}
-
 type workloadObservationWitness struct {
 	verdict         string
 	receivedAt      time.Time

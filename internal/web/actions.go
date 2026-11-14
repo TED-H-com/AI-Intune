@@ -518,13 +518,6 @@ func (s *Server) doMachineChannel(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/machines/"+id, http.StatusSeeOther)
 }
 
-func channelLabel(channel string) string {
-	if channel == "" {
-		return "未指派"
-	}
-	return channel
-}
-
 // enrollTTL 是網頁開出來的票的壽命。
 //
 // ⚠ 比 CLI 的 24h 短。理由是這兩個動作的情境不一樣：CLI 開票通常是
@@ -1085,11 +1078,4 @@ func actionBackLabel(back string) string {
 	default:
 		return "回上一個控制面頁面"
 	}
-}
-
-func errText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

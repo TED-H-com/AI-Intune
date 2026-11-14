@@ -454,16 +454,3 @@ func (s *Store) RecordSigninHealth(machine string, health []model.AuthHealth, no
 	}
 	return tx.Commit()
 }
-
-// putSigninHealth keeps check-in wiring small and shares notification transitions.
-func (s *Store) putSigninHealth(tx dbTx, machine string, health []model.AuthHealth, now time.Time, put func(string, string, any) error) error {
-	if err := s.signinNotificationFacts(tx, machine, health, now); err != nil {
-		return err
-	}
-	for _, h := range health {
-		if err := put("auth_health", h.CLI+"/"+strconv.Itoa(h.Slot), h); err != nil {
-			return err
-		}
-	}
-	return nil
-}

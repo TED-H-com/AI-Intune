@@ -9,8 +9,6 @@ import (
 	"github.com/teddashh/AI-Intune/internal/restoredrill"
 )
 
-const restoreDrillEvery = 90 * 24 * time.Hour
-
 // drillResult is the presentation adapter used by the dashboard/metrics stamp
 // contract. Backup verification itself lives in the restoredrill package and
 // product invocations enter through the operator service.

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,13 +19,6 @@ import (
 	"github.com/teddashh/AI-Intune/internal/rollout"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
-
-type deploymentListRow struct {
-	View      store.DeploymentView
-	Version   string
-	Counts    string
-	JobCounts []deploymentJobCount
-}
 
 // deploymentLedgerRow is deliberately based on the safe operator DTO. The
 // Updates page still has a private Store-backed planning row below, but the
@@ -478,14 +470,6 @@ func exclusionReason(reason string) string {
 	default:
 		return "未識別的排除原因：" + reason
 	}
-}
-
-func deploymentVersion(raw string) string {
-	var spec model.OpenClawSpec
-	if json.Unmarshal([]byte(raw), &spec) != nil || spec.Version == "" {
-		return "未知"
-	}
-	return spec.Version
 }
 
 func formatJobCounts(counts map[deploy.JobState]int) string {

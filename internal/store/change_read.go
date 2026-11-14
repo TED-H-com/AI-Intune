@@ -1438,10 +1438,6 @@ func laterChangeObservation(left, right changeReadObservation) bool {
 	return left.sequence > right.sequence
 }
 
-func inChangeReadWindow(at, from, to time.Time) bool {
-	return at.After(from) && !at.After(to)
-}
-
 func parseChangeReadHubTime(raw string) (time.Time, bool) {
 	parsed := parseTime(raw)
 	if parsed.IsZero() || parsed.Nanosecond() != 0 || fmtTime(parsed) != raw {

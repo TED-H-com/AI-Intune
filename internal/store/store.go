@@ -1721,7 +1721,7 @@ func withoutRawOccupancy(oc model.OpenClaw) model.OpenClaw {
 		return oc
 	}
 	// ⚠ 複製一份再改。原本那個 b.OpenClaw.DB 等一下還要交給
-	// recordOccupancy 逐筆寫進帳本 —— 就地改會把帳本清空。
+	// prepareOccupancy 逐筆整理成占用帳本的列 —— 就地改會把帳本清空。
 	db := *oc.DB
 	db.Occupancy = nil
 	oc.DB = &db
@@ -1884,7 +1884,7 @@ func isForeignKeyErr(err error) bool {
 // 如果你正打算把這裡改成一台一列的快照 —— 請先讀 docs/SPEC.md §4.2。
 // 上游的資料庫 7 天 / 每 job 2000 筆就把歷史吃掉了，Hub 是唯一還記得
 // 「今天綠的東西星期三死了」的地方。而 Dashboard 的預設畫面就是那個問題的答案。
-// recordOccupancy 把 cron 執行證據寫進占用帳本。
+// prepareOccupancy 與 recordPreparedOccupancy 把 cron 執行證據寫進占用帳本。
 //
 // ⚠⚠ 三條規則，每一條都有人踩過：
 //
@@ -1908,10 +1908,6 @@ func prepareOccupancy(machineID string, d *model.OpenClawDB, receivedAt string) 
 			fmtTime(e.At), receivedAt, e.SessionKey, nullStr(e.JobID), nullStr(e.AgentID), nullStr(e.Status), nullInt(e.TotalTokens), nullStr(e.ErrorText), e.Source})
 	}
 	return rows
-}
-
-func recordOccupancy(tx dbTx, machineID string, d *model.OpenClawDB, receivedAt string) error {
-	return recordPreparedOccupancy(tx, machineID, prepareOccupancy(machineID, d, receivedAt))
 }
 
 func recordPreparedOccupancy(tx dbTx, machineID string, rows [][]any) error {
@@ -3106,15 +3102,6 @@ func unmarshalInto[T any](payload string) (T, bool) {
 		return v, false
 	}
 	return v, true
-}
-
-// identityHints 回傳這台機器曾看過的每一個 machine-id，加上名冊登記的那一個。
-//
-// ⚠ 這個函式永遠不會回傳「哪個才是對的」。它只負責把所有看過的身分攤出來，
-// 超過一個就是衝突。合併、挑一個、或刪掉舊的，都會讓一台機器的狀態在兩台
-// 真實機器之間跳動，而且沒有人查得出為什麼。
-func (s *Store) identityHints(machineID, registryHint string) ([]IdentityHint, error) {
-	return identityHintsFrom(s.rdb, machineID, registryHint)
 }
 
 func (s *Store) identityHintsAt(machineID, registryHint string, evaluatedAt time.Time) ([]IdentityHint, error) {

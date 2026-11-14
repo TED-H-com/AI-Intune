@@ -79,8 +79,7 @@ type RestoreDrill struct {
 	At      time.Time
 }
 
-// RestoreDrillEvery 是多久要演練一次。跟 cmd/clawctl-hub 的 restoreDrillEvery 同值；
-// 早報這邊自己留一份是因為早報刻意不 import main。
+// RestoreDrillEvery 是多久要演練一次。
 const RestoreDrillEvery = 90 * 24 * time.Hour
 
 // HubEvent 是 store.HubEvent 的鏡像。早報刻意不 import store。

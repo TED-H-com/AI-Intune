@@ -409,6 +409,12 @@ func TestTelegramEmptyBodyRefused(t *testing.T) {
 	}
 }
 
+// The Telegram length limit and the suffix a shortened message ends with.
+const (
+	telegramMaxRunes       = 3900
+	telegramTruncateSuffix = "\n… (truncated; full text is on the Hub)"
+)
+
 func TestTelegramTruncation(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(telegramHandler(t, testBotToken, func(method string, form url.Values, w http.ResponseWriter, r *http.Request) {

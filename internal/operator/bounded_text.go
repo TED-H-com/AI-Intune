@@ -25,6 +25,3 @@ func scrubBoundedText(value string, maxBytes int) (string, bool, []string) {
 func scrubBoundedBlockText(value string, maxBytes int) (string, bool, []string) {
 	return boundedtext.ScrubBlock(value, maxBytes)
 }
-func truncateBoundedUTF8(value string, maxBytes int) string {
-	return boundedtext.TruncateUTF8(value, maxBytes)
-}
