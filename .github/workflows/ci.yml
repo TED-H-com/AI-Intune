@@ -114,20 +114,38 @@ jobs:
   race:
     name: race (${{ matrix.name }})
     runs-on: ubuntu-latest
-    # The store package alone takes about 12 minutes under -race on a
-    # developer box, which is past go test's default 10m timeout. Each group
-    # runs in its own job with an explicit -timeout. On GitHub runners the
-    # store group already took ~44m on main (Oct 2026), right at the old 45m
-    # go test limit, so allow 75m / 90m to avoid timing flakes.
+    # The race detector instruments every memory access of the pure Go SQLite
+    # VM, and most store and hub tests open a ledger of their own. As one job
+    # each on GitHub runners, the store package took 37 to 66 minutes and the
+    # hub package 20 to 32 (main, Nov 2026). ops/ci-race-shard.sh deals the
+    # tests of these two packages out to several jobs; every test runs in
+    # exactly one of them. The other groups run whole. Each job has an
+    # explicit -timeout, because go test's default is 10m.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: store
+          - name: store 1/3
             packages: ./internal/store/
-          - name: hub
+            shard: 1
+            shards: 3
+          - name: store 2/3
+            packages: ./internal/store/
+            shard: 2
+            shards: 3
+          - name: store 3/3
+            packages: ./internal/store/
+            shard: 3
+            shards: 3
+          - name: hub 1/2
             packages: ./cmd/clawctl-hub/
+            shard: 1
+            shards: 2
+          - name: hub 2/2
+            packages: ./cmd/clawctl-hub/
+            shard: 2
+            shards: 2
           - name: agent
             packages: ./cmd/clawctl-agent/ ./internal/probe/
           - name: links
@@ -143,4 +161,9 @@ jobs:
         run: command -v make >/dev/null || { sudo apt-get update && sudo apt-get install -y make; }
 
       - name: go test -race
+        if: ${{ !matrix.shards }}
         run: go test -race -count=1 -timeout 75m ${{ matrix.packages }}
+
+      - name: go test -race (one shard)
+        if: ${{ matrix.shards }}
+        run: bash ops/ci-race-shard.sh ${{ matrix.shard }} ${{ matrix.shards }} ${{ matrix.packages }}
