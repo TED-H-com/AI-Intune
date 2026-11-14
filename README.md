@@ -480,6 +480,8 @@ Start with these documents:
 - [Open-source deploy guide](docs/DEPLOY-OSS.md)
 - [Short Traditional Chinese page](README.zh-TW.md)
 
+The [documentation index](docs/README.md) lists every document under `docs/`.
+
 Engineering and operations handoff notes are private working notes and are not published here.
 
 ## Development

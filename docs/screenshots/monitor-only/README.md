@@ -1,3 +1,5 @@
+# Monitor-only UI evidence
+
 Synthetic SSR evidence for monitor-only machine detail and profile confirmation,
 at 390, 768 and 1440 pixels. Fixtures use an empty synthetic tailnet snapshot,
 fixed display values and inert request keys; they contain no live Hub data.

@@ -39,3 +39,5 @@ docker compose -f ops/docker/docker-compose.yml --env-file ops/docker/hub.env up
 Hub 預期部署在私有網路中。Operator 存取使用 Tailscale 身分與 capabilities；每個 Agent 都有自己的機器憑證。註冊時使用一次性 token。憑證與本機設定只留在 operator 或受管機器上，從不放進這個 repository。
 
 目前的 API 與行為請以原始碼與測試為準。部署前請先設定一套獨立的私有環境；程式碼與測試中的範例位址僅供說明。
+
+所有文件的清單在 [docs/README.md](docs/README.md)。
