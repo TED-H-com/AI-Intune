@@ -570,6 +570,35 @@ SELECT at, SUM(rows_deleted) FROM retention_log
 	return parseTime(atStr), rows, true, nil
 }
 
+// oldestObservationSQL steps through the kinds and subjects of one machine in
+// ix_observed_recent and reads the oldest entry of each, instead of every
+// retained observation of the machine. ?1 is the machine.
+const oldestObservationSQL = `
+WITH RECURSIVE
+kinds(kind) AS (
+  SELECT (SELECT o.kind FROM observed_state o INDEXED BY ix_observed_recent
+           WHERE o.machine_id = ?1 ORDER BY o.kind LIMIT 1)
+  UNION ALL
+  SELECT (SELECT o.kind FROM observed_state o INDEXED BY ix_observed_recent
+           WHERE o.machine_id = ?1 AND o.kind > k.kind ORDER BY o.kind LIMIT 1)
+    FROM kinds k WHERE k.kind IS NOT NULL
+),
+subj(kind, subject) AS (
+  SELECT k.kind,
+         (SELECT o.subject FROM observed_state o INDEXED BY ix_observed_recent
+           WHERE o.machine_id = ?1 AND o.kind = k.kind ORDER BY o.subject LIMIT 1)
+    FROM kinds k WHERE k.kind IS NOT NULL
+  UNION ALL
+  SELECT s.kind,
+         (SELECT o.subject FROM observed_state o INDEXED BY ix_observed_recent
+           WHERE o.machine_id = ?1 AND o.kind = s.kind AND o.subject > s.subject ORDER BY o.subject LIMIT 1)
+    FROM subj s WHERE s.subject IS NOT NULL
+)
+SELECT MIN((SELECT o.measured_at FROM observed_state o INDEXED BY ix_observed_recent
+             WHERE o.machine_id = ?1 AND o.kind = s.kind AND o.subject = s.subject
+             ORDER BY o.measured_at ASC LIMIT 1))
+  FROM subj s WHERE s.subject IS NOT NULL`
+
 // OldestObservation 是這台機器身上最舊的一筆觀測。
 //
 // ⚠ 單機頁要拿它跟保留期比：如果最舊的那筆剛好貼在界線上，
@@ -579,9 +608,7 @@ SELECT at, SUM(rows_deleted) FROM retention_log
 // 前兩種在畫面上不是同一句話。
 func (s *Store) OldestObservation(machineID string) (time.Time, bool, error) {
 	var at sql.NullString
-	if err := s.rdb.QueryRow(
-		`SELECT MIN(measured_at) FROM observed_state WHERE machine_id = ?`,
-		machineID).Scan(&at); err != nil {
+	if err := s.rdb.QueryRow(oldestObservationSQL, machineID).Scan(&at); err != nil {
 		return time.Time{}, false, fmt.Errorf("store: read oldest observation: %w", err)
 	}
 	if !at.Valid || at.String == "" {

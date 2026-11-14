@@ -96,6 +96,20 @@ type DoubleAgent struct {
 	Reason  string `json:"reason"`
 }
 
+// agentRunsSQL reads each machine's window as one range of ix_checkin_recent
+// instead of every retained check-in.
+const agentRunsSQL = checkinMachineIDsCTE + `
+SELECT c.machine_id, c.agent_started_at, COUNT(*), MIN(c.received_at), MAX(c.received_at)
+  FROM ids i
+  LEFT JOIN machine_registry m ON m.machine_id = i.machine_id
+  CROSS JOIN machine_checkins c INDEXED BY ix_checkin_recent
+    ON c.machine_id = i.machine_id AND c.received_at >= ?
+ WHERE i.machine_id IS NOT NULL
+   AND c.agent_started_at IS NOT NULL AND c.agent_started_at != ''
+   AND m.retired_at IS NULL
+ GROUP BY c.machine_id, c.agent_started_at
+ ORDER BY c.machine_id ASC, MIN(c.received_at) ASC`
+
 // AgentRuns 讀窗內每一台 × 每一次啟動的回報區間。
 //
 // ⚠ agent_started_at 是 NULL 的 check-in 全部**不參加**。舊版 agent 不送這一欄，
@@ -103,15 +117,7 @@ type DoubleAgent struct {
 // 把 NULL 當成一個身分，會讓所有舊資料看起來像另一個 agent —— 一整片假警報。
 func (s *Store) AgentRuns(now time.Time) ([]AgentRun, error) {
 	since := fmtTime(now.UTC().Add(-DoubleAgentWindow))
-	rows, err := s.rdb.Query(`
-SELECT c.machine_id, c.agent_started_at, COUNT(*), MIN(c.received_at), MAX(c.received_at)
-  FROM machine_checkins c
-  LEFT JOIN machine_registry m ON m.machine_id = c.machine_id
- WHERE c.received_at >= ?
-   AND c.agent_started_at IS NOT NULL AND c.agent_started_at != ''
-   AND m.retired_at IS NULL
- GROUP BY c.machine_id, c.agent_started_at
- ORDER BY c.machine_id ASC, MIN(c.received_at) ASC`, since)
+	rows, err := s.rdb.Query(agentRunsSQL, since)
 	if err != nil {
 		return nil, fmt.Errorf("store: read agent run intervals: %w", err)
 	}

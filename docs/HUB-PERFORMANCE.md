@@ -32,6 +32,15 @@ observation timestamps therefore mean last stored evidence, not last report.
 Change comparisons retain changed snapshots; repeated identical reports are not
 evidence of additional changes.
 
+Check-in reads over a time window (dead evidence channels, agent runs) and the
+newest check-in of every machine step through the machine ids of
+`ix_checkin_recent` and read each machine's range of that index, so their cost
+follows the number of machines and the check-ins inside the window. The job gate
+reads `ix_checkin_jobs_enabled`, which `Open` creates once the `jobs_enabled`
+column exists. The oldest retained observation of a machine is read from
+`ix_observed_recent`, one entry per kind and subject. These statements name
+their index: on a ledger without it the read returns an error.
+
 HTTP request duration logs use structured fields `method`, `route`, `status`, and
 `duration_ms`. Unmatched requests log `unmatched`. IDs and query strings are not
 included. Requests over `CLAWCTL_SLOW_REQUEST_MS` (a positive integer in

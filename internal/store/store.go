@@ -646,6 +646,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate login audit index: %w", err)
 	}
+	// jobs_enabled may be absent until addMissingColumns on legacy databases.
+	if _, err := db.Exec(checkinJobsEnabledIndexSQL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate check-in jobs index: %w", err)
+	}
 	if err := ensureJobEventProvenanceTrigger(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate job event provenance trigger: %w", err)

@@ -175,6 +175,22 @@ type MachineComplianceState struct {
 	ReportedAt  *time.Time                 `json:"reported_at,omitempty"`
 }
 
+// machineComplianceStatesSQL joins every machine that is not retired to its
+// newest check-in. The newest check-in is the first entry of the machine's
+// range in ix_checkin_recent; check-ins that share that Hub time are ordered
+// by sent_at, which is unique per machine.
+const machineComplianceStatesSQL = `
+SELECT m.machine_id, m.display_name, COALESCE(m.channel,''),
+       c.received_at, c.agent_version, c.disk_free_bytes, c.disk_total_bytes,
+       c.jobs_enabled, c.settings_digest
+  FROM machine_registry m
+  LEFT JOIN machine_checkins c
+    ON c.rowid = (SELECT x.rowid FROM machine_checkins x INDEXED BY ix_checkin_recent
+                   WHERE x.machine_id = m.machine_id
+                   ORDER BY x.received_at DESC, x.sent_at DESC LIMIT 1)
+ WHERE m.retired_at IS NULL
+ ORDER BY m.display_name`
+
 // MachineComplianceStates judges every machine still in the denominator.
 //
 // ⚠ 判決是現算的，不是存下來的。它依賴「現在幾點」，所以同一列在兩分鐘後
@@ -187,18 +203,7 @@ func (s *Store) MachineComplianceStates() ([]MachineComplianceState, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.rdb.Query(`
-SELECT m.machine_id, m.display_name, COALESCE(m.channel,''),
-       c.received_at, c.agent_version, c.disk_free_bytes, c.disk_total_bytes,
-       c.jobs_enabled, c.settings_digest
-  FROM machine_registry m
-  LEFT JOIN (SELECT machine_id, received_at, agent_version, disk_free_bytes, disk_total_bytes,
-                    jobs_enabled, settings_digest,
-                    ROW_NUMBER() OVER (PARTITION BY machine_id ORDER BY received_at DESC, sent_at DESC) AS rn
-               FROM machine_checkins) c
-    ON c.machine_id = m.machine_id AND c.rn = 1
- WHERE m.retired_at IS NULL
- ORDER BY m.display_name`)
+	rows, err := s.rdb.Query(machineComplianceStatesSQL)
 	if err != nil {
 		return nil, fmt.Errorf("store: list machine compliance states: %w", err)
 	}
