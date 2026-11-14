@@ -3,11 +3,14 @@
 package scriptcatalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -88,12 +91,50 @@ func TestProbeRunsWithUnwritableTempDir(t *testing.T) {
 }
 func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 	requireAgentUser(t)
-	e := testEntry("sleep 30 &\nwait\n")
-	start := time.Now()
+	e := testEntry("sleep 30 &\necho $!\nwait\n")
 	r, err := Run(context.Background(), e, []byte(`{}`), 1)
-	if err != nil || !r.TimedOut || r.ExitCode == 0 || time.Since(start) > 3*time.Second {
+	// DurationMS ends when Wait returns. Creating and removing the private
+	// directory is not part of it; on a loaded machine that takes seconds.
+	if err != nil || !r.TimedOut || r.ExitCode == 0 || r.DurationMS > 3000 {
 		t.Fatalf("timeout result %+v %v", r, err)
 	}
+	requireChildGone(t, r.Stdout)
+}
+
+func TestRunKillsChildrenOfAScriptThatExits(t *testing.T) {
+	requireAgentUser(t)
+	e := testEntry("sleep 30 &\necho $!\n")
+	r, err := Run(context.Background(), e, []byte(`{}`), 3)
+	if err != nil || r.TimedOut || r.ExitCode != 0 || r.DurationMS > 3000 {
+		t.Fatalf("result %+v %v", r, err)
+	}
+	requireChildGone(t, r.Stdout)
+}
+
+// requireChildGone fails unless the process whose PID the script printed has
+// exited by now or within five seconds.
+func requireChildGone(t *testing.T, stdout string) {
+	t.Helper()
+	pid, err := strconv.Atoi(strings.TrimSpace(stdout))
+	if err != nil || pid <= 1 {
+		t.Fatalf("script printed %q, want the PID of its child", stdout)
+	}
+	for deadline := time.Now().Add(5 * time.Second); processRunning(pid); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("child %d is still running after Run returned", pid)
+		}
+	}
+}
+
+// processRunning reports whether pid exists and is neither a zombie nor dead.
+// A killed child whose parent is gone is reaped by another process later.
+func processRunning(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	i := bytes.LastIndexByte(b, ')')
+	return i >= 0 && i+2 < len(b) && b[i+2] != 'Z' && b[i+2] != 'X'
 }
 func TestRunCapsHashesAndRedacts(t *testing.T) {
 	requireAgentUser(t)
