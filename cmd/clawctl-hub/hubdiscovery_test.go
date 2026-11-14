@@ -242,19 +242,19 @@ func managedHubStatusFixture(dbPath, fragment, binary, active, sub, pid string) 
 	}, "\n") + "\n"
 }
 
-func TestValidateStoppedHubUnitContractRequiresExactStoppedPinnedUnit(t *testing.T) {
+func TestStoppedHubUnitContractRequiresExactStoppedPinnedUnit(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "clawctl.sqlite")
 	fragment := filepath.Join(t.TempDir(), managedHubUnit)
 	binary := "/home/operator/.local/bin/clawctl-hub"
 	base := managedHubStatusFixture(db, fragment, binary, "inactive", "dead", "0")
-	if err := validateStoppedHubUnitContract(base, db, fragment, binary); err != nil {
+	if _, err := stoppedHubUnitContract(base, db, fragment, binary); err != nil {
 		t.Fatalf("exact stopped contract: %v", err)
 	}
 	omittedEmptyArrays := base
 	for _, property := range []string{"ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "MountImages", "ExtensionImages"} {
 		omittedEmptyArrays = strings.Replace(omittedEmptyArrays, property+"=\n", "", 1)
 	}
-	if err := validateStoppedHubUnitContract(omittedEmptyArrays, db, fragment, binary); err != nil {
+	if _, err := stoppedHubUnitContract(omittedEmptyArrays, db, fragment, binary); err != nil {
 		t.Fatalf("systemctl-style omitted empty arrays rejected: %v", err)
 	}
 
@@ -297,7 +297,7 @@ func TestValidateStoppedHubUnitContractRequiresExactStoppedPinnedUnit(t *testing
 		{name: "malformed field", raw: base + "broken\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := validateStoppedHubUnitContract(test.raw, db, fragment, binary); err == nil {
+			if _, err := stoppedHubUnitContract(test.raw, db, fragment, binary); err == nil {
 				t.Fatal("unsafe unit contract accepted")
 			}
 		})

@@ -83,10 +83,3 @@ func ScrubWithResult(value string) Result {
 	sort.Strings(result.Flags)
 	return result
 }
-
-// Scrub is the compact compatibility form for callers that only need text and
-// a replacement count.
-func Scrub(value string) (string, int) {
-	result := ScrubWithResult(value)
-	return result.Value, result.Count
-}

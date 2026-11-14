@@ -66,7 +66,7 @@ func TestTokenFileArgs(t *testing.T) {
 			t.Fatal("service URL rejected")
 		}
 	}
-	if _, _, err := hubURLFromArgs([]string{"--hub-url", "https://hub.example.com", "mcp"}); err == nil {
+	if _, _, err := hubURLFromArgsMode([]string{"--hub-url", "https://hub.example.com", "mcp"}, false); err == nil {
 		t.Fatal("tailnet mode changed")
 	}
 }

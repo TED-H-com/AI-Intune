@@ -74,11 +74,7 @@ func recordCanarySilentFailureTx(tx dbTx, machineID, reason string, now time.Tim
 	return true, nil
 }
 
-// closeCanarySilentFailureTx 只接受明確的健康 judgement；時間沒再抽到不是 recovery。
-func closeCanarySilentFailureTx(tx dbTx, machineID string, now time.Time) error {
-	return closeCanarySilentFailureWithEvidenceTx(tx, machineID, now, now)
-}
-
+// closeCanarySilentFailureWithEvidenceTx 只接受明確的健康 judgement；時間沒再抽到不是 recovery。
 func closeCanarySilentFailureWithEvidenceTx(tx dbTx, machineID string, evidenceAt, receivedAt time.Time) error {
 	if machineID == "" {
 		return errors.New("store: close canary silent failure needs machine")

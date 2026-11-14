@@ -565,7 +565,7 @@ func TestOlderRecoveryCannotCloseANewerOpenFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := closeCanarySilentFailureTx(tx, "cnode", failureAt.Add(-time.Minute)); err != nil {
+	if err := closeCanarySilentFailureWithEvidenceTx(tx, "cnode", failureAt.Add(-time.Minute), failureAt.Add(-time.Minute)); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
@@ -576,7 +576,7 @@ func TestOlderRecoveryCannotCloseANewerOpenFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := closeCanarySilentFailureTx(tx, "cnode", failureAt); err != nil {
+	if err := closeCanarySilentFailureWithEvidenceTx(tx, "cnode", failureAt, failureAt); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}

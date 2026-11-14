@@ -158,18 +158,18 @@ func ResolveNodeRuntimeMaterialContext(ctx context.Context, dir, version, reques
 	}, nil
 }
 
-// ResolveOpenClawMaterial selects one already-fetched OpenClaw artifact and
-// proves that its sidecar still has a corresponding regular tarball with the
-// recorded size and SHA-256. Preview and apply must both call this function:
-// a sidecar by itself is not evidence that bytes can safely be deployed.
-func ResolveOpenClawMaterial(dir, version, requestedSHA256 string) (OpenClawMaterial, error) {
-	return ResolveOpenClawMaterialContext(context.Background(), dir, version, requestedSHA256)
-}
-
-// ResolveOpenClawMaterialContext is ResolveOpenClawMaterial with cancellation
-// propagated through the potentially large stored-artifact hash. Deployment
-// request paths must use this form so a disconnected or timed-out operator
-// does not leave a full artifact read running in the background.
+// ResolveOpenClawMaterialContext selects one already-fetched OpenClaw artifact
+// and proves that its sidecar still has a corresponding regular tarball with
+// the recorded size and SHA-256. Preview and apply must both call this
+// function: a sidecar by itself is not evidence that bytes can safely be
+// deployed.
+//
+// ⚠ 預覽與 create 若各自生成，預覽可能拿一份 engines、agent 卻收到另一份 spec。
+//
+// Cancellation is propagated through the potentially large stored-artifact
+// hash. Deployment request paths pass the request context so a disconnected or
+// timed-out operator does not leave a full artifact read running in the
+// background.
 func ResolveOpenClawMaterialContext(ctx context.Context, dir, version, requestedSHA256 string) (OpenClawMaterial, error) {
 	if ctx == nil {
 		return OpenClawMaterial{}, errors.New("artifact: OpenClaw material context is required")
@@ -211,7 +211,7 @@ func ResolveOpenClawMaterialContext(ctx context.Context, dir, version, requested
 
 // SelectOpenClawArtifact resolves an exact version/digest identity from the
 // sidecar catalog. It deliberately does not validate the tarball; callers that
-// intend to preview or deploy must use ResolveOpenClawMaterial instead.
+// intend to preview or deploy must use ResolveOpenClawMaterialContext instead.
 func SelectOpenClawArtifact(dir, version, requestedSHA256 string) (Sidecar, error) {
 	return selectCatalogArtifact(dir, "openclaw", version, requestedSHA256)
 }
@@ -266,19 +266,15 @@ func selectCatalogArtifact(dir, name, version, requestedSHA256 string) (Sidecar,
 	}
 }
 
-// ValidateStoredArtifact verifies the selected tarball through one opened file
-// descriptor, then proves that the path still names that same regular file.
-// This rejects symlinks, size drift, digest drift, and path swaps during the
-// check. It does not return the filesystem path to higher layers.
-func ValidateStoredArtifact(dir string, record Sidecar) error {
-	return ValidateStoredArtifactContext(context.Background(), dir, record)
-}
-
-// ValidateStoredArtifactContext proves the stored bytes under the same
-// canonical-directory concurrency bound used by InspectCatalogEntry. The
-// Fetcher may call the background wrapper while holding its directory serial
-// lock: permit holders never acquire that lock, so the lock order remains
-// Fetcher serial -> hash permit and cannot form a cycle.
+// ValidateStoredArtifactContext verifies the selected tarball through one
+// opened file descriptor, then proves that the path still names that same
+// regular file. This rejects symlinks, size drift, digest drift, and path swaps
+// during the check. It does not return the filesystem path to higher layers.
+//
+// It runs under the same canonical-directory concurrency bound used by
+// InspectCatalogEntry. The Fetcher may call it while holding its directory
+// serial lock: permit holders never acquire that lock, so the lock order
+// remains Fetcher serial -> hash permit and cannot form a cycle.
 func ValidateStoredArtifactContext(ctx context.Context, dir string, record Sidecar) error {
 	if ctx == nil {
 		return errors.New("artifact: stored artifact validation context is required")

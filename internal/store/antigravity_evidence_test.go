@@ -48,7 +48,7 @@ func TestAntigravityMeasuredEvidenceRequiresBothRulesFromOneRelease(t *testing.T
 		token := advanceMeasuredEvidenceJob(t, s, jobID, "agy-control")
 		recordAntigravityEvidence(t, s, jobID, "agy-control", token, "antigravity-activate",
 			"/home/operator/.local/share/clawctl/antigravity/releases/"+version, "/bin/agy", hash, version+"\n")
-		if required, ready, err := s.measuredEvidenceStatus(jobID); err != nil || !required || !ready {
+		if _, required, ready, err := s.measuredEvidenceDecision(jobID); err != nil || !required || !ready {
 			t.Fatalf("required=%t ready=%t err=%v", required, ready, err)
 		}
 	})
@@ -62,7 +62,7 @@ func TestAntigravityMeasuredEvidenceRequiresBothRulesFromOneRelease(t *testing.T
 			"echo installed", 0, "ok", "", true, deployTestNow); err != nil {
 			t.Fatal(err)
 		}
-		if required, ready, err := s.measuredEvidenceStatus(jobID); err != nil || !required || ready {
+		if _, required, ready, err := s.measuredEvidenceDecision(jobID); err != nil || !required || ready {
 			t.Fatalf("required=%t ready=%t err=%v", required, ready, err)
 		}
 		if _, err := s.MarkSucceededIfVerified(jobID, deployTestNow.Add(time.Second)); !errors.Is(err, ErrNoVerification) {
@@ -83,7 +83,7 @@ func TestAntigravityMeasuredEvidenceRequiresBothRulesFromOneRelease(t *testing.T
 		recordAntigravityPair(t, s, jobID, "agy-split", token, "antigravity-current",
 			"cat "+release+"/.clawctl-artifact-sha256", "sha256:"+hash+"\n",
 			other+"/bin/agy --version", version+"\n")
-		if _, ready, err := s.measuredEvidenceStatus(jobID); err != nil || ready {
+		if _, _, ready, err := s.measuredEvidenceDecision(jobID); err != nil || ready {
 			t.Fatalf("ready=%t err=%v", ready, err)
 		}
 	})
@@ -117,7 +117,7 @@ func TestAntigravityMeasuredEvidenceRequiresBothRulesFromOneRelease(t *testing.T
 			if _, err := s.DB().Exec(`UPDATE verification_results SET `+tc.column+`=? WHERE job_id=?`, tc.value, jobID); err != nil {
 				t.Fatal(err)
 			}
-			if _, ready, err := s.measuredEvidenceStatus(jobID); err != nil || ready {
+			if _, _, ready, err := s.measuredEvidenceDecision(jobID); err != nil || ready {
 				t.Fatalf("ready=%t err=%v", ready, err)
 			}
 		})
@@ -142,7 +142,7 @@ func assertAntigravityEvidenceNotReady(t *testing.T, machine, spec string, stdou
 			"cat "+release+"/.clawctl-artifact-sha256", artifactStdout,
 			binary+" --version", versionStdout)
 	}
-	if _, ready, err := s.measuredEvidenceStatus(jobID); err != nil || ready {
+	if _, _, ready, err := s.measuredEvidenceDecision(jobID); err != nil || ready {
 		t.Fatalf("ready=%t err=%v", ready, err)
 	}
 }

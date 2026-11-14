@@ -24,7 +24,7 @@ func TestServiceTokenAtomicReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.Stat(path)
-	if err := replaceServiceTokenFile(path, old, next); err != nil {
+	if err := replaceServiceTokenFileWithOps(path, old, next, defaultTokenFileOps()); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadServiceTokenFile(path)
@@ -35,20 +35,20 @@ func TestServiceTokenAtomicReplacement(t *testing.T) {
 	if os.SameFile(before, after) || after.Mode().Perm() != 0600 {
 		t.Fatal("not atomic or unsafe mode")
 	}
-	if err = replaceServiceTokenFile(path, old, next); err == nil {
+	if err = replaceServiceTokenFileWithOps(path, old, next, defaultTokenFileOps()); err == nil {
 		t.Fatal("stale credential replaced")
 	}
 	if err = os.Chmod(path, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err = replaceServiceTokenFile(path, next, old); err == nil {
+	if err = replaceServiceTokenFileWithOps(path, next, old, defaultTokenFileOps()); err == nil {
 		t.Fatal("unsafe permissions accepted")
 	}
 	os.Remove(path)
 	if err = os.Symlink(filepath.Join(dir, "target"), path); err != nil {
 		t.Fatal(err)
 	}
-	if err = replaceServiceTokenFile(path, next, old); err == nil {
+	if err = replaceServiceTokenFileWithOps(path, next, old, defaultTokenFileOps()); err == nil {
 		t.Fatal("symlink accepted")
 	}
 	files, _ := filepath.Glob(filepath.Join(dir, ".service-token-*"))

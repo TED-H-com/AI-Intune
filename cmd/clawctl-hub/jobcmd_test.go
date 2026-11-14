@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/teddashh/AI-Intune/internal/artifact"
 	"github.com/teddashh/AI-Intune/internal/model"
 )
 
@@ -40,10 +42,10 @@ func writeJobTestArtifact(t *testing.T, dir, version, seed string) artifactSidec
 	return record
 }
 
-func TestPrepareOpenClawJobGeneratesSpecFromSidecar(t *testing.T) {
+func TestOpenClawMaterialGeneratesSpecFromSidecar(t *testing.T) {
 	dir := t.TempDir()
 	record := writeJobTestArtifact(t, dir, "2026.6.10", "one")
-	res, err := prepareOpenClawJob(dir, record.Version, "")
+	res, err := artifact.ResolveOpenClawMaterialContext(context.Background(), dir, record.Version, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,22 +73,22 @@ func TestPrepareOpenClawJobGeneratesSpecFromSidecar(t *testing.T) {
 	}
 }
 
-func TestPrepareOpenClawJobRequiresFetchedArtifact(t *testing.T) {
-	_, err := prepareOpenClawJob(t.TempDir(), "2026.6.10", "")
+func TestOpenClawMaterialRequiresFetchedArtifact(t *testing.T) {
+	_, err := artifact.ResolveOpenClawMaterialContext(context.Background(), t.TempDir(), "2026.6.10", "")
 	if err == nil || !strings.Contains(err.Error(), "artifact fetch openclaw@2026.6.10") {
 		t.Fatalf("err=%v", err)
 	}
 }
 
-func TestPrepareOpenClawJobRequiresDigestForAmbiguousVersion(t *testing.T) {
+func TestOpenClawMaterialRequiresDigestForAmbiguousVersion(t *testing.T) {
 	dir := t.TempDir()
 	one := writeJobTestArtifact(t, dir, "2026.6.10", "one")
 	two := writeJobTestArtifact(t, dir, "2026.6.10", "two")
-	_, err := prepareOpenClawJob(dir, "2026.6.10", "")
+	_, err := artifact.ResolveOpenClawMaterialContext(context.Background(), dir, "2026.6.10", "")
 	if err == nil || !strings.Contains(err.Error(), one.SHA256) || !strings.Contains(err.Error(), two.SHA256) {
 		t.Fatalf("err=%v", err)
 	}
-	res, err := prepareOpenClawJob(dir, "2026.6.10", two.SHA256)
+	res, err := artifact.ResolveOpenClawMaterialContext(context.Background(), dir, "2026.6.10", two.SHA256)
 	if err != nil || res.Digest != "sha256:"+two.SHA256 {
 		t.Fatalf("result=%+v err=%v", res, err)
 	}

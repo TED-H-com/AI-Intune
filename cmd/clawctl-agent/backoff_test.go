@@ -238,12 +238,12 @@ func TestHubBusyWaitAndRetryLine(t *testing.T) {
 	}
 }
 
-func TestWaitNextObservationHonorsRetryAfterFloor(t *testing.T) {
+func TestWaitObservationHonorsRetryAfterFloor(t *testing.T) {
 	t.Run("canceled context returns immediately", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		start := time.Now()
-		reason := waitNextObservation(ctx, time.Hour, time.Minute, nil)
+		reason := waitObservation(ctx, time.Hour, time.Minute, nil, realObservationClock{}, 0, nil)
 		if reason != observationCanceled {
 			t.Fatalf("reason = %d", reason)
 		}
@@ -256,7 +256,7 @@ func TestWaitNextObservationHonorsRetryAfterFloor(t *testing.T) {
 		nudge := make(chan struct{}, 1)
 		nudge <- struct{}{}
 		start := time.Now()
-		reason := waitNextObservation(context.Background(), 200*time.Millisecond, 80*time.Millisecond, nudge)
+		reason := waitObservation(context.Background(), 200*time.Millisecond, 80*time.Millisecond, nudge, realObservationClock{}, 0, nil)
 		elapsed := time.Since(start)
 		if reason != observationNudged {
 			t.Fatalf("reason = %d, elapsed %s", reason, elapsed)
@@ -270,7 +270,7 @@ func TestWaitNextObservationHonorsRetryAfterFloor(t *testing.T) {
 		nudge := make(chan struct{}, 1)
 		nudge <- struct{}{}
 		start := time.Now()
-		reason := waitNextObservation(context.Background(), 80*time.Millisecond, 80*time.Millisecond, nudge)
+		reason := waitObservation(context.Background(), 80*time.Millisecond, 80*time.Millisecond, nudge, realObservationClock{}, 0, nil)
 		elapsed := time.Since(start)
 		if reason != observationTimer {
 			t.Fatalf("reason = %d, elapsed %s", reason, elapsed)

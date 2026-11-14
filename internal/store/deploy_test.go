@@ -1467,7 +1467,7 @@ func TestBATServerMeasuredEvidenceRequiresInstalledBinaryHash(t *testing.T) {
 	token := advanceMeasuredEvidenceJob(t, s, jobID, "bat-hash")
 	recordBATServerEvidence(t, s, jobID, "bat-hash", token, "3.2.10", artifactHash, strings.Repeat("d", 64),
 		"bat-server-linux-x86_64/bat-server", "active\n")
-	_, ready, err := s.measuredEvidenceStatus(jobID)
+	_, _, ready, err := s.measuredEvidenceDecision(jobID)
 	if err != nil || ready {
 		t.Fatalf("ready=%t err=%v", ready, err)
 	}
@@ -1483,7 +1483,7 @@ func TestBATServerMeasuredEvidenceRequiresActiveUnit(t *testing.T) {
 	token := advanceMeasuredEvidenceJob(t, s, jobID, "bat-unit")
 	recordBATServerEvidence(t, s, jobID, "bat-unit", token, "3.2.10", artifactHash, binaryHash,
 		"bat-server-linux-x86_64/bat-server", "inactive\n")
-	_, ready, err := s.measuredEvidenceStatus(jobID)
+	_, _, ready, err := s.measuredEvidenceDecision(jobID)
 	if err != nil || ready {
 		t.Fatalf("ready=%t err=%v", ready, err)
 	}
@@ -1499,7 +1499,7 @@ func TestBATServerMeasuredEvidenceAcceptsARM64BinaryPath(t *testing.T) {
 	token := advanceMeasuredEvidenceJob(t, s, jobID, "bat-arm")
 	recordBATServerEvidence(t, s, jobID, "bat-arm", token, "3.2.10", artifactHash, binaryHash,
 		"bat-server-linux-x86_64/bat-server", "active\n")
-	if _, ready, err := s.measuredEvidenceStatus(jobID); err != nil || ready {
+	if _, _, ready, err := s.measuredEvidenceDecision(jobID); err != nil || ready {
 		t.Fatalf("amd64 path satisfied arm64 ready=%t err=%v", ready, err)
 	}
 	jobID = insertMeasuredEvidenceJob(t, s, "bat-arm", "bat-server", spec)
@@ -1566,7 +1566,7 @@ func TestMeasuredEvidenceCheckersClaimEveryDeclaredKind(t *testing.T) {
 			spec := fmt.Sprintf(`{"kind":%q,"version":"1.2.3","target_os":%q,"target_arch":%q,"bundle_layout":"bundle","artifact":{"sha256":"%s","size":1,"url":"/v1/artifacts/%s"}}`,
 				contract.ExecutorKind, platform.OS, platform.Arch, strings.Repeat("a", 64), strings.Repeat("a", 64))
 			jobID := insertMeasuredEvidenceJob(t, s, "measured-registry", contract.ExecutorKind, spec)
-			required, _, err := s.measuredEvidenceStatus(jobID)
+			_, required, _, err := s.measuredEvidenceDecision(jobID)
 			if err != nil {
 				statusErr = err
 				break
@@ -2451,7 +2451,7 @@ func TestBATServerMeasuredEvidenceRequiresOwnUnitAndEndpoint(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, ready, err := s.measuredEvidenceStatus(jobID); err != nil || ready != tc.ready {
+			if _, _, ready, err := s.measuredEvidenceDecision(jobID); err != nil || ready != tc.ready {
 				t.Fatalf("ready=%t err=%v, want ready=%t", ready, err, tc.ready)
 			}
 		})

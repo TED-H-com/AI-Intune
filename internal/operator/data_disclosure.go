@@ -565,9 +565,6 @@ func laterTime(current, candidate *time.Time) *time.Time {
 	return current
 }
 
-// MachineDataPath is where one machine's disclosure lives.
-func MachineDataPath(machineID string) string { return "/machines/" + machineID + "/data" }
-
 // MachineDataExportPath is where that page's CSV lives.
 func MachineDataExportPath(machineID string) string {
 	return "/machines/" + machineID + "/data.csv"

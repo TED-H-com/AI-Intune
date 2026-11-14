@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -166,7 +167,7 @@ func attachVerifiedDeploymentMaterial(t *testing.T, s *Server, st *store.Store, 
 	if err := os.WriteFile(filepath.Join(dir, digest+".tgz"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	material, err := artifact.ResolveOpenClawMaterial(dir, record.Version, record.SHA256)
+	material, err := artifact.ResolveOpenClawMaterialContext(context.Background(), dir, record.Version, record.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}

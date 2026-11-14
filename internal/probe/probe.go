@@ -1384,7 +1384,7 @@ func grokCred(home string, now time.Time) model.Credential {
 	return refreshableCred(newCred("grok", path, exp, note, now), refresh, now)
 }
 
-// grokExpiry 掃出最晚的一個 expires_at。
+// grokAuthFacts 掃出最晚的一個 expires_at。
 //
 // ⚠ 頂層 key 是動態的 "https://auth.x.ai::<uuid>"，uuid 每次登入都不一樣，
 // 寫死 key 等於這個欄位永遠是 unknown。只能用前綴掃。
@@ -1392,11 +1392,6 @@ func grokCred(home string, now time.Time) model.Credential {
 // ⚠ 值的型別實測是 RFC3339 字串（"2026-09-03T04:18:35.306566984Z"），
 // 但別家（gemini）用 epoch 數字，所以兩種都吃。Python 原型只吃數字，
 // 因此 samplehub1 的 grok 一直被誤報成 unknown。
-func grokExpiry(raw []byte) (*time.Time, error) {
-	exp, _, err := grokAuthFacts(raw)
-	return exp, err
-}
-
 func grokAuthFacts(raw []byte) (*time.Time, bool, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {

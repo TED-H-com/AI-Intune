@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/artifact"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operator"
@@ -585,7 +586,7 @@ func seedPausedDeploymentMutation(t *testing.T, f jobsFixture, record artifactSi
 	machineCount int, jobState deploy.JobState,
 ) (store.Deployment, []store.Job) {
 	t.Helper()
-	material, err := prepareOpenClawJob(f.artifactsDir, record.Version, record.SHA256)
+	material, err := artifact.ResolveOpenClawMaterialContext(context.Background(), f.artifactsDir, record.Version, record.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +657,7 @@ func directDeploymentControlFixture(t *testing.T, action string) (string, string
 	if err := writeArtifactSidecar(artifactsDirFor(dbPath), record); err != nil {
 		t.Fatal(err)
 	}
-	material, err := prepareOpenClawJob(artifactsDirFor(dbPath), record.Version, record.SHA256)
+	material, err := artifact.ResolveOpenClawMaterialContext(context.Background(), artifactsDirFor(dbPath), record.Version, record.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}

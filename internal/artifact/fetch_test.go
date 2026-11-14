@@ -403,8 +403,8 @@ func TestFetcherFetchExactPublishesAndReusesVerifiedArtifact(t *testing.T) {
 	if err != nil || !bytes.Equal(stored, tarball) {
 		t.Fatalf("stored tarball = %q, error %v", stored, err)
 	}
-	if err := ValidateStoredArtifact(dir, record); err != nil {
-		t.Fatalf("ValidateStoredArtifact: %v", err)
+	if err := ValidateStoredArtifactContext(context.Background(), dir, record); err != nil {
+		t.Fatalf("ValidateStoredArtifactContext: %v", err)
 	}
 	assertNoFetchTemps(t, dir)
 
@@ -659,7 +659,7 @@ func TestFetcherPublishingFenceLeavesRecoverableOrphan(t *testing.T) {
 	if err != nil || existed {
 		t.Fatalf("retry after orphan = existed %v, error %v", existed, err)
 	}
-	if err := ValidateStoredArtifact(dir, record); err != nil {
+	if err := ValidateStoredArtifactContext(context.Background(), dir, record); err != nil {
 		t.Fatalf("retry did not recover artifact: %v", err)
 	}
 }

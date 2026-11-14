@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/teddashh/AI-Intune/internal/model"
+	"github.com/teddashh/AI-Intune/internal/restoredrill"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
@@ -59,7 +60,7 @@ func TestDrillStampRoundTrip(t *testing.T) {
 		t.Fatal("沒有章卻說做過")
 	}
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	if err := writeDrillStamp(path, now, drillResult{Backup: "/x/clawctl-a.sqlite", Machines: 2, Expected: 2}); err != nil {
+	if err := restoredrill.WriteStamp(path, now, restoredrill.Result{Backup: restoredrill.Backup{Name: "clawctl-a.sqlite"}, Machines: 2, Expected: 2}); err != nil {
 		t.Fatal(err)
 	}
 	at, ok := readDrillStamp(path)
@@ -83,7 +84,7 @@ func TestMetricsExposeRestoreDrillOnlyWhenStamped(t *testing.T) {
 		t.Error("沒有章卻吐了線")
 	}
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	if err := writeDrillStamp(h.drillStamp, now, drillResult{}); err != nil {
+	if err := restoredrill.WriteStamp(h.drillStamp, now, restoredrill.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	body := getMetrics(t, m)

@@ -290,7 +290,7 @@ func TestGrokExpiry(t *testing.T) {
 	}}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := grokExpiry([]byte(tc.doc))
+			got, _, err := grokAuthFacts([]byte(tc.doc))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -300,7 +300,7 @@ func TestGrokExpiry(t *testing.T) {
 }
 
 func TestGrokExpiryBadJSON(t *testing.T) {
-	if _, err := grokExpiry([]byte("{not json")); err == nil {
+	if _, _, err := grokAuthFacts([]byte("{not json")); err == nil {
 		t.Fatal("want error for malformed json, got nil")
 	}
 }

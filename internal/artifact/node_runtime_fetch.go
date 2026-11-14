@@ -91,15 +91,6 @@ type nodeRuntimeFetcherConfig struct {
 	now             func() time.Time
 }
 
-func NewNodeRuntimeFetcher(artifactsDir string) (*NodeRuntimeFetcher, error) {
-	return newNodeRuntimeFetcher(nodeRuntimeFetcherConfig{
-		artifactsDir: artifactsDir, originURL: ProductionNodeDistributionOrigin,
-		metadataMax: nodeRuntimeChecksumMaxBytes, sourceMax: DefaultNodeRuntimeSourceMaxBytes,
-		bundleMax: DefaultNodeRuntimeBundleMaxBytes, metadataTimeout: productionMetadataTimeout,
-		downloadTimeout: productionDownloadTimeout, now: time.Now,
-	})
-}
-
 func newNodeRuntimeFetcher(config nodeRuntimeFetcherConfig) (*NodeRuntimeFetcher, error) {
 	dir := filepath.Clean(config.artifactsDir)
 	if config.artifactsDir == "" || !filepath.IsAbs(config.artifactsDir) || dir != config.artifactsDir ||
