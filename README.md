@@ -513,7 +513,7 @@ make vet         # Run Go static analysis
 make fmt         # Format Go source code
 ```
 
-`make test` (and `make test-go`) puts the Go test temporary directory on `/dev/shm` when it exists to optimize performance. Running `go test ./...` directly with `TMPDIR` on a standard disk can cause packages like the Store, Hub, Web, Operator, and Agent to exceed the default 10-minute timeout. For targeted tests, run within specific package directories (e.g., `cd internal/store && go test -v .`).
+`make test` keeps test data on disk: Go tests under `~/agent-work/tmp/go-test` and ops tests under `~/agent-work/tmp/ops-test`, each in a directory of its own that is removed when the run ends. Go tests get 30 minutes per package instead of Go's default 10. For targeted tests, run within specific package directories (e.g., `cd internal/store && go test -v .`).
 
 ### Running Locally
 
@@ -957,7 +957,7 @@ make cross       # Linux amd64 與 arm64 Agent binaries
 make agent-bundles
 ```
 
-`make test` 在有 `/dev/shm` 時把 Go 測試的暫存目錄放在那裡。直接跑 `go test ./...` 而 `TMPDIR` 在磁碟上時，Store、Hub、Web、operator 與 Agent 這幾包會超過預設的 10 分鐘套件時限。
+`make test` 把測試資料放在磁碟上：Go 測試在 `~/agent-work/tmp/go-test`，ops 測試在 `~/agent-work/tmp/ops-test`，各用一個自己的目錄，結束時刪除。Go 測試每個套件的時限是 30 分鐘（Go 預設 10 分鐘）。
 
 Agent 固定使用 `CGO_ENABLED=0` 建立，確保 management plane 不會與它管理的 Node application 共用同一個 runtime failure domain。
 
