@@ -144,7 +144,9 @@ set_args_flag() {
 	if [ -e "$file" ]; then
 		# shellcheck disable=SC2154 # STAMP belongs to the sourcing install script
 		stamp=${STAMP:-$(date +%Y%m%d-%H%M%S)}
-		cp -a -- "$file" "$file.bak-$stamp"
+		# One install run edits a file more than once under one STAMP. The
+		# backup is the file as that run found it, so an existing one stays.
+		[ -e "$file.bak-$stamp" ] || cp -a -- "$file" "$file.bak-$stamp"
 	fi
 	printf '%s' "$new_content" >"$file"
 	printf '   set %s=%s in %s\n' "$flag" "$value" "$file"
@@ -194,7 +196,9 @@ set_env_line() {
 	if [ -e "$file" ]; then
 		# shellcheck disable=SC2154 # STAMP belongs to the sourcing install script
 		stamp=${STAMP:-$(date +%Y%m%d-%H%M%S)}
-		cp -a -- "$file" "$file.bak-$stamp"
+		# One install run edits a file more than once under one STAMP. The
+		# backup is the file as that run found it, so an existing one stays.
+		[ -e "$file.bak-$stamp" ] || cp -a -- "$file" "$file.bak-$stamp"
 	fi
 	printf '%s' "$new_content" >"$file"
 	printf '   set %s=%s in %s\n' "$name" "$value" "$file"

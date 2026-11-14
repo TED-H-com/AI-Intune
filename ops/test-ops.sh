@@ -2746,6 +2746,30 @@ OTHER=1
 }
 expect 'listen.sh: set_env_line rejects a value with whitespace' 1 listen_env_space_ok
 
+# install-prometheus.sh and install-alertmanager.sh set two flags in one file under one STAMP.
+printf '%s\n' '# site note' 'ARGS=""' >"$TMP/listen/twice"
+run env STAMP=t21 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_args_flag "$2" --collector.textfile.directory /x; set_args_flag "$2" --web.listen-address 100.64.0.7:9100' _ "$listen_sh" "$TMP/listen/twice"
+listen_twice_ok() {
+	listen_bytes "$TMP/listen/twice" '# site note
+ARGS="--collector.textfile.directory=/x --web.listen-address=100.64.0.7:9100"
+' && listen_bytes "$TMP/listen/twice.bak-t21" '# site note
+ARGS=""
+'
+}
+expect 'listen.sh: set_args_flag keeps the first backup when one run edits a file twice' 0 listen_twice_ok
+
+# install-grafana.sh backs the file up itself before it calls set_env_line under the same STAMP.
+printf '%s\n' 'GF_PATHS_DATA=/var/lib/grafana' >"$TMP/listen/envkeep"
+printf '%s\n' '# as the run found it' >"$TMP/listen/envkeep.bak-t22"
+run env STAMP=t22 "$listen_bash" -c 'set -euo pipefail; . "$1"; set_env_line "$2" GF_SERVER_HTTP_ADDR 100.64.0.7' _ "$listen_sh" "$TMP/listen/envkeep"
+listen_envkeep_ok() {
+	listen_bytes "$TMP/listen/envkeep" 'GF_PATHS_DATA=/var/lib/grafana
+GF_SERVER_HTTP_ADDR=100.64.0.7
+' && listen_bytes "$TMP/listen/envkeep.bak-t22" '# as the run found it
+'
+}
+expect 'listen.sh: set_env_line keeps a backup that the same run already made' 0 listen_envkeep_ok
+
 listen_dropin='# Written by ops/prometheus/listen.sh. grafana-server listens on the tailnet address,
 # which exists only after Tailscale is up: retry every 5 seconds until it does.
 [Unit]
