@@ -261,6 +261,18 @@ CREATE INDEX IF NOT EXISTS ix_observed_credential_history
   ON observed_state (kind, received_at, machine_id, subject, measured_at, payload)
   WHERE kind = 'credential';
 
+-- Refresh history reads one entry of this index per distinct credential file
+-- time instead of every retained credential observation.
+--
+-- The third key is total: it never raises and never yields NULL, so it cannot
+-- reject an insert. Strict JSON yields its file_mtime, strict JSON without one
+-- yields x'', and any other payload yields x'00'. Both blobs sort after every
+-- number and text value. json_valid takes one argument so that SQLite 3.38 to
+-- 3.44, including the sqlite3 shipped in the Hub image, can open the ledger.
+CREATE INDEX IF NOT EXISTS ix_observed_credential_mtime
+  ON observed_state (machine_id, subject, CASE WHEN json_valid(payload) THEN COALESCE(json_extract(payload, '$.file_mtime'), x'') ELSE x'00' END, received_at)
+  WHERE kind = 'credential';
+
 -- ⚠ 這個索引供 prune（retention.go）、change read（change_read.go）與 latest 讀徑使用，而它存在的理由是量出來的。
 --
 -- 「最新」由 MAX(received_at) 定義；prune 同時保護 measured_at 與 received_at

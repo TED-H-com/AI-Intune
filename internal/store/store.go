@@ -2879,6 +2879,83 @@ type credRefresh struct {
 
 type credRefreshFleet map[string]map[string]credRefresh
 
+// credentialMTimeIndex names the partial index in schema.sql that the refresh
+// history reads.
+const credentialMTimeIndex = "ix_observed_credential_mtime"
+
+// credentialMTimeKey is the third key of credentialMTimeIndex, written for the
+// table alias o. schema.sql holds the same expression without the alias. SQLite
+// uses the index only when both match, and INDEXED BY turns a mismatch into an
+// error instead of a slow read.
+//
+// A payload without file_mtime maps to the empty blob and a payload that is
+// not strict JSON maps to x'00'. Every real file_mtime is a number or text and
+// sorts before both blobs.
+const credentialMTimeKey = `CASE WHEN json_valid(o.payload) THEN COALESCE(json_extract(o.payload, '$.file_mtime'), x'') ELSE x'00' END`
+
+// credRefreshHistorySQL visits one index entry per distinct file time.
+//
+// grp steps through the subjects of every registered machine and val through
+// the key values of every subject. seen keeps the values first received at or
+// before ?1; when ?1 is at or after the newest credential observation every
+// value qualifies and that per-value read is skipped.
+//
+// Column 8 is 1 when a payload that is not strict JSON was received at or
+// before ?1.
+const credRefreshHistorySQL = `
+WITH RECURSIVE
+grp(machine_id, subject) AS (
+  SELECT m.machine_id,
+         (SELECT o.subject FROM observed_state o INDEXED BY ix_observed_credential_mtime
+           WHERE o.kind = 'credential' AND o.machine_id = m.machine_id
+           ORDER BY o.subject LIMIT 1)
+    FROM machine_registry m
+  UNION ALL
+  SELECT g.machine_id,
+         (SELECT o.subject FROM observed_state o INDEXED BY ix_observed_credential_mtime
+           WHERE o.kind = 'credential' AND o.machine_id = g.machine_id AND o.subject > g.subject
+           ORDER BY o.subject LIMIT 1)
+    FROM grp g WHERE g.subject IS NOT NULL
+),
+val(machine_id, subject, mt) AS (
+  SELECT g.machine_id, g.subject,
+         (SELECT ` + credentialMTimeKey + ` FROM observed_state o INDEXED BY ix_observed_credential_mtime
+           WHERE o.kind = 'credential' AND o.machine_id = g.machine_id AND o.subject = g.subject
+           ORDER BY ` + credentialMTimeKey + ` LIMIT 1)
+    FROM grp g WHERE g.subject IS NOT NULL
+  UNION ALL
+  SELECT v.machine_id, v.subject,
+         (SELECT ` + credentialMTimeKey + ` FROM observed_state o INDEXED BY ix_observed_credential_mtime
+           WHERE o.kind = 'credential' AND o.machine_id = v.machine_id AND o.subject = v.subject
+             AND ` + credentialMTimeKey + ` > v.mt
+           ORDER BY ` + credentialMTimeKey + ` LIMIT 1)
+    FROM val v WHERE v.mt IS NOT NULL
+),
+seen(machine_id, subject, mt) AS (
+  SELECT v.machine_id, v.subject, v.mt FROM val v
+   WHERE v.mt IS NOT NULL
+     AND (?1 >= (SELECT h.received_at FROM observed_state h INDEXED BY ix_observed_changes WHERE h.kind = 'credential' ORDER BY h.received_at DESC LIMIT 1)
+          OR (SELECT o.received_at FROM observed_state o INDEXED BY ix_observed_credential_mtime
+               WHERE o.kind = 'credential' AND o.machine_id = v.machine_id AND o.subject = v.subject
+                 AND ` + credentialMTimeKey + ` = v.mt
+               ORDER BY o.received_at LIMIT 1) <= ?1)
+)
+SELECT s.machine_id,
+       COALESCE(NULLIF(m.display_name, ''), s.machine_id),
+       s.subject,
+       COUNT(CASE WHEN typeof(s.mt) <> 'blob' THEN 1 END),
+       (SELECT o.measured_at FROM observed_state o INDEXED BY ix_observed_recent
+         WHERE o.machine_id = s.machine_id AND o.kind = 'credential' AND o.subject = s.subject
+           AND o.received_at <= ?1
+         ORDER BY o.measured_at ASC LIMIT 1),
+       MAX(CASE WHEN typeof(s.mt) <> 'blob' THEN s.mt END),
+       CASE WHEN m.retired_at IS NULL THEN 0 ELSE 1 END,
+       MAX(CASE WHEN s.mt = x'00' THEN 1 ELSE 0 END)
+  FROM seen s JOIN machine_registry m ON m.machine_id = s.machine_id
+ GROUP BY s.machine_id, s.subject`
+
+var errCredentialPayloadInvalid = errors.New("store: credential observation payload is invalid")
+
 // credRefreshHistory 一次數出全機隊每台每個 provider 的憑證檔，在
 // observed_state 裡出現過幾個不同的 file_mtime。換了 N 個值 = 自己續了
 // N-1 次。一次拿全機隊，是為了讓 Facts 組同儕證據時不會每台、每家各查一次。
@@ -2886,23 +2963,12 @@ type credRefreshFleet map[string]map[string]credRefresh
 // ⚠ 這是 observed_state append-only 才答得出來的問題（SPEC §4.2）。
 // credential_on_machine 那張投影表只有最後一個值，從它永遠看不出「停了」。
 //
-// ⚠ 沒有 file_mtime 的觀測（absent / 讀不到）不算 —— COUNT(DISTINCT) 本來就
-// 略過 NULL，所以一張從頭到尾讀不到檔案的票會是 0 次、而不是 1 次。
+// ⚠ 沒有 file_mtime 的觀測（absent / 讀不到）不算 —— 它們在索引裡是空 blob，
+// 計數時略過，所以一張從頭到尾讀不到檔案的票會是 0 次、而不是 1 次。
 // 保存期 30 天（retention.go），所以 FirstSeen 最遠只到 30 天前，
 // 這也是 WatchedFor 的天花板。
 func (s *Store) credRefreshHistory(evaluatedAt time.Time) (credRefreshFleet, error) {
-	rows, err := s.rdb.Query(`
-SELECT o.machine_id,
-       COALESCE(NULLIF(m.display_name, ''), o.machine_id),
-       o.subject,
-       COUNT(DISTINCT json_extract(o.payload, '$.file_mtime')),
-       MIN(o.measured_at),
-       MAX(json_extract(o.payload, '$.file_mtime')),
-       CASE WHEN m.retired_at IS NULL THEN 0 ELSE 1 END
- FROM observed_state o
-  JOIN machine_registry m ON m.machine_id = o.machine_id
- WHERE o.kind = 'credential' AND o.received_at <= ?
-GROUP BY o.machine_id, m.display_name, o.subject, m.retired_at`, fmtTime(evaluatedAt))
+	rows, err := s.rdb.Query(credRefreshHistorySQL, fmtTime(evaluatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("store: credential refresh history: %w", err)
 	}
@@ -2910,10 +2976,13 @@ GROUP BY o.machine_id, m.display_name, o.subject, m.retired_at`, fmtTime(evaluat
 	out := credRefreshFleet{}
 	for rows.Next() {
 		var machineID, displayName, subject, first string
-		var distinct, retired int
+		var distinct, retired, invalid int
 		var fileMTime sql.NullString
-		if err := rows.Scan(&machineID, &displayName, &subject, &distinct, &first, &fileMTime, &retired); err != nil {
+		if err := rows.Scan(&machineID, &displayName, &subject, &distinct, &first, &fileMTime, &retired, &invalid); err != nil {
 			return nil, fmt.Errorf("store: scan credential refresh history: %w", err)
+		}
+		if invalid != 0 {
+			return nil, errCredentialPayloadInvalid
 		}
 		h := credRefresh{
 			DisplayName: displayName,
