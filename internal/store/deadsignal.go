@@ -92,6 +92,44 @@ var signalChecks = []signalCheck{
 	},
 }
 
+// checkinMachineIDsCTE lists every machine that has a check-in by stepping
+// through ix_checkin_recent one machine at a time, so its cost follows the
+// number of machines and not the number of retained check-ins. Its last row is
+// NULL; statements that use it filter that row out.
+const checkinMachineIDsCTE = `
+WITH RECURSIVE ids(machine_id) AS (
+  SELECT (SELECT t.machine_id FROM machine_checkins t INDEXED BY ix_checkin_recent ORDER BY t.machine_id LIMIT 1)
+  UNION ALL
+  SELECT (SELECT t.machine_id FROM machine_checkins t INDEXED BY ix_checkin_recent
+           WHERE t.machine_id > i.machine_id ORDER BY t.machine_id LIMIT 1)
+    FROM ids i WHERE i.machine_id IS NOT NULL
+)`
+
+// deadSignalSQL counts, for every machine that is not retired, the rows of one
+// evidence table received inside the window and how many of them carry the
+// column. %[1]s is the column and %[2]s the table.
+const deadSignalSQL = `
+SELECT t.machine_id, COALESCE(m.display_name, t.machine_id),
+       COUNT(*), COUNT(t.%[1]s), COUNT(DISTINCT t.%[1]s)
+  FROM %[2]s t LEFT JOIN machine_registry m ON m.machine_id = t.machine_id
+ WHERE t.received_at >= ? AND m.retired_at IS NULL
+ GROUP BY t.machine_id
+ ORDER BY 2`
+
+// deadSignalCheckinsSQL returns the rows of deadSignalSQL for machine_checkins.
+// It reads each machine's window as one range of ix_checkin_recent instead of
+// every retained check-in. %[1]s is the column.
+const deadSignalCheckinsSQL = checkinMachineIDsCTE + `
+SELECT t.machine_id, COALESCE(m.display_name, t.machine_id),
+       COUNT(*), COUNT(t.%[1]s), COUNT(DISTINCT t.%[1]s)
+  FROM ids i
+  LEFT JOIN machine_registry m ON m.machine_id = i.machine_id
+  CROSS JOIN machine_checkins t INDEXED BY ix_checkin_recent
+    ON t.machine_id = i.machine_id AND t.received_at >= ?
+ WHERE i.machine_id IS NOT NULL AND m.retired_at IS NULL
+ GROUP BY t.machine_id
+ ORDER BY 2`
+
 // DeadSignals 回傳目前抓到已經死掉的證據管線。
 //
 // ⚠ 空的回傳值**不代表證據健康**，只代表這幾條沒抓到問題。見檔案開頭。
@@ -114,13 +152,11 @@ func (s *Store) DeadSignals(now time.Time) ([]DeadSignal, error) {
 			return nil, fmt.Errorf("store: dead signal %s has no received_at column", c.table)
 		}
 
-		rows, err := s.rdb.Query(fmt.Sprintf(`
-SELECT t.machine_id, COALESCE(m.display_name, t.machine_id),
-       COUNT(*), COUNT(t.%[1]s), COUNT(DISTINCT t.%[1]s)
-  FROM %[2]s t LEFT JOIN machine_registry m ON m.machine_id = t.machine_id
- WHERE t.received_at >= ? AND m.retired_at IS NULL
- GROUP BY t.machine_id
- ORDER BY 2`, c.column, c.table), since)
+		query := fmt.Sprintf(deadSignalSQL, c.column, c.table)
+		if c.table == "machine_checkins" {
+			query = fmt.Sprintf(deadSignalCheckinsSQL, c.column)
+		}
+		rows, err := s.rdb.Query(query, since)
 		if err != nil {
 			return nil, fmt.Errorf("store: dead signal %s.%s: %w", c.table, c.column, err)
 		}

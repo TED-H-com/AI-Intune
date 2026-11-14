@@ -255,8 +255,22 @@ func latestProfileAssignmentPlatformIdentity(q operatorProfileAssignmentQueryer,
 	return identity.OS, identity.Arch, nil
 }
 
+// checkinJobsEnabledIndexSQL creates the index that latestMachineJobsEnabledSQL
+// reads. The job gate reads jobs_enabled and the Hub time of every check-in of
+// one machine; with both in one index that read stays inside the index, and
+// with ix_checkin_recent alone it fetches one table row per check-in.
+//
+// Open runs this after addMissingColumns: ledgers of older releases have no
+// jobs_enabled column before that step, so schema.sql cannot hold the index.
+const checkinJobsEnabledIndexSQL = `CREATE INDEX IF NOT EXISTS ix_checkin_jobs_enabled ON machine_checkins (machine_id, received_at DESC, jobs_enabled)`
+
+// latestMachineJobsEnabledSQL still returns every check-in of the machine, so
+// that every Hub time is parsed. ix_checkin_jobs_enabled holds all three
+// columns.
+const latestMachineJobsEnabledSQL = `SELECT jobs_enabled,received_at,rowid FROM machine_checkins INDEXED BY ix_checkin_jobs_enabled WHERE machine_id=?`
+
 func latestMachineJobsEnabled(q machineJobsEnabledQueryer, machineID string) (*bool, error) {
-	rows, err := q.Query(`SELECT jobs_enabled,received_at,rowid FROM machine_checkins WHERE machine_id=?`, machineID)
+	rows, err := q.Query(latestMachineJobsEnabledSQL, machineID)
 	if err != nil {
 		return nil, err
 	}
