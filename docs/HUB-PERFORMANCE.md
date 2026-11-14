@@ -13,6 +13,13 @@ use this projection. Historical evaluation instants fall back to history only fo
 groups whose current row is after the cutoff. Ticket windows, change comparisons,
 credential history and source-specific identity evidence remain history queries.
 
+Credential refresh history reads `ix_observed_credential_mtime`, a partial index
+over credential rows keyed by machine, subject, the payload's `file_mtime` and
+Hub `received_at`. The read visits one index entry per distinct file time of a
+credential, so its cost follows the number of refreshes, not the number of
+retained observations. The statement names the index: on a ledger without it the
+read returns an error. `Open` creates the index.
+
 `CLAWCTL_OBS_UNCHANGED_INTERVAL` (or `-obs-unchanged-interval`) defaults to `30m`.
 `0` disables suppression. An identical `cli_tool` or `systemd` payload inside that
 interval writes neither history nor the projection, including its timestamps.
