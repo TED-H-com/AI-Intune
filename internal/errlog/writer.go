@@ -45,8 +45,22 @@ func NewWriter(path string) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
 	if err != nil {
+		return nil, err
+	}
+	// A stopped write may leave a partial JSON line. Separate it before any
+	// new records are appended so the uploader can discard only that line.
+	info, err := f.Stat()
+	if err == nil && info.Size() > 0 {
+		var last [1]byte
+		_, err = f.ReadAt(last[:], info.Size()-1)
+		if err == nil && last[0] != '\n' {
+			_, err = f.Write([]byte{'\n'})
+		}
+	}
+	if err != nil {
+		_ = f.Close()
 		return nil, err
 	}
 	return &Writer{path: path, file: f, max: 10 * 1024 * 1024, window: 60 * time.Second, pending: make(map[string]Record), timers: make(map[string]*time.Timer)}, nil

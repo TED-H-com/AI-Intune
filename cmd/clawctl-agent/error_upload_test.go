@@ -278,3 +278,245 @@ func TestErrorUploadMultipleBATLogs(t *testing.T) {
 		t.Fatalf("records=%d", total)
 	}
 }
+
+func TestErrorUploadBusySourceDoesNotStarveBAT(t *testing.T) {
+	seenBAT := false
+	total := 0
+	u, path := uploadFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		var records []errlog.Record
+		if err := json.NewDecoder(r.Body).Decode(&records); err != nil {
+			t.Error(err)
+		}
+		for _, record := range records {
+			seenBAT = seenBAT || record.Msg == "bat pending"
+		}
+		total += len(records)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	bat := filepath.Join(filepath.Dir(path), "bat.jsonl")
+	t.Setenv("AI_INTUNE_BAT_ERROR_LOGS", bat)
+	u.paths = append(u.paths, bat)
+	var source []byte
+	for i := 0; i < 20200; i++ {
+		source = append(source, uploadRecord(i, "agent pending")...)
+	}
+	writeUpload(t, path+".1", source)
+	writeUpload(t, bat, uploadRecord(0, "bat pending"))
+	mustUpload(t, u)
+	if !seenBAT {
+		t.Fatal("busy agent rotation starved BAT source")
+	}
+	if total > errorUploadSourceBatches*200+1 {
+		t.Fatalf("source exceeded batch allowance: %d records", total)
+	}
+	for i := 0; i < 11; i++ {
+		var err error
+		u, err = newErrorUploader(u.cfg, u.stateFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustUpload(t, u)
+	}
+	if total != 20201 {
+		t.Fatalf("records after draining across restarts = %d, want 20201", total)
+	}
+}
+
+func TestErrorUploadCorruptInputBoundedAcrossRestart(t *testing.T) {
+	total := 0
+	u, path := uploadFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		var records []errlog.Record
+		if err := json.NewDecoder(r.Body).Decode(&records); err != nil {
+			t.Error(err)
+		}
+		total += len(records)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	// The valid-looking suffix belongs to the oversized line and must never
+	// become a standalone record when a pass resumes in the middle of it.
+	const scanLimit = 4 << 20
+	source := bytes.Repeat([]byte("x"), scanLimit*2)
+	source = append(source, uploadRecord(0, "oversized suffix")...)
+	source = append(source, uploadRecord(1, "valid")...)
+	writeUpload(t, path, source)
+	mustUpload(t, u)
+	if total != 0 {
+		t.Fatal("pass read beyond its source byte budget")
+	}
+	for _, c := range u.state.Cursors {
+		if c.Offset == 0 || c.Offset > scanLimit {
+			t.Fatalf("bounded scan made incorrect progress: %d", c.Offset)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		var err error
+		u, err = newErrorUploader(u.cfg, u.stateFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustUpload(t, u)
+	}
+	if total != 1 {
+		t.Fatalf("records after restart = %d, want 1", total)
+	}
+	// The discard state ends with the oversized line: a record appended
+	// afterwards is an ordinary record.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(uploadRecord(2, "after oversized line")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	u, err = newErrorUploader(u.cfg, u.stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUpload(t, u)
+	if total != 2 {
+		t.Fatalf("records after the oversized line ended = %d, want 2", total)
+	}
+}
+
+func TestErrorUploadAllowanceIsPerSource(t *testing.T) {
+	counts := map[string]int{}
+	u, path := uploadFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		var records []errlog.Record
+		if err := json.NewDecoder(r.Body).Decode(&records); err != nil {
+			t.Error(err)
+		}
+		for _, record := range records {
+			counts[record.Msg]++
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	bat := filepath.Join(filepath.Dir(path), "bat.jsonl")
+	u.paths = append(u.paths, bat)
+	var agentLog, batLog []byte
+	for i := 0; i < errorUploadSourceBatches*200+500; i++ {
+		agentLog = append(agentLog, uploadRecord(i, "agent pending")...)
+		batLog = append(batLog, uploadRecord(i, "bat pending")...)
+	}
+	writeUpload(t, path, agentLog)
+	writeUpload(t, bat, batLog)
+	mustUpload(t, u)
+	// One pass gives each busy source its own ten batches of 200 records.
+	want := errorUploadSourceBatches * 200
+	if counts["agent pending"] != want || counts["bat pending"] != want {
+		t.Fatalf("records per source after one pass = %v, want %d each", counts, want)
+	}
+}
+
+func TestErrorUploadByteBoundaryRetainsPartialRecord(t *testing.T) {
+	total := 0
+	u, path := uploadFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		var records []errlog.Record
+		if err := json.NewDecoder(r.Body).Decode(&records); err != nil {
+			t.Error(err)
+		}
+		total += len(records)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	record := uploadRecord(0, "crosses scan boundary")
+	prefix := bytes.Repeat([]byte("x"), errorUploadSourceBytes-len(record)/2)
+	prefix[len(prefix)-1] = '\n'
+	writeUpload(t, path, append(prefix, record...))
+	mustUpload(t, u)
+	if total != 0 {
+		t.Fatal("partial record uploaded")
+	}
+	restarted, err := newErrorUploader(u.cfg, u.stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUpload(t, restarted)
+	mustUpload(t, restarted)
+	if total != 1 {
+		t.Fatalf("records = %d, want 1", total)
+	}
+}
+
+func TestErrorUploadDiscardProgressRequiresAcknowledgment(t *testing.T) {
+	status, calls := http.StatusBadRequest, 0
+	u, path := uploadFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var records []errlog.Record
+		if err := json.NewDecoder(r.Body).Decode(&records); err != nil {
+			t.Error(err)
+		}
+		if len(records) != 1 || records[0].Msg != "pending" {
+			t.Errorf("unexpected batch: %+v", records)
+		}
+		w.WriteHeader(status)
+	})
+	source := append(uploadRecord(0, "pending"), bytes.Repeat([]byte("x"), errorUploadSourceBytes*2)...)
+	writeUpload(t, path, source)
+	if err := u.upload(context.Background()); err == nil {
+		t.Fatal("expected rejected batch")
+	}
+	if len(u.state.Cursors) != 0 {
+		t.Fatal("discard checkpoint skipped unacknowledged record")
+	}
+	restarted, err := newErrorUploader(u.cfg, u.stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status = http.StatusNoContent
+	mustUpload(t, restarted)
+	mustUpload(t, restarted)
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	// A copy-truncated file must not inherit the oversized-line discard state.
+	writeUpload(t, path, uploadRecord(1, "pending"))
+	mustUpload(t, restarted)
+	if calls != 3 {
+		t.Fatal("truncation retained discard state")
+	}
+}
+
+func TestErrorUploadCancellationRetainsUnacknowledgedCursor(t *testing.T) {
+	u, path := uploadFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(entered)
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+	u.cfg.HubURL = server.URL
+	httpClient = server.Client()
+	writeUpload(t, path, uploadRecord(0, "pending"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() {
+		select {
+		case <-entered:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	if err := u.upload(ctx); err == nil {
+		t.Fatal("expected cancellation")
+	}
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("request failed to reach local server: %v", ctx.Err())
+	}
+	if len(u.state.Cursors) != 0 {
+		t.Fatal("cancellation advanced cursor without acknowledgment")
+	}
+	restarted, err := newErrorUploader(u.cfg, u.stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restarted.state.Cursors) != 0 {
+		t.Fatal("restart skipped canceled batch")
+	}
+}
