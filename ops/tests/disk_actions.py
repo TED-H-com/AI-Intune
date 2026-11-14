@@ -6,6 +6,8 @@ POLICY=dict(schema_version=1,quarantine_ttl_days=7,protect_paths=[],scan_budgets
 
 class Actions(unittest.TestCase):
     def setUp(self):
+        # The scripts refuse group- or world-writable files, so fixtures must not depend on the caller's umask.
+        self.addCleanup(os.umask,os.umask(0o022))
         self.temp=tempfile.TemporaryDirectory(prefix='disk-action-fixture-');self.addCleanup(self.temp.cleanup)
         self.root=pathlib.Path(self.temp.name);self.home=self.root/'home';self.home.mkdir()
         self.file=self.root/'original'/'old.txt';self.file.parent.mkdir();self.file.write_bytes(b'preserved content')
