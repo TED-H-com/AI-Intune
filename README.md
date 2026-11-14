@@ -967,6 +967,15 @@ Agent 固定使用 `CGO_ENABLED=0` 建立，確保 management plane 不會與它
 
 AI-Intune 採用 [Apache License 2.0](LICENSE)。
 
+### Agent configuration file
+
+The agent keeps its Hub URL and machine credential in `agent.json`:
+`$CLAWCTL_CONFIG` when set, otherwise `clawctl/agent.json` in the user
+configuration directory (`~/.config` on Linux, or `$XDG_CONFIG_HOME` when set).
+`enroll` writes the file, the running agent rewrites it when it adopts published
+agent settings, and `verify` reads it. The running agent sets a 96 MiB Go soft
+memory limit unless `GOMEMLIMIT` is set.
+
 ### Agent local error log
 
 The agent writes redacted JSON Lines diagnostics to `/var/log/ai-intune/errors.jsonl`
