@@ -1,9 +1,9 @@
 module github.com/teddashh/AI-Intune
 
-go 1.27.1
+go 1.27.4
 
 require (
-	github.com/andybalholm/brotli v1.2.4
+	github.com/andybalholm/brotli v1.2.7
 	github.com/coder/websocket v1.8.14
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.54.0
