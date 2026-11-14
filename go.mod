@@ -5,6 +5,7 @@ go 1.27.1
 require (
 	github.com/andybalholm/brotli v1.2.4
 	github.com/coder/websocket v1.8.14
+	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.58.0
@@ -19,7 +20,6 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/jsimonetti/rtnetlink v1.4.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
