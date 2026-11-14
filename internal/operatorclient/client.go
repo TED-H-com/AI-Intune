@@ -468,10 +468,6 @@ func (c *Client) do(req *http.Request) (MachineChannelResponse, error) {
 	return result, nil
 }
 
-func responseMetadata(resp *http.Response, bodyRevision int64) (ResponseMetadata, error) {
-	return responseMetadataFromHeader(resp.Header, bodyRevision)
-}
-
 func responseMetadataFromHeader(header http.Header, bodyRevision int64) (ResponseMetadata, error) {
 	values := header.Values("ETag")
 	if len(values) != 1 {

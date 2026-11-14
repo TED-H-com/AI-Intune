@@ -56,10 +56,6 @@ func marshalCompactNoEscape(v any) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-func selectArtifactForJob(dir, version, requestedSHA256 string) (artifactSidecar, error) {
-	return artifact.SelectOpenClawArtifact(dir, strings.TrimSpace(version), strings.TrimSpace(requestedSHA256))
-}
-
 // resolveMachine 把人打的名字對到名冊上的一台。
 // allowRetired=false 用在開單（退場的機器不開單），true 用在看歷史。
 func resolveMachine(st *store.Store, name string, allowRetired bool) (store.Machine, error) {

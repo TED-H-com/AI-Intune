@@ -89,7 +89,6 @@ type operatorTerminalLink struct {
 	mu       sync.Mutex
 	frames   []agentrelay.Downstream
 	busyLeft map[agentrelay.DownstreamType]int
-	busyN    int
 	onSend   func(agentrelay.Downstream)
 	notify   chan struct{}
 }
@@ -105,7 +104,6 @@ func (l *operatorTerminalLink) Send(frame agentrelay.Downstream) error {
 	l.mu.Lock()
 	if left := l.busyLeft[frame.Type]; left > 0 {
 		l.busyLeft[frame.Type] = left - 1
-		l.busyN++
 		l.mu.Unlock()
 		l.signal()
 		return agentlink.ErrLinkBusy
@@ -153,24 +151,6 @@ func (l *operatorTerminalLink) await(t *testing.T, n int) []agentrelay.Downstrea
 		case <-l.notify:
 		case <-deadline:
 			t.Fatalf("link has %d frames, want %d: %#v", len(l.snapshot()), n, l.snapshot())
-		}
-	}
-}
-
-func (l *operatorTerminalLink) awaitBusy(t *testing.T, n int) {
-	t.Helper()
-	deadline := time.After(3 * time.Second)
-	for {
-		l.mu.Lock()
-		got := l.busyN
-		l.mu.Unlock()
-		if got >= n {
-			return
-		}
-		select {
-		case <-l.notify:
-		case <-deadline:
-			t.Fatalf("busy attempts = %d, want %d", got, n)
 		}
 	}
 }
@@ -357,18 +337,6 @@ func (f *operatorTerminalFixture) awaitReason(sessionID, reason string) {
 	}
 	open, got := f.session(sessionID)
 	f.t.Fatalf("session open=%t reason=%q, want %q", open, got, reason)
-}
-
-func (f *operatorTerminalFixture) awaitRoute(sessionID string) {
-	f.t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if f.hasRoute(sessionID) {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	f.t.Fatal("route was not registered")
 }
 
 func (f *operatorTerminalFixture) hasRoute(sessionID string) bool {

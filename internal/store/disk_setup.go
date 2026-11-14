@@ -203,14 +203,6 @@ func prepareDiskSetupResults(results []model.DiskJobResult) ([]preparedDiskSetup
 	return prepared, nil
 }
 
-func (s *Store) recordDiskSetupResults(tx dbTx, machine string, results []model.DiskJobResult, now time.Time) error {
-	prepared, err := prepareDiskSetupResults(results)
-	if err != nil {
-		return err
-	}
-	return s.recordPreparedDiskSetupResults(tx, machine, prepared, now)
-}
-
 func (s *Store) recordPreparedDiskSetupResults(tx dbTx, machine string, results []preparedDiskSetupResult, now time.Time) error {
 	for _, prepared := range results {
 		r, body := prepared.result, prepared.body

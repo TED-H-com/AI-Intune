@@ -130,6 +130,12 @@ func identityHintsFrom(q identityRowsQueryer, machineID, registryHint string) ([
 	return identityHintsFromAt(q, machineID, registryHint, time.Time{})
 }
 
+// identityHintsFromAt 回傳這台機器曾看過的每一個 machine-id，加上名冊登記的那一個。
+// evaluatedAt 不是零值時，只算在那個時間點之前（含）第一次看到的。
+//
+// ⚠ 這個函式永遠不會回傳「哪個才是對的」。它只負責把所有看過的身分攤出來，
+// 超過一個就是衝突。合併、挑一個、或刪掉舊的，都會讓一台機器的狀態在兩台
+// 真實機器之間跳動，而且沒有人查得出為什麼。
 func identityHintsFromAt(q identityRowsQueryer, machineID, registryHint string, evaluatedAt time.Time) ([]IdentityHint, error) {
 	query := `SELECT hint,first_seen_at,last_seen_at,observation_count
  FROM machine_identity_hints WHERE machine_id=?`

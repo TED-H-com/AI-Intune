@@ -189,10 +189,6 @@ func operatorEnrollTokenPreview(displayName string, ttlSeconds int64, now time.T
 	}
 }
 
-func operatorEnrollTokenPreviewDigest(displayName string, ttlSeconds int64) string {
-	return operatorEnrollTokenPreviewDigestForPolicy(displayName, ttlSeconds, currentOperatorEnrollTokenPolicy())
-}
-
 func operatorEnrollTokenPreviewDigestForPolicy(displayName string, ttlSeconds int64,
 	policy operatorEnrollTokenPolicyIdentity,
 ) string {

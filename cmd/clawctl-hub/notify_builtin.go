@@ -13,18 +13,15 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/teddashh/AI-Intune/internal/channels"
 	"github.com/teddashh/AI-Intune/internal/secrets"
 )
 
 const (
-	defaultTelegramAPI     = "https://api.telegram.org"
-	telegramMaxRunes       = 3900
-	telegramTruncateSuffix = "\n… (truncated; full text is on the Hub)"
-	notifyRequestTimeout   = 20 * time.Second
-	notifyResponseLimit    = 1 << 20
+	defaultTelegramAPI   = "https://api.telegram.org"
+	notifyRequestTimeout = 20 * time.Second
+	notifyResponseLimit  = 1 << 20
 )
 
 var webhookHTTPAllowedNet = netip.MustParsePrefix("100.64.0.0/10")
@@ -272,14 +269,6 @@ func (n builtinNotifier) channelProvider(cfg notifyFile, kind string) channels.P
 }
 func (n builtinNotifier) sendTelegram(ctx context.Context, cfg notifyFile, body string) error {
 	return n.channelProvider(cfg, "telegram").Send(ctx, channels.Message{Text: body})
-}
-
-func truncateTelegram(body string) string {
-	if utf8.RuneCountInString(body) <= telegramMaxRunes {
-		return body
-	}
-	runes := []rune(body)
-	return string(runes[:telegramMaxRunes]) + telegramTruncateSuffix
 }
 
 type telegramAPIResponse struct {

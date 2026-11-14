@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"html"
 	"log"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -1335,26 +1333,6 @@ func (b *operatorBoundary) persistDenialAuditTruncated(admission operatorDenialA
 	if err := b.store.RecordOperatorDenial(entry); err != nil {
 		log.Printf("⚠ failed to write operator denial audit-truncated marker to audit: %v", err)
 	}
-}
-
-func denialSource(r *http.Request, principal operatorauth.Principal) string {
-	if principal.SourceAddr != "" {
-		return principal.SourceAddr
-	}
-	if r == nil {
-		return ""
-	}
-	if addrPort, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
-		return addrPort.Addr().Unmap().String()
-	}
-	if addr, err := netip.ParseAddr(r.RemoteAddr); err == nil {
-		return addr.Unmap().String()
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
 }
 
 func requestPath(r *http.Request) string {
