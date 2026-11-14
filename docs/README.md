@@ -28,6 +28,7 @@ Every document under `docs/`, grouped by directory. The [README](../README.md) n
 - [Mac agent 安裝與報到驗收](MACOS-AGENT-VALIDATION.md)
 - [Disk-clean maintenance](MAINTENANCE-DISK-CLEAN.md)
 - [Local maintenance timers](MAINTENANCE-TIMERS.md)
+- [Monitoring: Prometheus, Alertmanager and Grafana](MONITORING.md)
 - [Move agents to a new Hub](MOVE-AGENTS.md)
 - [Operator MCP and CLI](OPERATOR-AGENT.md)
 - [Operator identity, permissions, and browser boundary (Operator 身分、權限與瀏覽器邊界)](OPERATOR-AUTH.md)

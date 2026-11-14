@@ -48,10 +48,10 @@ hr "Stage 3 / 3: Grafana"
 
 hr "All three stages completed"
 cat <<EOF
-Prometheus    http://100.64.200.2:9090
-Alertmanager  http://100.64.200.2:9093
-Grafana       http://100.64.200.2:3000/d/clawctl-fleet
+Prometheus    http://$(hostname):9090
+Alertmanager  http://$(hostname):9093
+Grafana       http://$(hostname):3000/d/clawctl-fleet
 
 Check: ./ops/prometheus/check-dashboard.sh
-Silence a machine: amtool silence add machine=sampleagent1 -d 720h -c 'Handling manually'
+Silence a machine: amtool silence add machine=<machine> -d 720h -c 'Handling manually'
 EOF

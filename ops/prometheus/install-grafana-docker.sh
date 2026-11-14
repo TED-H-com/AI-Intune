@@ -20,13 +20,17 @@ IMAGE="grafana/grafana-oss:13.0.2"
 NAME="clawctl-grafana"
 HOME_DIR="${CLAWCTL_GRAFANA_HOME:-$HOME/.local/share/clawctl/grafana}"
 # ⚠ 位址從 CLAWCTL_LISTEN 推，不要再寫死一份。兩份會有一天不一樣。
-ADDR="${CLAWCTL_GRAFANA_ADDR:-$(sed -n 's/^CLAWCTL_LISTEN=//p' "$HOME/.config/clawctl/hub.env" 2>/dev/null | tr -d '"' | cut -d: -f1)}"
+HUB_ENV="$HOME/.config/clawctl/hub.env"
+ADDR="${CLAWCTL_GRAFANA_ADDR:-}"
+if [ -z "$ADDR" ] && [ -r "$HUB_ENV" ]; then
+	ADDR="$(sed -n 's/^CLAWCTL_LISTEN=//p' "$HUB_ENV" | tr -d '"' | cut -d: -f1)"
+fi
 ADDR="${ADDR:-127.0.0.1}"
 PORT="${CLAWCTL_GRAFANA_PORT:-3000}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 command -v docker >/dev/null || { echo "Docker not found" >&2; exit 1; }
-docker info >/dev/null 2>&1 || { echo "Cannot connect to docker daemon (is example-user in the docker group?)" >&2; exit 1; }
+docker info >/dev/null 2>&1 || { echo "Cannot connect to docker daemon (is $(id -un) in the docker group?)" >&2; exit 1; }
 
 echo "══ 1/4 Configuration files → $HOME_DIR"
 # ⚠ 設定檔抄一份到 $HOME_DIR，不要直接 mount git worktree ——
@@ -63,17 +67,26 @@ echo "══ 4/4 Verifying provisioning took effect"
 # ⚠⚠ 這一段是重點。uid 對不上的話 Grafana **不會報錯**，它會畫出一整頁
 #    空面板 —— 正好是這個專案最痛恨的那種失敗：看起來像「機隊很安靜」。
 #    所以不看「容器起來了沒」，看「資料源在不在、那一頁在不在」。
-ds="$(curl -s -u "${GF_ADMIN:-admin}:${GF_PASS:-admin}" "http://$ADDR:$PORT/api/datasources/uid/clawctl-prom" || true)"
+# 資料卷留著改過的密碼，所以先確認登入，再判斷資源在不在。
+AUTH="${GF_ADMIN:-admin}:${GF_PASS:-admin}"
+login="$(curl -s -o /dev/null -w '%{http_code}' -m 5 -u "$AUTH" "http://$ADDR:$PORT/api/user" || true)"
+[ "$login" = "200" ] || {
+	echo "Grafana rejected the login ${GF_ADMIN:-admin} (HTTP $login). Export GF_PASS with the current password, then rerun: $0" >&2
+	exit 1
+}
+ds="$(curl -s -u "$AUTH" "http://$ADDR:$PORT/api/datasources/uid/clawctl-prom" || true)"
 echo "$ds" | grep -q '"uid":"clawctl-prom"' || { echo "Data source clawctl-prom was not provisioned: $ds" >&2; exit 1; }
 echo "   Data source clawctl-prom ✓"
-dash="$(curl -s -u "${GF_ADMIN:-admin}:${GF_PASS:-admin}" "http://$ADDR:$PORT/api/search?query=" || true)"
+dash="$(curl -s -u "$AUTH" "http://$ADDR:$PORT/api/search?query=" || true)"
 echo "$dash" | grep -q 'clawctl' || { echo "Dashboard was not provisioned: $dash" >&2; exit 1; }
 echo "   Dashboard ✓"
 
 cat <<MSG
 
 Grafana  http://$ADDR:$PORT/d/clawctl-fleet
-Credentials  admin / admin (password change enforced on first login)
+
+First login as admin / admin; Grafana prompts for a new password. Change it.
+Reruns of this script log in with GF_ADMIN / GF_PASS (default admin / admin).
 
 Config source: ops/prometheus/grafana/clawctl.json (allowUiUpdates: false)
 Update command: ./ops/prometheus/install-grafana-docker.sh

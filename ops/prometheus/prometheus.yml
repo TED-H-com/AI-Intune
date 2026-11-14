@@ -22,6 +22,13 @@ global:
 rule_files:
   - /etc/prometheus/rules/*.yml
 
+# The Alertmanager of ops/prometheus/install-alertmanager.sh. install-prometheus.sh
+# installs this file as is, so a rerun keeps alert delivery only if it is here.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["localhost:9093"]
+
 scrape_configs:
   # ── 作業系統的事實 ─────────────────────────────────────────────
   - job_name: node
