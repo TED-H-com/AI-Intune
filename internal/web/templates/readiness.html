@@ -1,6 +1,3 @@
-{{define "readiness-rows"}}
-<table><thead><tr><th>Check</th><th>Status</th><th>Next action</th></tr></thead><tbody>{{range .}}<tr><td>{{.Name}}</td><td><strong>{{readinessStatus .Status}}</strong></td><td>{{.NextAction}} <a href="{{.Doc}}">Instructions</a></td></tr>{{end}}</tbody></table>
-{{end}}
 {{define "readiness-panel"}}
 <div class="panel" id="readiness"><h2>Readiness</h2>
 <p>Reports refresh automatically. Missing or old reports show Unknown. <a href="/channels">Configure notification channels</a>.</p>
