@@ -433,7 +433,7 @@ func TestStableDeploymentCreatePreviewAcceptsExactMatchingCanaryArtifact(t *test
 	artifactDir := t.TempDir()
 	record := writeDeploymentArtifact(t, artifactDir, deploymentTestVersion, ">=24.15.0 <25", finishedAt.Add(-time.Hour))
 	observeDeploymentMachine(t, st, "canary-machine", "canary witness", "canary", "24.15.0", deploymentTestVersion, finishedAt.Add(-time.Hour))
-	material, err := artifact.ResolveOpenClawMaterial(artifactDir, deploymentTestVersion, record.SHA256)
+	material, err := artifact.ResolveOpenClawMaterialContext(context.Background(), artifactDir, deploymentTestVersion, record.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}

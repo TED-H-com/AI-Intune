@@ -825,7 +825,7 @@ func TestCleanOpenClawStagingOnlyRemovesStaging(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cleaned, err := cleanOpenClawStaging(testHome, f.root)
+	cleaned, _, err := cleanOpenClawStagingKeeping(testHome, f.root, nil)
 	if err != nil || len(cleaned) != 2 {
 		t.Fatalf("cleaned=%v err=%v", cleaned, err)
 	}

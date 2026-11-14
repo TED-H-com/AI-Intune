@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -361,7 +362,7 @@ func TestDeploymentRetryBindsExactTerminalFailuresAndRejectsStaleJobState(t *tes
 	}
 	artifactDir := t.TempDir()
 	record := writeDeploymentArtifact(t, artifactDir, deploymentTestVersion, ">=24.15.0 <25", now.Add(-time.Hour))
-	material, err := artifact.ResolveOpenClawMaterial(artifactDir, deploymentTestVersion, record.SHA256)
+	material, err := artifact.ResolveOpenClawMaterialContext(context.Background(), artifactDir, deploymentTestVersion, record.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}

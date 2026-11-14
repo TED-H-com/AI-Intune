@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teddashh/AI-Intune/internal/artifact"
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operator"
@@ -417,7 +418,7 @@ func createDeploymentReadCLITestDeployment(t *testing.T, st *store.Store, machin
 	record artifactSidecar, createdBy string,
 ) store.Deployment {
 	t.Helper()
-	material, err := prepareOpenClawJob(artifactsDir, record.Version, record.SHA256)
+	material, err := artifact.ResolveOpenClawMaterialContext(context.Background(), artifactsDir, record.Version, record.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}

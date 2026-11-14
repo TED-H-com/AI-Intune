@@ -84,6 +84,3 @@ func truncateBoundedUTF8(value string, maxBytes int) string {
 	}
 	return value[:cut] + marker
 }
-
-// TruncateUTF8 bounds text without changing its whitespace policy.
-func TruncateUTF8(value string, maxBytes int) string { return truncateBoundedUTF8(value, maxBytes) }

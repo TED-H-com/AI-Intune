@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 )
 
 // Digest is the stable identity of one compliance document.
@@ -211,17 +210,4 @@ func newer(a, b Assignment) bool {
 		return a.AssignedAt > b.AssignedAt
 	}
 	return a.Revision > b.Revision
-}
-
-// SortAssignments puts assignments in a stable display order.
-func SortAssignments(rows []Assignment) {
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].Scope != rows[j].Scope {
-			return rows[i].Scope == ScopeMachine
-		}
-		if rows[i].ScopeID != rows[j].ScopeID {
-			return rows[i].ScopeID < rows[j].ScopeID
-		}
-		return rows[i].AssignedAt > rows[j].AssignedAt
-	})
 }

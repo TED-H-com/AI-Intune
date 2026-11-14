@@ -185,13 +185,6 @@ func loadNotifyEnvFile(path string) (notifyFile, error) {
 	return out, nil
 }
 
-// parseNotifyEnv reads KEY=VALUE lines without a shell: blank lines and
-// # comments are ignored, a leading "export " is stripped, matching quotes
-// around the value are stripped, and there is no variable expansion.
-func parseNotifyEnv(raw []byte) map[string]string {
-	return secrets.ParseEnv(raw)
-}
-
 func validateWebhookURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || !u.IsAbs() || u.Host == "" {

@@ -322,7 +322,7 @@ func TestResolveNodeRuntimeMaterialRejectsLegacyBundleWithoutWindowsTarget(t *te
 func TestResolveOpenClawMaterialValidatesBytesAndBuildsCanonicalSpec(t *testing.T) {
 	dir := t.TempDir()
 	record := writeMaterialFixture(t, dir, "2026.9.8", "one")
-	material, err := ResolveOpenClawMaterial(dir, record.Version, "")
+	material, err := ResolveOpenClawMaterialContext(context.Background(), dir, record.Version, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,15 +409,15 @@ func TestResolveOpenClawMaterialRequiresExactArtifactChoice(t *testing.T) {
 	dir := t.TempDir()
 	one := writeMaterialFixture(t, dir, "2026.9.8", "one")
 	two := writeMaterialFixture(t, dir, "2026.9.8", "two")
-	if _, err := ResolveOpenClawMaterial(dir, one.Version, ""); err == nil ||
+	if _, err := ResolveOpenClawMaterialContext(context.Background(), dir, one.Version, ""); err == nil ||
 		!strings.Contains(err.Error(), one.SHA256) || !strings.Contains(err.Error(), two.SHA256) {
 		t.Fatalf("ambiguous selection err=%v", err)
 	}
-	material, err := ResolveOpenClawMaterial(dir, one.Version, two.SHA256)
+	material, err := ResolveOpenClawMaterialContext(context.Background(), dir, one.Version, two.SHA256)
 	if err != nil || material.Artifact.SHA256 != two.SHA256 {
 		t.Fatalf("selected material=%+v err=%v", material, err)
 	}
-	if _, err := ResolveOpenClawMaterial(dir, one.Version, strings.ToUpper(one.SHA256)); err == nil {
+	if _, err := ResolveOpenClawMaterialContext(context.Background(), dir, one.Version, strings.ToUpper(one.SHA256)); err == nil {
 		t.Fatal("accepted noncanonical requested digest")
 	}
 }
@@ -429,7 +429,7 @@ func TestResolveOpenClawMaterialIgnoresUnrelatedMalformedCatalogEntry(t *testing
 		[]byte(`{"private":"malformed"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	material, err := ResolveOpenClawMaterial(dir, record.Version, record.SHA256)
+	material, err := ResolveOpenClawMaterialContext(context.Background(), dir, record.Version, record.SHA256)
 	if err != nil || material.Artifact.SHA256 != record.SHA256 {
 		t.Fatalf("unrelated malformed sidecar blocked valid material: material=%+v err=%v", material, err)
 	}
@@ -479,7 +479,7 @@ func TestResolveOpenClawMaterialRejectsMissingWrongSizedCorruptAndSymlinkTarball
 			dir := t.TempDir()
 			record := writeMaterialFixture(t, dir, "2026.9.8", test.name)
 			test.mutate(t, dir, record)
-			if _, err := ResolveOpenClawMaterial(dir, record.Version, record.SHA256); err == nil ||
+			if _, err := ResolveOpenClawMaterialContext(context.Background(), dir, record.Version, record.SHA256); err == nil ||
 				!strings.Contains(err.Error(), test.want) {
 				t.Fatalf("err=%v want substring %q", err, test.want)
 			}

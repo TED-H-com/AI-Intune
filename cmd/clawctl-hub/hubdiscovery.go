@@ -375,11 +375,6 @@ func managedHubBinaryPath() (string, error) {
 	return filepath.Join(home, ".local", "bin", "clawctl-hub"), nil
 }
 
-func validateStoppedHubUnitContract(raw, dbPath, expectedFragment, expectedBinary string) error {
-	_, err := stoppedHubUnitContract(raw, dbPath, expectedFragment, expectedBinary)
-	return err
-}
-
 // stoppedHubUnitContract returns the only cgroup pathname whose recursive
 // population must be empty.  MainPID=0 by itself is insufficient: a drifted
 // KillMode=process unit can be inactive while a child inherited the ledger.

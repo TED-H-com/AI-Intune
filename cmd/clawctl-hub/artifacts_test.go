@@ -2,171 +2,19 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
-
-type fakeNPMRegistry struct {
-	server      *httptest.Server
-	tarball     []byte
-	integrity   string
-	version     string
-	enginesNode string
-	tarballHits atomic.Int64
-}
-
-func newFakeNPMRegistry(t *testing.T, tarball []byte, integrity string) *fakeNPMRegistry {
-	t.Helper()
-	f := &fakeNPMRegistry{
-		tarball: tarball, integrity: integrity, version: "2026.9.2",
-		enginesNode: ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0",
-	}
-	f.server = httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/openclaw/" + f.version:
-			writeJSON(w, http.StatusOK, map[string]any{
-				"name": "openclaw", "version": f.version,
-				"dist": map[string]any{
-					"tarball":   f.server.URL + "/openclaw/-/openclaw-" + f.version + ".tgz",
-					"integrity": f.integrity,
-				},
-				"engines": map[string]any{"node": f.enginesNode},
-			})
-		case "/openclaw/-/openclaw-" + f.version + ".tgz":
-			f.tarballHits.Add(1)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(f.tarball)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	oldClient := artifactHTTPClient
-	artifactHTTPClient = f.server.Client()
-	t.Cleanup(func() { artifactHTTPClient = oldClient })
-	return f
-}
-
-func sha512Integrity(b []byte) string {
-	sum := sha512.Sum512(b)
-	return "sha512-" + base64.StdEncoding.EncodeToString(sum[:])
-}
-
-func TestFetchArtifactStoresHubMeasuredTarballAndSidecarAndReusesIt(t *testing.T) {
-	tarball := []byte("fake tgz bytes\x00that Hub measures itself")
-	registry := newFakeNPMRegistry(t, tarball, sha512Integrity(tarball))
-	dir := filepath.Join(t.TempDir(), "artifacts")
-	fetchedAt := time.Date(2026, 9, 6, 18, 30, 0, 0, time.UTC)
-	oldNow := artifactNow
-	artifactNow = func() time.Time { return fetchedAt }
-	t.Cleanup(func() { artifactNow = oldNow })
-
-	record, existed, err := fetchArtifact(context.Background(), dir, "openclaw@2026.9.2",
-		registry.server.URL, defaultArtifactMaxBytes, "tester@hub")
-	if err != nil {
-		t.Fatalf("fetch 失敗：%v", err)
-	}
-	if existed {
-		t.Fatal("第一次 fetch 不該說已經有了")
-	}
-	sha256Sum := sha256.Sum256(tarball)
-	wantSHA256 := hex.EncodeToString(sha256Sum[:])
-	if record.SHA256 != wantSHA256 || record.Size != int64(len(tarball)) || record.Name != "openclaw" ||
-		record.Version != registry.version || record.SHA512Integrity != registry.integrity ||
-		record.EnginesNode != registry.enginesNode || record.FetchedAt != fetchedAt || record.FetchedBy != "tester@hub" {
-		t.Fatalf("sidecar 紀錄不對：%+v", record)
-	}
-	wantTarballURL := registry.server.URL + "/openclaw/-/openclaw-2026.9.2.tgz"
-	if record.TarballURL != wantTarballURL {
-		t.Fatalf("tarball_url = %q，預期 %q", record.TarballURL, wantTarballURL)
-	}
-	tgzPath := filepath.Join(dir, wantSHA256+".tgz")
-	gotTarball, err := os.ReadFile(tgzPath)
-	if err != nil || !bytes.Equal(gotTarball, tarball) {
-		t.Fatalf("落地 tarball 不對：%q err=%v", gotTarball, err)
-	}
-	var sidecar artifactSidecar
-	sidecarBytes, err := os.ReadFile(filepath.Join(dir, wantSHA256+".json"))
-	if err != nil || json.Unmarshal(sidecarBytes, &sidecar) != nil || sidecar != record {
-		t.Fatalf("落地 sidecar 不對：%s err=%v decoded=%+v", sidecarBytes, err, sidecar)
-	}
-	// sidecar 是人會 cat 來看的檔；engines 的 ">=" 不該被 encoding/json 轉成 \u003e=。
-	if !strings.Contains(string(sidecarBytes), `"engines_node":">=22.22.3`) {
-		t.Fatalf("sidecar 把 > 轉義了：%s", sidecarBytes)
-	}
-	before, err := os.Stat(tgzPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	again, existed, err := fetchArtifact(context.Background(), dir, "openclaw@2026.9.2",
-		registry.server.URL, defaultArtifactMaxBytes, "someone-else")
-	if err != nil || !existed || again != record {
-		t.Fatalf("第二次應直接回已經有了：record=%+v existed=%v err=%v", again, existed, err)
-	}
-	after, err := os.Stat(tgzPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !after.ModTime().Equal(before.ModTime()) {
-		t.Fatalf("重抓改了 tarball mtime：before=%s after=%s", before.ModTime(), after.ModTime())
-	}
-	if registry.tarballHits.Load() != 1 {
-		t.Fatalf("已經有了仍重抓 tarball；hits=%d", registry.tarballHits.Load())
-	}
-}
-
-func TestFetchArtifactRejectsSHA512MismatchWithoutLeavingFiles(t *testing.T) {
-	registry := newFakeNPMRegistry(t, []byte("downloaded"), sha512Integrity([]byte("different")))
-	dir := filepath.Join(t.TempDir(), "artifacts")
-	_, _, err := fetchArtifact(context.Background(), dir, "openclaw@2026.9.2",
-		registry.server.URL, defaultArtifactMaxBytes, "tester")
-	if err == nil || !strings.Contains(err.Error(), "sha512") || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("sha512 mismatch 錯誤不清楚：%v", err)
-	}
-	assertNoArtifactFiles(t, dir)
-}
-
-func TestFetchArtifactStopsAtMaxBytesWithoutLeavingFiles(t *testing.T) {
-	tarball := bytes.Repeat([]byte("x"), 33)
-	registry := newFakeNPMRegistry(t, tarball, sha512Integrity(tarball))
-	dir := filepath.Join(t.TempDir(), "artifacts")
-	_, _, err := fetchArtifact(context.Background(), dir, "openclaw@2026.9.2", registry.server.URL, 16, "tester")
-	if err == nil || !strings.Contains(err.Error(), "max-bytes") {
-		t.Fatalf("超過上限錯誤不清楚：%v", err)
-	}
-	assertNoArtifactFiles(t, dir)
-}
-
-func assertNoArtifactFiles(t *testing.T, dir string) {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			names = append(names, entry.Name())
-		}
-		t.Fatalf("拒收後留下檔案：%v", names)
-	}
-}
 
 func TestServeArtifactRequiresAuthAndOnlyAcceptsLowercaseDigest(t *testing.T) {
 	f := newJobsFixture(t, "machine-a")

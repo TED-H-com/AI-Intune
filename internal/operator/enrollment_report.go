@@ -183,9 +183,7 @@ type EnrollmentReport struct {
 	Rows    []EnrollmentRow        `json:"rows"`
 }
 
-// EnrollmentReportPath / ExportPath 是這份報告的兩個網址。
-func EnrollmentReportPath() string { return "/reports/enrollment" }
-
+// EnrollmentReportExportPath 是這份報告的 CSV 網址。
 func EnrollmentReportExportPath() string { return "/reports/enrollment.csv" }
 
 // EnrollmentReportFor 產生這份報告。

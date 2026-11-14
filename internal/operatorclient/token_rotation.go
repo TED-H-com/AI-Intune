@@ -93,9 +93,6 @@ type tokenFileOps struct {
 func defaultTokenFileOps() tokenFileOps {
 	return tokenFileOps{os.Rename, (*os.File).Sync, (*os.File).Sync}
 }
-func replaceServiceTokenFile(path, current, next string) error {
-	return replaceServiceTokenFileWithOps(path, current, next, defaultTokenFileOps())
-}
 func replaceServiceTokenFileWithOps(path, current, next string, ops tokenFileOps) error {
 	if !store.ValidServiceSecret(next) {
 		return errors.New("invalid replacement token")

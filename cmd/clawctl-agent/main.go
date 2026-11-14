@@ -778,18 +778,6 @@ const (
 	observationNudged
 )
 
-// waitNextObservation waits for the caller-supplied duration or a job nudge.
-// The caller already applied jitter. floor is the server Retry-After from a
-// 503: a nudge may shorten the normal interval, but not this floor, so the next
-// post is not earlier than the hub asked. A zero floor keeps the old race
-// between the timer and a queued nudge.
-//
-// ⚠ nudge 不是把平常觀測調快，而是機器剛被工作單改過後，舊事實不准再掛
-// 10 分鐘。channel 只有一格且送端不阻塞；滿了代表已經有一輪排隊，丟掉也沒關係。
-func waitNextObservation(ctx context.Context, wait, floor time.Duration, nudge <-chan struct{}) observationWakeReason {
-	return waitObservation(ctx, wait, floor, nudge, realObservationClock{}, 0, nil)
-}
-
 // jitter 加 ±20% 的抖動。
 //
 // ⚠ 沒有這個，全機隊會在整分鐘同時打 Hub，而且重啟後會永遠對齊。

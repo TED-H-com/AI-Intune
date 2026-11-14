@@ -154,8 +154,6 @@ func callErrorPayload(err error) any {
 	return map[string]string{"code": "hub_error", "message": err.Error()}
 }
 
-func hubURLFromArgs(args []string) (string, []string, error) { return hubURLFromArgsMode(args, false) }
-
 func hubURLFromArgsMode(args []string, service bool) (string, []string, error) {
 	selected := ""
 	explicit := false

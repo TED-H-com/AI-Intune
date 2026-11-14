@@ -55,6 +55,15 @@ func observationOverdue(now, last time.Time, interval time.Duration) bool {
 	return now.Round(0).Sub(last.Round(0)) > interval+observationGrace
 }
 
+// waitObservation waits for the caller-supplied duration or a job nudge.
+// The caller already applied jitter. floor is the server Retry-After from a
+// 503: a nudge may shorten the normal interval, but not this floor, so the next
+// post is not earlier than the hub asked. A zero floor keeps the old race
+// between the timer and a queued nudge.
+//
+// ⚠ nudge 不是把平常觀測調快，而是機器剛被工作單改過後，舊事實不准再掛
+// 10 分鐘。channel 只有一格且送端不阻塞；滿了代表已經有一輪排隊，丟掉也沒關係。
+//
 // currentInterval is optional; polling it avoids coupling settings adoption to
 // the observation loop. Deadlines use wall time so host sleep counts as elapsed.
 func waitObservation(ctx context.Context, wait, floor time.Duration, nudge <-chan struct{}, clock observationTimerClock, interval time.Duration, currentInterval func() time.Duration) observationWakeReason {

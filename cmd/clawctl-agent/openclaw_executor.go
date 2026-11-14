@@ -1386,14 +1386,9 @@ func underDir(path, dir string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// cleanOpenClawStaging 只刪 executor 自己命名的 .staging-*；正常 release、
+// cleanOpenClawStagingKeeping 只刪 executor 自己命名的 .staging-*；正常 release、
 // broken release、snapshot 與 ~/.openclaw 都不在這個函式的可達範圍。
-func cleanOpenClawStaging(home, fsRoot string) ([]string, error) {
-	cleaned, _, err := cleanOpenClawStagingKeeping(home, fsRoot, nil)
-	return cleaned, err
-}
-
-// cleanOpenClawStagingKeeping 同上，但 keep 裡列的 staging 目錄名（.staging-<job>）留著不刪；
+// keep 裡列的 staging 目錄名（.staging-<job>）留著不刪；
 // 回傳（刪掉的邏輯路徑、留下的邏輯路徑、錯誤）。
 // ⚠ 留下的是「scope 還沒停」的那幾張：刪掉它們 npm 會把 prefix 重新 mkdir 回來，等於白刪，
 // 而且 openclaw.tgz 仍被佔著；下一次啟動 scope 停掉之後再清。

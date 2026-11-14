@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/teddashh/AI-Intune/internal/secrets"
 )
 
 const (
@@ -53,7 +55,7 @@ func TestParseNotifyEnv(t *testing.T) {
 		"CLAWCTL_NOTIFY_WEBHOOK_URL=https://example.com/hook\n" +
 		"UNKNOWN_KEY=ignored\n" +
 		"export CLAWCTL_NOTIFY_WEBHOOK_SECRET=\"s3cret\"\n")
-	kv := parseNotifyEnv(raw)
+	kv := secrets.ParseEnv(raw)
 	if kv["TELEGRAM_BOT_TOKEN"] != testBotToken {
 		t.Fatalf("token = %q", kv["TELEGRAM_BOT_TOKEN"])
 	}
@@ -73,7 +75,7 @@ func TestParseNotifyEnv(t *testing.T) {
 
 func TestParseNotifyEnvCRLF(t *testing.T) {
 	raw := []byte("TELEGRAM_BOT_TOKEN=abc\r\nTELEGRAM_CHAT_ID=1\r\n")
-	kv := parseNotifyEnv(raw)
+	kv := secrets.ParseEnv(raw)
 	if kv["TELEGRAM_BOT_TOKEN"] != "abc" || kv["TELEGRAM_CHAT_ID"] != "1" {
 		t.Fatalf("crlf parse = %#v", kv)
 	}

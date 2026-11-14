@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/teddashh/AI-Intune/internal/artifact"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
@@ -34,26 +31,6 @@ func cmdJob(argv []string) {
 		fmt.Fprintf(os.Stderr, "unknown subcommand: job %s (available: create, list, show, evidence)\n", argv[0])
 		os.Exit(2)
 	}
-}
-
-type openClawJobMaterial = artifact.OpenClawMaterial
-
-// prepareOpenClawJob 是 deployment preview/create 共用的 artifact → spec → digest 路徑。
-// ⚠ 預覽與 create 若各自生成，預覽可能拿一份 engines、agent 卻收到另一份 spec。
-func prepareOpenClawJob(artifactsDir, version, requestedSHA256 string) (openClawJobMaterial, error) {
-	return artifact.ResolveOpenClawMaterial(artifactsDir, version, requestedSHA256)
-}
-
-// marshalCompactNoEscape 生成 spec 用：不做 HTML 轉義，engines 的 ">=22.19.0" 存進 DB
-// 就是人看得懂的原文，也跟 writeJSON（同樣不轉義）回給 agent 的位元組一致。
-func marshalCompactNoEscape(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // resolveMachine 把人打的名字對到名冊上的一台。

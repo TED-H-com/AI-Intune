@@ -59,8 +59,8 @@ func TestScrubOrdinaryText(t *testing.T) {
 		"monkey=value", "hockey=enabled", "tokenizer=ready", "123e4567-e89b-12d3-a456-426614174000",
 		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	} {
-		if got, n := Scrub(input); got != input || n != 0 {
-			t.Fatalf("ordinary fixture changed: %q => %q", input, got)
+		if r := ScrubWithResult(input); r.Value != input || r.Count != 0 {
+			t.Fatalf("ordinary fixture changed: %q => %q", input, r.Value)
 		}
 	}
 }

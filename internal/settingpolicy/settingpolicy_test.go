@@ -316,20 +316,3 @@ func TestJudgeNeverCallsAnUnmeasuredMachineApplied(t *testing.T) {
 		}
 	}
 }
-
-func TestSortAssignmentsPutsMachineScopeFirst(t *testing.T) {
-	rows := []Assignment{
-		{Scope: ScopeChannel, ScopeID: "stable", AssignedAt: "2026-09-12T00:00:00Z"},
-		{Scope: ScopeMachine, ScopeID: "m2", AssignedAt: "2026-09-12T00:00:00Z"},
-		{Scope: ScopeMachine, ScopeID: "m1", AssignedAt: "2026-09-12T00:00:00Z"},
-		{Scope: ScopeChannel, ScopeID: "canary", AssignedAt: "2026-09-12T00:00:00Z"},
-	}
-	SortAssignments(rows)
-	got := ""
-	for _, r := range rows {
-		got += string(r.Scope) + ":" + r.ScopeID + " "
-	}
-	if got != "machine:m1 machine:m2 channel:canary channel:stable " {
-		t.Fatalf("排序不對：%s", got)
-	}
-}

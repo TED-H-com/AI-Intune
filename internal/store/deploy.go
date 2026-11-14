@@ -1330,11 +1330,6 @@ SELECT jobs.state,
 	return "", fmt.Errorf("store: job %s failed to transition to succeeded state", jobID)
 }
 
-func (s *Store) measuredEvidenceStatus(jobID string) (required, ready bool, err error) {
-	_, required, ready, err = s.measuredEvidenceDecision(jobID)
-	return required, ready, err
-}
-
 func (s *Store) measuredEvidenceDecision(jobID string) (wired, required, ready bool, err error) {
 	kind, err := s.jobResourceKind(jobID)
 	if err != nil {
