@@ -106,8 +106,13 @@ const (
 	DefaultTerminalMaxLifetime = 12 * time.Hour
 )
 
+// parseTemplates parses every page template with the template functions.
+func parseTemplates() (*template.Template, error) {
+	return template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
+}
+
 func New(s *store.Store, hubHost string) (*Server, error) {
-	t, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
+	t, err := parseTemplates()
 	if err != nil {
 		return nil, err
 	}
