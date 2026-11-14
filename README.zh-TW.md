@@ -10,7 +10,7 @@ AI-Intune 是以證據為核心的控制平臺，管理執行 AI agent 與 codin
 
 ## 建置與測試
 
-請在 Linux 上使用 Go 1.27.1：
+請在 Linux 上使用 Go 1.27.4：
 
 ```sh
 git clone https://github.com/TED-H-com/AI-Intune.git

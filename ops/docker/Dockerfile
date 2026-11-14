@@ -28,7 +28,7 @@
 # Hub/agent for the target platform (BuildKit sets TARGETOS/TARGETARCH), so a
 # multi-arch build (linux/amd64 + linux/arm64) needs no emulation. Without
 # BuildKit both are empty and the binaries are built for the builder's arch.
-FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src

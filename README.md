@@ -233,7 +233,7 @@ Choose one of three deployment targets:
   The installer publishes both Agent architectures under the exact running Hub version and starts `clawctl-hub.service` as a systemd user unit.
 
 > [!NOTE]
-> Docker and Fly build inside the container image: you do **not** need Go installed on the host to run them. Go `1.27.1` + `make` is only required when building from source, running the systemd install without Docker, or contributing to development (`make test vet`, `make hub agent-bundles`).
+> Docker and Fly build inside the container image: you do **not** need Go installed on the host to run them. Go `1.27.4` + `make` is only required when building from source, running the systemd install without Docker, or contributing to development (`make test vet`, `make hub agent-bundles`).
 
 `8787` in examples is the conventional example port, not a Hub default. The grant `dst` port, `CLAWCTL_PUBLIC_URL`, the agent `--hub` URL, and any tunnel origin must use that same port. Full steps: [docs/DEPLOY-OSS.md](docs/DEPLOY-OSS.md). Cloudflare Containers is not implemented (it would need tsnet, Litestream, and a Durable Object keep-alive).
 
@@ -721,7 +721,7 @@ Hub 是控制 ledger，不是 AI 資料路徑。端點不開放 inbound 控制 p
   ```
   安裝器會將兩種 Agent 架構發布到精確的 Hub 版本之下，並以 systemd user unit 啟動 `clawctl-hub.service`。
 
-> Docker 與 Fly 會在映像檔內完成建置：主機上**不需要**安裝 Go。Go `1.27.1` + `make` 僅在從原始碼建置、systemd 安裝或日常開發時需要（`make test vet`、`make hub agent-bundles`）。
+> Docker 與 Fly 會在映像檔內完成建置：主機上**不需要**安裝 Go。Go `1.27.4` + `make` 僅在從原始碼建置、systemd 安裝或日常開發時需要（`make test vet`、`make hub agent-bundles`）。
 
 文件裡的 `8787` 只是慣例範例埠，不是 Hub 的預設埠。Tailscale grant 的 `dst` 埠、`CLAWCTL_PUBLIC_URL`、agent 的 `--hub`、以及 tunnel origin 都必須跟 `CLAWCTL_LISTEN` 使用同一個埠。完整步驟見 [docs/DEPLOY-OSS.md](docs/DEPLOY-OSS.md)。Cloudflare Containers 尚未實作。
 

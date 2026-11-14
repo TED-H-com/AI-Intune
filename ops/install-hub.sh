@@ -211,7 +211,7 @@ To build yourself, this machine requires Go $(grep -m1 '^go ' "$HERE/../go.mod" 
 Ubuntu apt version is too old, do not use apt install golang-go:
 
   sudo apt-get update && sudo apt-get install -y make ca-certificates curl
-  curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C "\$HOME/.local" -xzf -
+  curl -fsSL https://go.dev/dl/go1.27.4.linux-amd64.tar.gz | tar -C "\$HOME/.local" -xzf -
   make            # Makefile will look for ~/.local/go/bin/go
 
 ⚠ Or do not build on this machine at all. Artifact is a CGO_ENABLED=0 static executable —
