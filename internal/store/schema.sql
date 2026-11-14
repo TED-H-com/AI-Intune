@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS machine_registry (
   assigned_user_login TEXT,               -- 顯示用的 login，例如 operator@example.com
   assigned_user_revision INTEGER NOT NULL DEFAULT 0, -- operator optimistic concurrency token
   hostname        TEXT,                   -- ⚠ 實測 5 台裡 3 台跟 tailnet 名稱對不上
-  expected        INTEGER NOT NULL DEFAULT 1,   -- 分母。0 才不算
+  expected        INTEGER NOT NULL DEFAULT 1,   -- 舊欄位，寫入一律 1；分母只看 retired_at
   unix_user       TEXT,                   -- 實測每台都不一樣：example-user/ubuntu/opc/example-user-b
   os              TEXT,
   arch            TEXT,

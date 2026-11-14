@@ -45,7 +45,7 @@ manifest 位於 `cmd/clawctl-hub/operator_boundary.go`，Web routes 位於
 | Profile | Node／OpenClaw／Hermes | Node 本地 HTTP／executor／recovery 已驗證；OpenClaw／Hermes 仍只 Linux | Node 本地 preview／apply／executor／Hub 量測證據已驗證；OpenClaw／Hermes 仍只 Linux |
 | Packaging | Hub 發布／下載 Linux 必要雙架構組 | Hub 可發布／下載完整 Darwin 雙架構組，沿用既有下載 route；舊 Linux-only release 仍可讀 | Hub 可發布／下載完整 Windows 雙架構組；舊 Linux-only／Linux+Darwin release 仍可讀 |
 
-Hub schema 已平台中立：`internal/store/schema.sql:30-31` `os/arch` TEXT 無 CHECK；`internal/catalog/catalog.go:67-71` `Platform{OS,Arch}` 無 enum；`:547` `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
+Hub schema 已平台中立：`internal/store/schema.sql` 的 `machine_registry.os`／`arch` 是 TEXT、無 CHECK；`internal/catalog/catalog.go` 的 `Platform{OS,Arch}` 無 enum，同一個檔的 `validPlatform` 只做識別字規則，`"darwin"` 與 `"windows"` 字串都過得了。過得了字串 ≠ 有 adapter 或 installer。
 
 ## 358 個 production operations 基線
 

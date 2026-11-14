@@ -31,16 +31,16 @@ executor 不一樣**。所以「獨立」不是形容詞，是一張要逐項回
 
 驗證指令由 executor 自己在同一個 process 裡跑完再回報：
 
-* 規則與指令寫在 `cmd/clawctl-agent/openclaw_executor.go:911` 起（`unit_execstart`、
+* 規則與指令寫在 `cmd/clawctl-agent/openclaw_executor.go`（`unit_execstart`、
   `health`、`process_cmdline`、`version`、`rollback`、`stage`）。
-* `execDeps.verification`（`cmd/clawctl-agent/openclaw_executor.go:1136`）把結果包成
+* 同一個檔的 `execDeps.verification` 把結果包成
   `model.JobVerificationRequest`，`VerifiedAt` 取的是 `d.now()` —— **agent 自己的時鐘**。
-* 回報走 `POST /v1/jobs/{id}/verifications`（`cmd/clawctl-hub/api.go:59`），
-  boundary 分類是 `nonOperatorAgent`（`cmd/clawctl-hub/operator_boundary.go:67`）。
+* 回報走 `POST /v1/jobs/{id}/verifications`（`cmd/clawctl-hub/api.go` 的 `hub.agentRoutes`），
+  boundary 分類是 `nonOperatorAgent`（`cmd/clawctl-hub/operator_boundary.go` 的 `nonOperatorRoutePolicies`）。
 
 ### 2.2 Ledger 怎麼記
 
-`Store.RecordVerification`（`internal/store/deploy.go:982`）的 INSERT 把三個 provenance
+`Store.RecordVerification`（`internal/store/deploy.go`）的 INSERT 把三個 provenance
 欄位**寫死**，而且整列的寫入條件綁在 job lease 上：
 
 ```sql
@@ -51,7 +51,8 @@ SELECT ?, job_id, machine_id, ?, ?, ?, ?, ?, ?, ?, ?, machine_id, ?, ?, 1, ?
 ```
 
 * `producer_kind = 'executor_agent'`、`evidence_role = 'executor'`、
-  `authority = 'machine_bearer_lease'`（`internal/store/deploy.go:58-60`）。
+  `authority = 'machine_bearer_lease'`（`internal/store/deploy.go` 的 `JobVerificationProducerExecutorAgent`、
+  `JobVerificationRoleExecutor`、`JobVerificationAuthorityMachineLease`）。
 * `producer_id` 直接取 `jobs.machine_id`，不是呼叫端給的。
 * 寫入前提是**持有那張單的 lease**。
 
@@ -61,7 +62,7 @@ SELECT ?, job_id, machine_id, ?, ?, ?, ?, ?, ?, ?, ?, machine_id, ?, ?, 1, ?
 
 ### 2.3 Completion gate 怎麼用它
 
-`internal/store/deploy.go:1060` 起的 gate 要求：至少一列 `trustedExecutor`
+`Store.MarkSucceededIfVerified`（`internal/store/deploy.go`）的 gate 要求：至少一列 `trustedExecutor`
 （`producer_kind`／`evidence_role`／`authority` 三者相符且 `producer_id = jobs.machine_id`）
 且 `failed = 0`。也就是說，**今天的 gate 完全建立在 executor 的自述上**。
 

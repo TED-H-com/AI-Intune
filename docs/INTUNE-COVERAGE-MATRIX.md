@@ -179,7 +179,7 @@ AI-Intune 現在真的有的東西，並且說出差距。
    各自附一句「這是什麼」與一句「下一步做什麼」；還沒到的排在最上面，等最久的排最前面。
    量過之後沒有做的是 `expected` 開關：那一欄在正式環境從來沒有被改過，寫入只發生在開票
    那一刻，而讓它可寫等於在退役之外再開一條安靜的離開分母的路——那正是
-   `internal/store/store.go:1034` 明文排除的東西，也是 sampleagent3 隱形七週那個 bug 的形狀。
+   `Machine.InDenominator`（`internal/store/store.go`）明文排除的東西，也是 sampleagent3 隱形七週那個 bug 的形狀。
    這份報告不自己判斷任何事實：「報到過沒有」讀機隊清單那一份投影，「票過期了沒有」讀單機頁
    在用的同一條 SQL 判準，所以兩頁不會對同一台機器講出兩個答案。
    新增 2 條 HTML／CSV route 與 1 條 JSON route（都是 `view`）。
