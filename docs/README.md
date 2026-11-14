@@ -22,6 +22,7 @@ Every document under `docs/`, grouped by directory. The [README](../README.md) n
 - [Host setup profile](HOST-PROFILE.md)
 - [Hub observation storage and diagnostics](HUB-PERFORMANCE.md)
 - [Hub reliability: database contention, notify delivery, metrics](HUB-RELIABILITY.md)
+- [Hub settings](HUB-SETTINGS.md)
 - [Intune 對齊覆蓋矩陣](INTUNE-COVERAGE-MATRIX.md)
 - [Intune UI reference contract](INTUNE-UI-REFERENCE.md)
 - [Machine Check-in Protocol & Node Management](MACHINE-CHECK-IN-PROTOCOL.md)
