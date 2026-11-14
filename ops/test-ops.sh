@@ -2704,6 +2704,14 @@ else
 	failed=$((failed + 1))
 fi
 
+for disk_suite in ops/test-disk-actions.sh ops/test-disk-safe-v2.sh ops/test-disk-deep-report.sh; do
+	if bash "$ROOT/$disk_suite"; then
+		passed=$((passed + 1))
+	else
+		failed=$((failed + 1))
+	fi
+done
+
 if bash "$ROOT/ops/test-disk-clean.sh"; then
 	passed=$((passed + 1))
 else
@@ -2732,6 +2740,21 @@ for fleet_test in "$ROOT"/ops/fleet/*/test.sh; do
 		failed=$((failed + 1))
 	fi
 done
+
+# Every ops test suite runs either here or in CI.
+unwired=
+for suite in "$ROOT"/ops/test-*.sh "$ROOT"/ops/*/test-*.sh; do
+	[ -f "$suite" ] || continue
+	suite=${suite#"$ROOT"/}
+	[ "$suite" = ops/test-ops.sh ] && continue
+	grep -q -F "$suite" "$ROOT/ops/test-ops.sh" "$ROOT/.github/workflows/ci.yml" || unwired="$unwired $suite"
+done
+if [ -z "$unwired" ]; then
+	passed=$((passed + 1))
+else
+	printf 'FAIL ops test suites that neither ops/test-ops.sh nor CI runs:%s\n' "$unwired" >&2
+	failed=$((failed + 1))
+fi
 
 printf '\npassed: %s, failed: %s\n' "$passed" "$failed"
 if [ "$failed" -ne 0 ]; then
