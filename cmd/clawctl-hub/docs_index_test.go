@@ -14,6 +14,9 @@ var (
 	markdownInlineCodeRE = regexp.MustCompile("`[^`]*`")
 	markdownLinkRE       = regexp.MustCompile(`\]\(([^)\s]+)[^)]*\)`)
 	markdownSchemeRE     = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+	// A line number in a document is wrong after the next edit of the file it
+	// points into, so documents cite a function, type or constant instead.
+	markdownCodeLineRE = regexp.MustCompile(`[\w./-]+\.(?:go|sql|sh|py|ps1|ya?ml|js|css|html):\d+(?:-\d+)?\b|` + "`:\\d+(?:-\\d+)?`")
 )
 
 func markdownRelativeLinks(text string) []string {
@@ -72,8 +75,10 @@ func TestMarkdownRelativeLinks(t *testing.T) {
 	}
 }
 
-func TestMarkdownRelativeLinksResolve(t *testing.T) {
-	root := filepath.Join("..", "..")
+// repositoryMarkdownFiles lists the Markdown files of the repository, relative
+// to root.
+func repositoryMarkdownFiles(t *testing.T, root string) []string {
+	t.Helper()
 	files := []string{"README.md", "README.zh-TW.md", "AGENTS.md", "DESIGN.md"}
 	for _, dir := range []string{"docs", "skills", "ops"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry fs.DirEntry, err error) error {
@@ -94,7 +99,12 @@ func TestMarkdownRelativeLinksResolve(t *testing.T) {
 			t.Fatalf("walk %s: %v", dir, err)
 		}
 	}
+	return files
+}
 
+func TestMarkdownRelativeLinksResolve(t *testing.T) {
+	root := filepath.Join("..", "..")
+	files := repositoryMarkdownFiles(t, root)
 	linkCount := 0
 	for _, file := range files {
 		content, err := os.ReadFile(filepath.Join(root, file))
@@ -179,5 +189,44 @@ func TestDocsIndexListsEveryDocument(t *testing.T) {
 	}
 	if documentCount < 50 {
 		t.Fatalf("walked too few documents under docs/: %d", documentCount)
+	}
+}
+
+func TestMarkdownCodeLineReferences(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want []string
+	}{
+		{"`internal/store/deploy.go:982` writes it", []string{"internal/store/deploy.go:982"}},
+		{"see internal/store/schema.sql:30-31 and `:547`", []string{"internal/store/schema.sql:30-31", "`:547`"}},
+		{"`ops/install-hub.sh:214`, `site/app.js:3`, `.github/workflows/ci.yml:40`",
+			[]string{"ops/install-hub.sh:214", "site/app.js:3", ".github/workflows/ci.yml:40"}},
+		{"`internal/store/deploy.go` and `Store.RecordVerification`", nil},
+		{"`127.0.0.1:8770`, `golang:1.27.4-bookworm`, `ghcr.io/ted-h-com/clawctl-hub:v1`", nil},
+		{"`--report-at 08:00`, `http://localhost:8788/`, `file:///var/lib/x/token.env#TOKEN`", nil},
+	} {
+		if got := markdownCodeLineRE.FindAllString(tc.text, -1); !slices.Equal(got, tc.want) {
+			t.Errorf("line references in %q = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestMarkdownCitesCodeWithoutLineNumbers(t *testing.T) {
+	root := filepath.Join("..", "..")
+	files := repositoryMarkdownFiles(t, root)
+	for _, file := range files {
+		content, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil {
+			t.Fatalf("read %s: %v", filepath.ToSlash(file), err)
+		}
+		for number, line := range strings.Split(string(content), "\n") {
+			for _, reference := range markdownCodeLineRE.FindAllString(line, -1) {
+				t.Errorf("%s:%d: %s cites code by line number; cite the function, type or constant instead",
+					filepath.ToSlash(file), number+1, reference)
+			}
+		}
+	}
+	if len(files) < 70 {
+		t.Fatalf("checked too few Markdown files: %d", len(files))
 	}
 }

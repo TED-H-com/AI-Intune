@@ -548,7 +548,6 @@ authority=`dependency_graph` 的 `DEPENDENCY_FAILED` 事件。相同 resource �
 | `POST` | `/v1/jobs/{id}/verifications` | 驗證結果 |
 | `POST` | `/v1/jobs/{id}/complete` | 收工 |
 | `POST` | `/v1/jobs/{id}/reject` | **合法拒絕**，見 §5.2 |
-| `POST` | `/v1/jobs/{id}/login-events` | 互動式登入的階段回報 |
 
 ⚠ **註（2026-09-06）：實作出貨的是 bearer token，不是這裡寫的 mTLS。**
 那是一筆有意識的偏離，Phase 4 開工時重新開過並且**決定不還成 mTLS**，
