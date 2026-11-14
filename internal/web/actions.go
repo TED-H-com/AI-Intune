@@ -640,13 +640,8 @@ func (s *Server) doEnrollToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	title := result.DisplayName + " 的 enroll 票"
-	if result.Replayed {
-		title = result.DisplayName + " 的 enroll 票"
-	}
-
 	s.render(w, r, "token.html", page{
-		Title: title, Nav: "machines-enrollment",
+		Title: result.DisplayName + " 的 enroll 票", Nav: "machines-enrollment",
 		Now: time.Now().Local().Format("2006-01-02 15:04"),
 		Token: &tokenResult{
 			Name: result.DisplayName, MachineID: result.MachineID,

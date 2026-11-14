@@ -250,22 +250,125 @@ var englishNavigationTexts = map[string]string{
 	"報告總覽":          "Reports overview",
 	"註冊":            "Enrollment",
 	"安裝狀態":          "Installation status",
+	"Checks / 檢查":   "Checks",
+	"離線通知":          "Offline alerts",
+	"確認 Tailnet 規則": "Confirm Tailnet rule",
+	"確認指派使用者":       "Confirm assigned user",
+	"Set up disabled schedules / 建立停用排程": "Set up disabled schedules",
+	// Action results, the titles of the pages a form submission returns.
+	"使用者不在名冊":                                        "User not in the roster",
+	"來源不可用":                                          "Source unavailable",
+	"已 abandon deployment":                           "Deployment abandoned",
+	"已 continue deployment":                          "Deployment continued",
+	"已 retry deployment":                             "Deployment retried",
+	"已 skip failed batch":                            "Failed batch skipped",
+	"已 skip_failed_batch deployment":                 "Failed batch skipped",
+	"已建立 deployment":                                 "Deployment created",
+	"已撤銷 pending enrollment ticket":                  "Pending enrollment ticket revoked",
+	"已確認原本的 deployment abandon 結果（replay）":           "Deployment already abandoned",
+	"已確認原本的 deployment continue 結果（replay）":          "Deployment already continued",
+	"已確認原本的 deployment create 結果（replay）":            "Deployment already created",
+	"已確認原本的 deployment retry 結果（replay）":             "Deployment already retried",
+	"已確認原本的 deployment skip_failed_batch 結果（replay）": "Failed batch already skipped",
+	"已確認原本的 pending enrollment ticket 撤銷結果（replay）":  "Pending enrollment ticket already revoked",
+	"已確認原本的 skip failed batch 結果（replay）":            "Failed batch already skipped",
+	"找不到機器":                                          "Device not found",
+	"指派未完成":                                          "Assignment not completed",
+	"指派版本已變更":                                        "Assignment revision changed",
+	"排程操作失敗":                                         "Schedule action failed",
+	"未建立 Tailnet 規則預覽":                               "Tailnet rule preview not created",
+	"未建立上限預覽":                                        "Enrollment limit preview not created",
+	"未建立合規性原則預覽":                                     "Compliance policy preview not created",
+	"未建立指派預覽":                                        "Assignment preview not created",
+	"未建立清理預覽":                                        "Cleanup preview not created",
+	"未建立演練預覽":                                        "Restore drill preview not created",
+	"未建立設定原則預覽":                                      "Configuration policy preview not created",
+	"未建立還原演練":                                        "Restore drill not created",
+	"未指派合規性原則":                                       "Compliance policy not assigned",
+	"未指派設定原則":                                        "Configuration policy not assigned",
+	"未更改上限":                                          "Enrollment limit not changed",
+	"未清理資料":                                          "Data not cleaned up",
+	"未發佈合規性原則":                                       "Compliance policy not published",
+	"未發佈設定原則":                                        "Configuration policy not published",
+	"未變更 Tailnet 規則":                                 "Tailnet rule not changed",
+	"權限不足":                                           "Insufficient permissions",
+	"沒有 abandon deployment":                          "Deployment not abandoned",
+	"沒有 continue deployment":                         "Deployment not continued",
+	"沒有 retry deployment":                            "Deployment not retried",
+	"沒有 skip failed batch":                           "Failed batch not skipped",
+	"沒有 skip_failed_batch deployment":                "Failed batch not skipped",
+	"沒有執行 artifact fetch":                            "Artifact fetch not run",
+	"沒有執行 deployment action":                         "Deployment action not run",
+	"沒有執行這個動作":                                       "Action not run",
+	"沒有建立 assignment preview":                        "Assignment preview not created",
+	"沒有建立 deployment":                                "Deployment not created",
+	"沒有建立 deployment action preview":                 "Deployment action preview not created",
+	"沒有建立 deployment preview":                        "Deployment preview not created",
+	"沒有建立 enroll 預覽":                                 "Enrollment preview not created",
+	"沒有建立 fetch operation":                           "Fetch operation not created",
+	"沒有建立 fetch preview":                             "Fetch preview not created",
+	"沒有建立 package preview":                           "Package preview not created",
+	"沒有建立 profile preview":                           "Profile preview not created",
+	"沒有建立 skip failed batch preview":                 "Skip failed batch preview not created",
+	"沒有建立名冊備註預覽":                                     "Registry notes preview not created",
+	"沒有建立待兌換 enroll 票的撤銷預覽":                          "Pending enrollment ticket revocation preview not created",
+	"沒有建立派工預覽":                                       "Assignment preview not created",
+	"沒有建立生命週期預覽":                                     "Lifecycle preview not created",
+	"沒有建立重新命名預覽":                                     "Rename preview not created",
+	"沒有指派 profile":                                   "Profile not assigned",
+	"沒有指派 verifier":                                  "Verifier not assigned",
+	"沒有撤銷待兌換的 enroll 票":                              "Pending enrollment ticket not revoked",
+	"沒有改 channel":                                    "Channel not changed",
+	"沒有更新名冊備註":                                       "Registry notes not updated",
+	"沒有發布 package":                                   "Package not published",
+	"沒有發布 profile":                                   "Profile not published",
+	"沒有確認機器生命週期結果":                                   "Device lifecycle result not confirmed",
+	"沒有確認派工結果":                                       "Assignment result not confirmed",
+	"沒有變更機器生命週期":                                     "Device lifecycle not changed",
+	"沒有重新命名":                                         "Device not renamed",
+	"沒有開 enroll 票":                                   "Enrollment ticket not issued",
+	"沒有開啟終端":                                         "Terminal not opened",
+	"沒有顯示 enroll 票":                                  "Enrollment ticket not shown",
+	"無法讀取 fetch operation":                           "Fetch operation unavailable",
+	"無法變更離線通知":                                       "Offline alerts not changed",
+	"無法顯示 fetch operation":                           "Fetch operation unavailable",
+	"無法驗證 artifact":                                  "Artifact not verified",
+	"目前沒有資料需要清理":                                     "No data to clean up",
+	"表單不合法":                                          "Invalid form",
+	"診斷建立失敗":                                         "Diagnostics not created",
+	"診斷預覽失敗":                                         "Diagnostics preview not created",
+	"這台給不出可以連過去的位址":                                  "No reachable address for this device",
+}
+
+// englishNavigationPatterns translate titles that embed a name or an ID.
+// The first pattern whose prefix and suffix both match wins, so a pattern
+// must come before every shorter pattern that would also match its titles.
+var englishNavigationPatterns = []struct{ zhPrefix, zhSuffix, enPrefix, enSuffix string }{
+	{"確認撤銷 ", " 的待兌換 enroll 票", "Confirm revoking the pending enrollment ticket for ", ""},
+	{"確認 ", " 的 enroll 票", "Confirm the enrollment ticket for ", ""},
+	{"確認 ", " 的生命週期變更", "Confirm the lifecycle change for ", ""},
+	{"確認 ", " 的診斷", "Confirm diagnostics for ", ""},
+	{"代理程式活動 ", "", "Agent activity ", ""},
+	{"確認重新命名 ", "", "Confirm rename ", ""},
+	{"確認名冊備註 ", "", "Confirm registry notes ", ""},
+	{"確認 fetch ", "", "Confirm fetch ", ""},
+	{"確認 ", "", "Confirm ", ""},
+	{"部署 ", "", "Deployment ", ""},
+	{"", " 的資料", "", " data"},
+	{"", " 事件時間軸", "", " event timeline"},
+	{"", " 的終端", "", " terminal"},
+	{"", " 的 enroll 票", "", " enrollment ticket"},
 }
 
 func englishNavigationText(value string) string {
 	if translated, ok := englishNavigationTexts[value]; ok {
 		return translated
 	}
-	for _, prefix := range []struct{ zh, en string }{
-		{"代理程式活動 ", "Agent activity "},
-		{"確認撤銷 ", "Confirm revocation "},
-		{"確認重新命名 ", "Confirm rename "},
-		{"確認名冊備註 ", "Confirm registry notes "},
-		{"確認 fetch ", "Confirm fetch "},
-		{"確認 ", "Confirm "},
-	} {
-		if strings.HasPrefix(value, prefix.zh) {
-			return prefix.en + strings.TrimPrefix(value, prefix.zh)
+	for _, pattern := range englishNavigationPatterns {
+		if len(value) > len(pattern.zhPrefix)+len(pattern.zhSuffix) &&
+			strings.HasPrefix(value, pattern.zhPrefix) && strings.HasSuffix(value, pattern.zhSuffix) {
+			name := strings.TrimSuffix(strings.TrimPrefix(value, pattern.zhPrefix), pattern.zhSuffix)
+			return pattern.enPrefix + name + pattern.enSuffix
 		}
 	}
 	return value
@@ -367,6 +470,7 @@ var traditionalNavigationTexts = map[string]string{
 	"Disk alerts": "磁碟警示", "Approvals": "核准", "Certificates": "憑證",
 	"Checks / 檢查": "檢查", "Host readiness": "整備檢查", "Sign-ins": "登入狀態",
 	"Channels": "通知管道", "Secrets": "密鑰管理", "Attention / Loops": "待處理事項",
+	"Set up disabled schedules / 建立停用排程": "建立停用排程",
 }
 
 func traditionalNavigationText(value string) string {
