@@ -22,6 +22,9 @@ fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+# shellcheck source=listen.sh
+. "$HERE/listen.sh"
+ADDR="$(monitor_address)"
 KEY=/etc/apt/keyrings/grafana.gpg
 LIST=/etc/apt/sources.list.d/grafana.list
 
@@ -97,7 +100,7 @@ python3 -m json.tool "$HERE/grafana/clawctl.json" >/dev/null || {
 }
 install -m 0644 -o grafana -g grafana "$HERE/grafana/clawctl.json" /var/lib/grafana/dashboards/clawctl.json
 
-echo "══ 4/6 Disable reporting and update checks"
+echo "══ 4/6 Listen address, reporting and update checks"
 DEFAULTS=/etc/default/grafana-server
 touch "$DEFAULTS"
 # ⚠ 只 append，不 source（跟 hub.env / node-exporter 同一條規矩）。
@@ -116,6 +119,8 @@ ENV
 else
 	echo "   already present, unchanged"
 fi
+set_env_line "$DEFAULTS" GF_SERVER_HTTP_ADDR "$ADDR"
+retry_until_bound grafana-server
 
 echo "══ 5/6 Starting service"
 systemctl daemon-reload
@@ -123,7 +128,7 @@ systemctl enable --now grafana-server
 systemctl restart grafana-server
 code=000
 for _ in $(seq 1 30); do
-	code="$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://localhost:3000/api/health || true)"
+	code="$(curl -s -o /dev/null -w '%{http_code}' -m 3 "http://$ADDR:3000/api/health" || true)"
 	[ "$code" = "200" ] && break
 	sleep 2
 done
@@ -135,19 +140,19 @@ printf '   grafana-server %s   /api/health %s\n' "$(systemctl is-active grafana-
 
 echo "══ 6/6 Verifying provisioning took effect (service active != resources loaded)"
 AUTH="${GF_ADMIN:-admin}:${GF_PASS:-admin}"
-login="$(curl -s -o /dev/null -w '%{http_code}' -m 5 -u "$AUTH" http://localhost:3000/api/user || true)"
+login="$(curl -s -o /dev/null -w '%{http_code}' -m 5 -u "$AUTH" "http://$ADDR:3000/api/user" || true)"
 [ "$login" = "200" ] || {
 	echo "Grafana rejected the login ${GF_ADMIN:-admin} (HTTP $login). Export GF_PASS with the current password, then rerun: sudo --preserve-env=GF_ADMIN,GF_PASS $0" >&2
 	exit 1
 }
 fail=0
-if curl -s -m 5 -u "$AUTH" http://localhost:3000/api/datasources/uid/clawctl-prom | grep -q '"uid":"clawctl-prom"'; then
+if curl -s -m 5 -u "$AUTH" "http://$ADDR:3000/api/datasources/uid/clawctl-prom" | grep -q '"uid":"clawctl-prom"'; then
 	echo "   Data source clawctl-prom  ✅"
 else
 	echo "   Data source clawctl-prom  ❌  journalctl -u grafana-server | grep -i provision" >&2
 	fail=1
 fi
-if curl -s -m 5 -u "$AUTH" http://localhost:3000/api/dashboards/uid/clawctl-fleet | grep -q '"uid": *"clawctl-fleet"'; then
+if curl -s -m 5 -u "$AUTH" "http://$ADDR:3000/api/dashboards/uid/clawctl-fleet" | grep -q '"uid": *"clawctl-fleet"'; then
 	echo "   Dashboard clawctl-fleet   ✅"
 else
 	echo "   Dashboard clawctl-fleet   ❌  journalctl -u grafana-server | grep -i dashboard" >&2
@@ -160,14 +165,11 @@ fi
 
 cat <<EOF
 
-Grafana  http://$(hostname):3000/d/clawctl-fleet
+Grafana  http://$ADDR:3000/d/clawctl-fleet
 
 ⚠ First login as admin / admin, you will be prompted to change it immediately. Change it.
   Reruns of this script log in with GF_ADMIN / GF_PASS (default admin / admin).
-  Grafana listens on every interface, like Prometheus (9090), Alertmanager (9093)
-  and node_exporter (9100). To listen on one address only, add
-  GF_SERVER_HTTP_ADDR=<address> to $DEFAULTS; Grafana then cannot start while
-  that address is down.
+  Grafana listens on $ADDR:3000 only.
 
 Verify with this script once rendered (it will report which panel is empty and which kind):
   ./ops/prometheus/check-dashboard.sh

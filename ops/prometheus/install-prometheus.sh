@@ -10,6 +10,7 @@
 #   CLAWCTL_PROMETHEUS_YML   Prometheus config (default: ops/prometheus/prometheus.yml,
 #                            whose Hub target is a sample address — point this
 #                            at your own copy)
+#   CLAWCTL_MONITOR_ADDR     address node_exporter listens on (default: tailscale ip -4)
 #
 # Idempotent: a re-run re-applies the config and does not reinstall. Nothing is
 # deleted; an existing /etc/prometheus/prometheus.yml is backed up first.
@@ -36,6 +37,10 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 
+# shellcheck source=listen.sh
+. "$HERE/listen.sh"
+ADDR="$(monitor_address)"
+
 echo "== 1/5 install (apt, so the distro maintains the binaries)"
 DEBIAN_FRONTEND=noninteractive apt-get install -y prometheus prometheus-node-exporter
 
@@ -59,42 +64,33 @@ if [ "$want" -eq 0 ] || [ "$got" -ne "$want" ]; then
 fi
 echo "   $got rule files"
 
-echo "== 3/5 node_exporter textfile collector"
+echo "== 3/5 listen addresses and node_exporter textfile collector"
 # node_exporter exports the metrics of the *.prom files in this directory.
 TEXTFILE_DIR=/var/lib/prometheus/node-exporter
 install -d -m 0755 "$TEXTFILE_DIR"
-DEFAULTS=/etc/default/prometheus-node-exporter
-touch "$DEFAULTS"
-if ! grep -q 'collector\.textfile\.directory' "$DEFAULTS"; then
-	cp -a "$DEFAULTS" "$DEFAULTS.bak-$STAMP"
-	# Edit only the ARGS line; never source this file.
-	if grep -q '^ARGS=' "$DEFAULTS"; then
-		sed -i "s|^ARGS=\"\\(.*\\)\"|ARGS=\"\\1 --collector.textfile.directory=$TEXTFILE_DIR\"|" "$DEFAULTS"
-	else
-		printf 'ARGS="--collector.textfile.directory=%s"\n' "$TEXTFILE_DIR" >>"$DEFAULTS"
-	fi
-	echo "   added --collector.textfile.directory=$TEXTFILE_DIR"
-else
-	echo "   already set"
-fi
+set_args_flag /etc/default/prometheus-node-exporter --collector.textfile.directory "$TEXTFILE_DIR"
+set_args_flag /etc/default/prometheus-node-exporter --web.listen-address "$ADDR:9100"
+set_args_flag /etc/default/prometheus --web.listen-address 127.0.0.1:9090
+retry_until_bound prometheus-node-exporter
 
 echo "== 4/5 config check (no restart on a bad config)"
 promtool check config /etc/prometheus/prometheus.yml
 
 echo "== 5/5 restart and check"
+systemctl daemon-reload
 systemctl enable --now prometheus prometheus-node-exporter
 systemctl restart prometheus prometheus-node-exporter
 sleep 3
 for s in prometheus prometheus-node-exporter; do
 	printf '   %-26s %s\n' "$s" "$(systemctl is-active "$s")"
 done
-printf '   :9090/-/healthy            %s\n' "$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:9090/-/healthy)"
-printf '   :9100/metrics              %s\n' "$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:9100/metrics)"
+printf '   %-26s %s\n' "127.0.0.1:9090/-/healthy" "$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:9090/-/healthy)"
+printf '   %-26s %s\n' "$ADDR:9100/metrics" "$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://$ADDR:9100/metrics")"
 
 echo
 echo "up per fleet machine (0 is not always broken: a machine that never reports stays at 0):"
 sleep 5
-curl -s 'http://localhost:9090/api/v1/query?query=up{job="node"}' |
+curl -s 'http://127.0.0.1:9090/api/v1/query?query=up{job="node"}' |
 	python3 -c 'import json,sys
 d=json.load(sys.stdin)
 for r in sorted(d["data"]["result"], key=lambda x: x["metric"].get("machine","")):
