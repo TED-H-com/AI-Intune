@@ -185,21 +185,28 @@ type MachineSettingState struct {
 	ReportedAt     *time.Time              `json:"reported_at,omitempty"`
 }
 
+// machineSettingStatesSQL joins every machine that is not retired to its
+// newest check-in, the way machineComplianceStatesSQL does: the newest
+// check-in is the first entry of the machine's range in ix_checkin_recent, and
+// check-ins that share that Hub time are ordered by sent_at, which is unique
+// per machine.
+const machineSettingStatesSQL = `
+SELECT m.machine_id, m.display_name, COALESCE(m.channel,''),
+       c.settings_digest, c.received_at
+  FROM machine_registry m
+  LEFT JOIN machine_checkins c
+    ON c.rowid = (SELECT x.rowid FROM machine_checkins x INDEXED BY ix_checkin_recent
+                   WHERE x.machine_id = m.machine_id
+                   ORDER BY x.received_at DESC, x.sent_at DESC LIMIT 1)
+ WHERE m.retired_at IS NULL
+ ORDER BY m.display_name`
+
 // MachineSettingStates is the applied-state board for every machine still in
 // the denominator.
 //
 // ⚠ 判決只看 agent 自己回報的 digest。不准用心跳間隔反推「它應該已經套用了」。
 func (s *Store) MachineSettingStates() ([]MachineSettingState, error) {
-	rows, err := s.rdb.Query(`
-SELECT m.machine_id, m.display_name, COALESCE(m.channel,''),
-       c.settings_digest, c.received_at
-  FROM machine_registry m
-  LEFT JOIN (SELECT machine_id, settings_digest, received_at,
-                    ROW_NUMBER() OVER (PARTITION BY machine_id ORDER BY received_at DESC, sent_at DESC) AS rn
-               FROM machine_checkins) c
-    ON c.machine_id = m.machine_id AND c.rn = 1
- WHERE m.retired_at IS NULL
- ORDER BY m.display_name`)
+	rows, err := s.rdb.Query(machineSettingStatesSQL)
 	if err != nil {
 		return nil, fmt.Errorf("store: list machine setting states: %w", err)
 	}

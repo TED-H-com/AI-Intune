@@ -44,6 +44,17 @@ SELECT m.machine_id, m.display_name, COALESCE(m.channel,''),
  WHERE m.retired_at IS NULL
  ORDER BY m.display_name`
 
+const machineSettingStatesReferenceSQL = `
+SELECT m.machine_id, m.display_name, COALESCE(m.channel,''),
+       c.settings_digest, c.received_at
+  FROM machine_registry m
+  LEFT JOIN (SELECT machine_id, settings_digest, received_at,
+                    ROW_NUMBER() OVER (PARTITION BY machine_id ORDER BY received_at DESC, sent_at DESC) AS rn
+               FROM machine_checkins) c
+    ON c.machine_id = m.machine_id AND c.rn = 1
+ WHERE m.retired_at IS NULL
+ ORDER BY m.display_name`
+
 const oldestObservationReferenceSQL = `SELECT MIN(measured_at) FROM observed_state WHERE machine_id = ?`
 
 const latestMachineJobsEnabledReferenceSQL = `SELECT jobs_enabled,received_at,rowid FROM machine_checkins WHERE machine_id=?`
@@ -123,6 +134,7 @@ func TestCheckinWindowReadsMatchReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(20261114))
 	t0 := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
 	var ids, lastCompliance []string
+	var lastSetting []string
 	pick := func(values ...any) any { return values[rng.Intn(len(values))] }
 	for r := 0; r < 60; r++ {
 		count := 1 + rng.Intn(3)
@@ -162,6 +174,9 @@ func TestCheckinWindowReadsMatchReference(t *testing.T) {
 		want := readRows(t, st, machineComplianceStatesReferenceSQL)
 		lastCompliance = readRows(t, st, machineComplianceStatesSQL)
 		checkinReadCompare(t, r, "machineComplianceStatesSQL", nil, lastCompliance, want, 1)
+		wantSetting := readRows(t, st, machineSettingStatesReferenceSQL)
+		lastSetting = readRows(t, st, machineSettingStatesSQL)
+		checkinReadCompare(t, r, "machineSettingStatesSQL", nil, lastSetting, wantSetting, 1)
 		for _, id := range append(append([]string{}, ids...), "missing") {
 			checkinReadCompare(t, r, "latestMachineJobsEnabledSQL", id, readRows(t, st, latestMachineJobsEnabledSQL, id), readRows(t, st, latestMachineJobsEnabledReferenceSQL, id))
 		}
@@ -169,6 +184,9 @@ func TestCheckinWindowReadsMatchReference(t *testing.T) {
 	runs := readRows(t, st, agentRunsReferenceSQL, fmtTime(t0.Add(-time.Second)))
 	if len(lastCompliance) < 40 || len(runs) < 60 {
 		t.Fatalf("round 59 statement compliance/agent runs argument %s: got %v; want at least 40 compliance and 60 agent rows; agent rows %v", fmtTime(t0.Add(-time.Second)), lastCompliance, runs)
+	}
+	if len(lastSetting) != len(lastCompliance) {
+		t.Fatalf("round 59 statement machineSettingStatesSQL: got %d rows; want %d, one per machine that is not retired", len(lastSetting), len(lastCompliance))
 	}
 }
 
@@ -276,6 +294,9 @@ func TestCheckinWindowReadPlans(t *testing.T) {
 		{"compliance", machineComplianceStatesSQL, nil, []string{"SEARCH c ", "SCAN c ", "SEARCH x ", "SCAN x "}, []string{
 			"SEARCH c USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
 			"SEARCH x USING INDEX ix_checkin_recent (machine_id=?)"}},
+		{"setting", machineSettingStatesSQL, nil, []string{"SEARCH c ", "SCAN c ", "SEARCH x ", "SCAN x "}, []string{
+			"SEARCH c USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+			"SEARCH x USING INDEX ix_checkin_recent (machine_id=?)"}},
 		{"oldest", oldestObservationSQL, []any{"m1"}, []string{"SEARCH o ", "SCAN o "}, []string{
 			"SEARCH o USING COVERING INDEX ix_observed_recent (machine_id=?)",
 			"SEARCH o USING COVERING INDEX ix_observed_recent (machine_id=? AND kind>?)",
@@ -323,7 +344,7 @@ func bestCheckinRead(t *testing.T, st *Store, query string, args ...any) ([]stri
 	return rows, best
 }
 
-func TestMachineComplianceStatesCostFollowsMachines(t *testing.T) {
+func TestNewestCheckinJoinCostFollowsMachines(t *testing.T) {
 	if testing.Short() {
 		t.Skip("cost test")
 	}
@@ -331,7 +352,7 @@ func TestMachineComplianceStatesCostFollowsMachines(t *testing.T) {
 	for m := 0; m < 6; m++ {
 		id := fmt.Sprintf("m%d", m)
 		checkinReadMachine(t, st, id, fmt.Sprintf("name-%d", m), nil)
-		checkinReadExec(t, st, `WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i < 7999) INSERT INTO machine_checkins(machine_id,sent_at,received_at,agent_version,jobs_enabled) SELECT ?1, strftime('%Y-%m-%dT%H:%M:%SZ', ?2 + i*60, 'unixepoch'), strftime('%Y-%m-%dT%H:%M:%SZ', ?2 + i*60, 'unixepoch'), 'v' || i, i % 2 FROM n`, id, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).Unix())
+		checkinReadExec(t, st, `WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i < 7999) INSERT INTO machine_checkins(machine_id,sent_at,received_at,agent_version,jobs_enabled,settings_digest) SELECT ?1, strftime('%Y-%m-%dT%H:%M:%SZ', ?2 + i*60, 'unixepoch'), strftime('%Y-%m-%dT%H:%M:%SZ', ?2 + i*60, 'unixepoch'), 'v' || i, i % 2, 'd' || i FROM n`, id, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).Unix())
 	}
 	want, referenceDuration := bestCheckinRead(t, st, machineComplianceStatesReferenceSQL)
 	got, newDuration := bestCheckinRead(t, st, machineComplianceStatesSQL)
@@ -346,6 +367,33 @@ func TestMachineComplianceStatesCostFollowsMachines(t *testing.T) {
 	}
 	if referenceDuration < 5*newDuration {
 		t.Fatalf("reference duration %s < 5 * new duration %s", referenceDuration, newDuration)
+	}
+	wantSetting, settingReferenceDuration := bestCheckinRead(t, st, machineSettingStatesReferenceSQL)
+	var states []MachineSettingState
+	var settingDuration time.Duration
+	for i := 0; i < 3; i++ {
+		start := time.Now()
+		got, err := st.MachineSettingStates()
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("MachineSettingStates: %v", err)
+		}
+		if i == 0 || elapsed < settingDuration {
+			settingDuration, states = elapsed, got
+		}
+	}
+	t.Logf("setting reference duration=%s MachineSettingStates duration=%s", settingReferenceDuration, settingDuration)
+	if len(states) != 6 || len(wantSetting) != 6 {
+		t.Fatalf("MachineSettingStates: got %d states; reference has %d rows; want 6 and 6", len(states), len(wantSetting))
+	}
+	newest := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).Add(7999 * time.Minute)
+	for _, state := range states {
+		if state.ReportedDigest != "d7999" || state.ReportedAt == nil || !state.ReportedAt.Equal(newest) {
+			t.Fatalf("MachineSettingStates %s: reported digest %q at %v; want d7999 at %s", state.MachineID, state.ReportedDigest, state.ReportedAt, newest)
+		}
+	}
+	if settingReferenceDuration < 5*settingDuration {
+		t.Fatalf("setting reference duration %s < 5 * MachineSettingStates duration %s", settingReferenceDuration, settingDuration)
 	}
 }
 
@@ -499,6 +547,10 @@ func TestCheckinWindowReadsWithSingleCheckinFirstMachine(t *testing.T) {
 	got, want = readRows(t, st, machineComplianceStatesSQL), readRows(t, st, machineComplianceStatesReferenceSQL)
 	if !reflect.DeepEqual(got, want) || len(got) != 2 {
 		t.Fatalf("compliance: got %v; want %v, with two rows", got, want)
+	}
+	got, want = readRows(t, st, machineSettingStatesSQL), readRows(t, st, machineSettingStatesReferenceSQL)
+	if !reflect.DeepEqual(got, want) || len(got) != 2 {
+		t.Fatalf("setting: got %v; want %v, with two rows", got, want)
 	}
 }
 
