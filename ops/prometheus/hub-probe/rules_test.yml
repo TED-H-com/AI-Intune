@@ -1,0 +1,127 @@
+# promtool test rules ops/prometheus/hub-probe/rules_test.yml
+rule_files:
+  - rules.yml
+evaluation_interval: 1m
+
+tests:
+  # The Hub answers: neither alert fires.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1x20'
+      - series: 'up{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HubNotAnswering
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: HubProbeNotRunning
+        exp_alerts: []
+
+  # Four failed probes, then an answer: HubNotAnswering does not fire.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1 0 0 0 0 1 1 1 1 1 1 1'
+      - series: 'up{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1x11'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: HubNotAnswering
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: HubNotAnswering
+        exp_alerts: []
+
+  # No answer from minute 1: HubNotAnswering fires at minute 6, stays, and
+  # ends with the first answer.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1 0x14 1 1'
+      - series: 'up{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1x17'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: HubNotAnswering
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: HubNotAnswering
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              source: prometheus
+              machine: hub
+              job: clawctl-hub-healthz
+              instance: https://hub.example.com/healthz
+            exp_annotations:
+              summary: 'Hub 沒有回應'
+              description: 'https://hub.example.com/healthz 連續 5 分鐘沒有回 200。主控台打不開， 經這個網址報到的機器也報不到。下一步：到 Hub 主機查 Hub 服務的狀態。'
+      - eval_time: 15m
+        alertname: HubNotAnswering
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              source: prometheus
+              machine: hub
+              job: clawctl-hub-healthz
+              instance: https://hub.example.com/healthz
+            exp_annotations:
+              summary: 'Hub 沒有回應'
+              description: 'https://hub.example.com/healthz 連續 5 分鐘沒有回 200。主控台打不開， 經這個網址報到的機器也報不到。下一步：到 Hub 主機查 Hub 服務的狀態。'
+      - eval_time: 16m
+        alertname: HubNotAnswering
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: HubProbeNotRunning
+        exp_alerts: []
+
+  # The exporter stops answering from minute 1: probe_success has no samples,
+  # so HubNotAnswering stays quiet and HubProbeNotRunning fires at minute 11.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1 _x20'
+      - series: 'up{job="clawctl-hub-healthz", instance="https://hub.example.com/healthz"}'
+        values: '1 0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HubProbeNotRunning
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: HubProbeNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              source: prometheus
+              machine: hub
+              job: clawctl-hub-healthz
+              instance: https://hub.example.com/healthz
+            exp_annotations:
+              summary: 'Hub 探測沒有在跑'
+              description: 'Prometheus 連續 10 分鐘拿不到 Hub 探測的結果，這段時間沒有人在看 Hub 有沒有回應。 下一步：在觀測主機上跑 systemctl status prometheus-blackbox-exporter。'
+      - eval_time: 20m
+        alertname: HubNotAnswering
+        exp_alerts: []
+
+  # No scrape job at all: HubProbeNotRunning fires at minute 10.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node", instance="192.0.2.1:9100"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: HubProbeNotRunning
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: HubProbeNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              source: prometheus
+              machine: hub
+              job: clawctl-hub-healthz
+            exp_annotations:
+              summary: 'Hub 探測沒有在跑'
+              description: 'Prometheus 連續 10 分鐘拿不到 Hub 探測的結果，這段時間沒有人在看 Hub 有沒有回應。 下一步：在觀測主機上跑 systemctl status prometheus-blackbox-exporter。'
