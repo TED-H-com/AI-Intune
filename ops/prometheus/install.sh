@@ -10,7 +10,7 @@
 #
 # ⚠⚠ 第 2 段（Alertmanager）跑完之後，大約 5 分鐘（group_wait）會**真的**
 #     開始送 Telegram，而且不會再問你一次。想先看會送什麼：
-#     跑之前開 http://localhost:9090/alerts。
+#     跑之前在這台開 http://127.0.0.1:9090/alerts。
 #
 # ⚠  Grafana 不在 Ubuntu 26.04 的倉庫裡，第 3 段會加 Grafana 官方的 APT repo。
 #     加別人的 repo 是有代價的（他們的簽章金鑰從此對你的 apt 有效），
@@ -29,6 +29,10 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=listen.sh
+. "$HERE/listen.sh"
+ADDR="$(monitor_address)"
+export CLAWCTL_MONITOR_ADDR="$ADDR"
 
 hr() { printf '\n\033[1m━━━━━━ %s ━━━━━━\033[0m\n' "$*"; }
 
@@ -48,10 +52,10 @@ hr "Stage 3 / 3: Grafana"
 
 hr "All three stages completed"
 cat <<EOF
-Prometheus    http://$(hostname):9090
-Alertmanager  http://$(hostname):9093
-Grafana       http://$(hostname):3000/d/clawctl-fleet
+Grafana       http://$ADDR:3000/d/clawctl-fleet
+Prometheus    http://127.0.0.1:9090 on this host
+Alertmanager  http://127.0.0.1:9093 on this host
 
 Check: ./ops/prometheus/check-dashboard.sh
-Silence a machine: amtool silence add machine=<machine> -d 720h -c 'Handling manually'
+Silence a machine: amtool --alertmanager.url=http://127.0.0.1:9093 silence add machine=<machine> -d 720h -c 'Handling manually'
 EOF

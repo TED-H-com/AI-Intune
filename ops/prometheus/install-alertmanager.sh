@@ -6,7 +6,7 @@
 # ⚠⚠ 這支會讓告警**真的送進 Telegram**，而且是在跑完之後大約 5 分鐘
 #     （group_wait）自動開始送，**不會再問你一次**。
 #     最後那段「現在會送出去的」是事後印的，不是事前的確認 ——
-#     想先知道會送什麼，跑之前先看 http://localhost:9090/alerts。
+#     想先知道會送什麼，跑之前先在這台看 http://127.0.0.1:9090/alerts。
 #
 # ⚠⚠ token 的處理規矩（跟 ops/upgrade-hub.sh 同一條）：
 #     - 只用 sed 抽出單一變數，**絕不 source** 那個檔案
@@ -21,6 +21,8 @@ fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+# shellcheck source=listen.sh
+. "$HERE/listen.sh"
 REAL_USER="${SUDO_USER:-$USER}"
 REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 
@@ -45,7 +47,7 @@ CHAT_ID="$(sed -n 's/^TELEGRAM_CHAT_ID=//p' "$NOTIFY_ENV" | tr -d '"'"'" | head 
 	exit 1
 }
 
-echo "══ 1/5 Setting up token (0600, owner prometheus, never printed)"
+echo "══ 1/6 Setting up token (0600, owner prometheus, never printed)"
 TOKEN_FILE=/etc/prometheus/telegram.token
 install -m 0600 -o prometheus -g prometheus /dev/null "$TOKEN_FILE"
 sed -n 's/^TELEGRAM_BOT_TOKEN=//p' "$NOTIFY_ENV" | tr -d '"'"'" | head -1 | tr -d '\n' >"$TOKEN_FILE"
@@ -58,7 +60,7 @@ printf '   %s  %s  sha256=%s…\n' "$TOKEN_FILE" \
 	"$(stat -c '%a %U' "$TOKEN_FILE")" \
 	"$(sha256sum "$TOKEN_FILE" | cut -c1-12)"
 
-echo "══ 2/5 Generating alertmanager.yml (chat_id substituted, token via bot_token_file)"
+echo "══ 2/6 Generating alertmanager.yml (chat_id substituted, token via bot_token_file)"
 AM=/etc/prometheus/alertmanager.yml
 [ -f "$AM" ] && cp -a "$AM" "$AM.bak-$STAMP" && chmod 600 "$AM.bak-$STAMP"
 sed "s|__CHAT_ID__|$CHAT_ID|" "$HERE/alertmanager.yml.tmpl" >"$AM"
@@ -66,7 +68,11 @@ sed "s|__CHAT_ID__|$CHAT_ID|" "$HERE/alertmanager.yml.tmpl" >"$AM"
 chown root:prometheus "$AM"
 chmod 640 "$AM"
 
-echo "══ 3/5 Informing Prometheus where Alertmanager is located"
+echo "══ 3/6 Listening on 127.0.0.1:9093, cluster listener off"
+set_args_flag /etc/default/prometheus-alertmanager --web.listen-address 127.0.0.1:9093
+set_args_flag /etc/default/prometheus-alertmanager --cluster.listen-address ""
+
+echo "══ 4/6 Informing Prometheus where Alertmanager is located"
 PROM=/etc/prometheus/prometheus.yml
 if ! grep -q '^alerting:' "$PROM"; then
 	cp -a "$PROM" "$PROM.bak-$STAMP"
@@ -82,11 +88,11 @@ else
 	echo "   already present, unchanged"
 fi
 
-echo "══ 4/5 Verification (will not restart if checks fail)"
+echo "══ 5/6 Verification (will not restart if checks fail)"
 amtool check-config "$AM"
 promtool check config "$PROM"
 
-echo "══ 5/5 Restarting"
+echo "══ 6/6 Restarting"
 systemctl restart prometheus-alertmanager
 systemctl reload prometheus || systemctl restart prometheus
 sleep 3
@@ -97,17 +103,17 @@ done
 echo
 echo "Currently sending (actual count after Alertmanager grouping):"
 sleep 5
-curl -s http://localhost:9093/api/v2/alerts/groups 2>/dev/null |
+curl -s http://127.0.0.1:9093/api/v2/alerts/groups 2>/dev/null |
 	python3 -c 'import json,sys
 gs=json.load(sys.stdin)
 if not gs:
-    print("   (none — may not have arrived yet, wait one minute and check http://localhost:9093)")
+    print("   (none — may not have arrived yet, wait one minute and check http://127.0.0.1:9093)")
 for g in gs:
     m=g["labels"].get("machine","?")
     print("   %-10s %d items: %s" % (m, len(g["alerts"]),
         ", ".join(sorted({a["labels"]["alertname"] for a in g["alerts"]}))))' 2>/dev/null ||
-	echo "   (cannot read, check http://localhost:9093)"
+	echo "   (cannot read, check http://127.0.0.1:9093)"
 
 echo
-echo "Silence a machine: amtool silence add machine=<machine> -d 720h -c 'Handling manually'"
-echo "View current silences: amtool silence query"
+echo "Silence a machine: amtool --alertmanager.url=http://127.0.0.1:9093 silence add machine=<machine> -d 720h -c 'Handling manually'"
+echo "View current silences: amtool --alertmanager.url=http://127.0.0.1:9093 silence query"

@@ -11,6 +11,9 @@ fleet dashboard. The Hub's own metrics and the notify alert rules are in
 - A fleet list in the format of `ops/prometheus/fleet.example.json`: one entry
   per machine, with the node_exporter address (`IP:9100`) and a `machine`
   label. Machines on the list that do not answer show as `up == 0`.
+- The host's tailnet address. `tailscale ip -4` prints it, or set
+  `CLAWCTL_MONITOR_ADDR`. The fleet list names this host's node_exporter at
+  that address (`<address>:9100`).
 - Your own copy of `ops/prometheus/prometheus.yml`. Its `clawctl-hub` target is
   a sample: set it to the Hub's tailnet listen address (`CLAWCTL_LISTEN`, an
   `IP:port`). The Hub answers a request that names it any other way with 421.
@@ -37,7 +40,7 @@ that fails. Each stage script can also run alone, as root.
 
 **Telegram messages start about 5 minutes after stage 2** (Alertmanager's
 `group_wait`), without another prompt. To see what will be sent, open
-`http://localhost:9090/alerts` after stage 1.
+`http://127.0.0.1:9090/alerts` on the Prometheus host after stage 1.
 
 ### 1. Prometheus and node_exporter
 
@@ -53,7 +56,8 @@ that fails. Each stage script can also run alone, as root.
 It backs up a different `/etc/prometheus/prometheus.yml` as
 `prometheus.yml.bak-<time>`, enables node_exporter's textfile collector on
 `/var/lib/prometheus/node-exporter`, checks the configuration with `promtool`
-before it restarts anything, and prints `up` for each fleet machine. A rerun
+before it restarts anything, and prints `up` for each fleet machine. Prometheus
+listens on `127.0.0.1:9090` and node_exporter on `<address>:9100`. A rerun
 installs your copy as is: without its `alerting` section, Prometheus stops
 sending alerts to Alertmanager.
 
@@ -71,6 +75,8 @@ either file and never prints the token.
 - `/etc/prometheus/prometheus.yml` gets an `alerting` section for
   `localhost:9093` when it has none.
 
+Alertmanager listens on `127.0.0.1:9093` with its cluster listener off.
+
 Alertmanager sends one message per machine, repeats an unchanged group every
 24 hours (`severity="info"`: 72 hours), and holds back a machine's warning and
 info alerts while that machine does not answer.
@@ -78,8 +84,8 @@ info alerts while that machine does not answer.
 To silence a machine:
 
 ```bash
-amtool silence add machine=<machine> -d 720h -c 'Handling manually'
-amtool silence query
+amtool --alertmanager.url=http://127.0.0.1:9093 silence add machine=<machine> -d 720h -c 'Handling manually'
+amtool --alertmanager.url=http://127.0.0.1:9093 silence query
 ```
 
 ### 3. Grafana
@@ -87,10 +93,11 @@ amtool silence query
 `ops/prometheus/install-grafana.sh` adds Grafana's APT repository and signing
 key, installs `grafana`, and provisions the data source `clawctl-prom`
 (`http://localhost:9090`) and the dashboard `clawctl-fleet` from
-`ops/prometheus/grafana/`. Changes made in the browser cannot be saved
-(`allowUiUpdates: false`); change `ops/prometheus/grafana/clawctl.json` and
-rerun the script. It turns off usage reporting, update checks, sign-up and
-anonymous access in `/etc/default/grafana-server`.
+`ops/prometheus/grafana/`. Grafana listens on `<address>:3000`. Changes made in
+the browser cannot be saved (`allowUiUpdates: false`); change
+`ops/prometheus/grafana/clawctl.json` and rerun the script. It turns off usage
+reporting, update checks, sign-up and anonymous access in
+`/etc/default/grafana-server`.
 
 The first login is `admin` / `admin`, and Grafana asks for a new password.
 Reruns log in with `GF_ADMIN` / `GF_PASS` (default `admin` / `admin`):
@@ -118,14 +125,22 @@ Grafana data, including the admin password, stays in the Docker volume
 
 ## Network exposure
 
-The packages keep their default listen addresses: Prometheus (9090),
-Alertmanager (9093), node_exporter (9100) and the APT Grafana (3000) listen on
-every interface of the host. The Docker Grafana listens only on the address
-in the table above.
+| Service | Listens on |
+|---|---|
+| Prometheus | `127.0.0.1:9090` |
+| Alertmanager | `127.0.0.1:9093`, cluster listener off |
+| node_exporter | `<address>:9100` |
+| Grafana (APT, `install-grafana.sh`) | `<address>:3000` |
+| Grafana (Docker) | `$CLAWCTL_GRAFANA_ADDR:$CLAWCTL_GRAFANA_PORT` |
 
-To keep the APT Grafana on one address, add `GF_SERVER_HTTP_ADDR=<address>` to
-`/etc/default/grafana-server` and restart `grafana-server`. Grafana then
-cannot start while that address is down.
+`<address>` is `CLAWCTL_MONITOR_ADDR`, else the first address of
+`tailscale ip -4`. node_exporter and Grafana start once that address exists;
+until then systemd restarts them every 5 seconds
+(`/etc/systemd/system/<unit>.service.d/clawctl-listen.conf`).
+
+From another machine, forward the port over SSH:
+`ssh -L 9090:127.0.0.1:9090 <host>` for Prometheus,
+`ssh -L 9093:127.0.0.1:9093 <host>` for Alertmanager.
 
 ## Check the dashboard
 
@@ -143,5 +158,5 @@ if the whole metric is empty, the query or the scrape is wrong.
 
 `bash ops/test-ops.sh` checks the rules with `promtool` (set
 `CLAWCTL_REQUIRE_PROMTOOL=1` to fail when `promtool` is missing), that
-`install.sh` calls existing stage scripts, and the installers' refusals and
-Grafana login checks.
+`install.sh` calls existing stage scripts, the installers' refusals and
+Grafana login checks, and the functions of `ops/prometheus/listen.sh`.
