@@ -550,8 +550,12 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	if manual {
 		slotKey = "manual:" + a.IdempotencyKey
 	}
+	// Overlap only counts unfinished jobs that can still finish: the machine
+	// must still be a target of this schedule and must not be retired. A job
+	// left on a machine that was dropped from the schedule or retired is never
+	// claimed again, and counting it would skip every later slot forever.
 	var active int
-	err = tx.QueryRow(`SELECT COUNT(*) FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id WHERE sj.schedule_id=? AND j.state NOT IN (?,?,?,?,?)`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention).Scan(&active)
+	err = tx.QueryRow(`SELECT COUNT(*) FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id JOIN machine_registry m ON m.machine_id=j.machine_id WHERE sj.schedule_id=? AND j.state NOT IN (?,?,?,?,?) AND m.retired_at IS NULL AND j.machine_id IN (SELECT value FROM json_each(?))`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, string(mustScriptJSON(v.Targets))).Scan(&active)
 	if err != nil {
 		return
 	}

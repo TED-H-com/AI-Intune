@@ -638,3 +638,142 @@ func TestScheduleMigrationTimezoneDefault(t *testing.T) {
 		t.Fatal(got, err)
 	}
 }
+
+// A job stranded on a machine that left the schedule, or was retired, must not
+// hold every later slot in skipped_overlap: nothing will ever claim it.
+func TestScheduleOverlapIgnoresDroppedAndRetiredTargets(t *testing.T) {
+	s, r, a, now := scriptFixture(t)
+	gone := mustEnroll(t, s, "gone-node", now)
+	c := healthyCheckin(now)
+	c.ScriptV1 = true
+	if err := s.RecordCheckin(gone, c, now); err != nil {
+		t.Fatal(err)
+	}
+	keep := r.Targets[0]
+	req := ScheduleRequest{Name: "probe-check", ScriptID: r.ScriptID, ScriptSHA256: r.ScriptSHA256, Args: r.Args, Targets: []string{keep, gone}, Cron: "*/5 * * * *", Enabled: true, Reason: r.Reason}
+	p, e := s.ScheduleManage(req, "upsert", false, "", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.PreviewDigest = p.PreviewDigest
+	out, e := s.ScheduleManage(req, "upsert", true, "schedule-two-targets", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	v := out.Schedule
+	if e = s.TickSchedules(v.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	got, e := s.ScheduleGet(v.ID)
+	if e != nil || len(got.LastJobIDs) != 2 {
+		t.Fatalf("%+v %v", got, e)
+	}
+	slotOutcome := func(slot time.Time) string {
+		t.Helper()
+		var outcome string
+		if e := s.rdb.QueryRow(`SELECT outcome FROM schedule_slots WHERE schedule_id=? AND slot=?`, v.ID, fmtTime(slot)).Scan(&outcome); e != nil {
+			t.Fatal(e)
+		}
+		return outcome
+	}
+	// The kept machine finishes; the other machine's job is stranded.
+	for _, id := range got.LastJobIDs {
+		job, err := s.Job(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.MachineID == keep {
+			if _, err := s.DB().Exec(`UPDATE jobs SET state=?,terminal_at=? WHERE job_id=?`, "succeeded", fmtTime(now), id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Still a target and not retired: the stranded job keeps blocking.
+	if e = s.TickSchedules(got.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	if o := slotOutcome(got.NextRunAt); o != "skipped_overlap" {
+		t.Fatalf("live target outcome %s", o)
+	}
+	// Retire the stranded machine: its job no longer counts.
+	if err := s.RetireMachine(gone, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// Drop it from the schedule too, as an operator would.
+	cur, e := s.ScheduleGet(v.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.ID, req.Targets, req.ExpectedRevision, req.PreviewDigest = v.ID, []string{keep}, cur.Revision, ""
+	p, e = s.ScheduleManage(req, "upsert", false, "", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.PreviewDigest = p.PreviewDigest
+	if _, e = s.ScheduleManage(req, "upsert", true, "schedule-drop-target", a); e != nil {
+		t.Fatal(e)
+	}
+	fresh := got.NextRunAt.Add(15 * time.Minute)
+	if _, e = s.DB().Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(fresh), v.ID); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.TickSchedules(fresh); e != nil {
+		t.Fatal(e)
+	}
+	if o := slotOutcome(fresh); o != "enqueued" {
+		t.Fatalf("after drop and retire outcome %s", o)
+	}
+}
+
+// Dropping a target alone (without retiring it) also releases the slot.
+func TestScheduleOverlapIgnoresDroppedTarget(t *testing.T) {
+	s, r, a, now := scriptFixture(t)
+	gone := mustEnroll(t, s, "gone-node", now)
+	c := healthyCheckin(now)
+	c.ScriptV1 = true
+	if err := s.RecordCheckin(gone, c, now); err != nil {
+		t.Fatal(err)
+	}
+	keep := r.Targets[0]
+	req := ScheduleRequest{Name: "probe-check", ScriptID: r.ScriptID, ScriptSHA256: r.ScriptSHA256, Args: r.Args, Targets: []string{keep, gone}, Cron: "*/5 * * * *", Enabled: true, Reason: r.Reason}
+	p, e := s.ScheduleManage(req, "upsert", false, "", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.PreviewDigest = p.PreviewDigest
+	out, e := s.ScheduleManage(req, "upsert", true, "schedule-two", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	v := out.Schedule
+	if e = s.TickSchedules(v.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := s.ScheduleGet(v.ID)
+	for _, id := range got.LastJobIDs {
+		job, _ := s.Job(id)
+		if job.MachineID == keep {
+			s.DB().Exec(`UPDATE jobs SET state=?,terminal_at=? WHERE job_id=?`, "succeeded", fmtTime(now), id)
+		}
+	}
+	req.ID, req.Targets, req.ExpectedRevision, req.PreviewDigest = v.ID, []string{keep}, got.Revision, ""
+	p, e = s.ScheduleManage(req, "upsert", false, "", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.PreviewDigest = p.PreviewDigest
+	if _, e = s.ScheduleManage(req, "upsert", true, "schedule-one", a); e != nil {
+		t.Fatal(e)
+	}
+	fresh := got.NextRunAt.Add(15 * time.Minute)
+	if _, e = s.DB().Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(fresh), v.ID); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.TickSchedules(fresh); e != nil {
+		t.Fatal(e)
+	}
+	var outcome string
+	if e = s.rdb.QueryRow(`SELECT outcome FROM schedule_slots WHERE schedule_id=? AND slot=?`, v.ID, fmtTime(fresh)).Scan(&outcome); e != nil || outcome != "enqueued" {
+		t.Fatalf("%s %v", outcome, e)
+	}
+}
