@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"regexp"
@@ -554,13 +555,36 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	// must still be a target of this schedule and must not be retired. A job
 	// left on a machine that was dropped from the schedule or retired is never
 	// claimed again, and counting it would skip every later slot forever.
+	//
+	// A job that was never claimed and is older than one cron interval is
+	// stale too: its machine has already missed the next run as well, and
+	// holding further slots for it only turns one offline machine into a
+	// fleet-wide gap.
 	var active int
-	err = tx.QueryRow(`SELECT COUNT(*) FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id JOIN machine_registry m ON m.machine_id=j.machine_id WHERE sj.schedule_id=? AND j.state NOT IN (?,?,?,?,?) AND m.retired_at IS NULL AND j.machine_id IN (SELECT value FROM json_each(?))`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, string(mustScriptJSON(v.Targets))).Scan(&active)
+	staleBefore := fmtTime(scheduleStaleNotStartedCutoff(v, now))
+	err = tx.QueryRow(`SELECT COUNT(*) FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id JOIN machine_registry m ON m.machine_id=j.machine_id WHERE sj.schedule_id=? AND j.state NOT IN (?,?,?,?,?) AND m.retired_at IS NULL AND j.machine_id IN (SELECT value FROM json_each(?)) AND NOT (j.state=? AND j.lease_token IS NULL AND j.created_at<=?)`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, string(mustScriptJSON(v.Targets)), deploy.NotStarted, staleBefore).Scan(&active)
 	if err != nil {
 		return
 	}
 	outcome := "enqueued"
-	req := ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: v.Targets, TimeoutSeconds: entry.DefaultTimeout, Reason: "scheduled catalog run"}
+	// A target still holding a stale unclaimed job of this schedule would fail
+	// target validation (it has an active job) and skip the run for everyone.
+	// Leave that target out of this run instead; its old job stays visible
+	// and can be cancelled by an operator.
+	runTargets := v.Targets
+	staleTargets, err := scheduleStaleTargetsTx(tx, id, v.Targets, staleBefore)
+	if err != nil {
+		return
+	}
+	if len(staleTargets) > 0 {
+		runTargets = make([]string, 0, len(v.Targets))
+		for _, target := range v.Targets {
+			if !staleTargets[target] {
+				runTargets = append(runTargets, target)
+			}
+		}
+	}
+	req := ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: runTargets, TimeoutSeconds: entry.DefaultTimeout, Reason: "scheduled catalog run"}
 	if entry.ID == "disk-deep-report-v1" {
 		for _, target := range v.Targets {
 			available, e := deepAvailableTx(tx, target, now)
@@ -577,6 +601,9 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	}
 	if active > 0 {
 		outcome = "skipped_overlap"
+	} else if len(req.Targets) == 0 {
+		outcome = "skipped_unavailable"
+		a.Detail = "every target still holds a stale unclaimed job"
 	} else if err = s.diskSafeGateTx(tx, req, entry); err != nil {
 		if manual {
 			return nil, err
@@ -593,7 +620,7 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 			return nil, e
 		}
 		raw := mustScriptJSON(scriptcatalog.Spec{Policy: policy, ExecutionMode: v.ExecutionMode, Kind: scriptcatalog.Kind, ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args})
-		for _, target := range v.Targets {
+		for _, target := range req.Targets {
 			if entry.ID == "disk-quarantine-expire-v1" {
 				var args struct {
 					ID     string `json:"policy_id"`
@@ -633,6 +660,13 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 			if e = s.recordAuditTx(tx, row); e != nil {
 				return nil, e
 			}
+		}
+	}
+	if outcome == "enqueued" && len(staleTargets) > 0 {
+		note := a
+		note.Detail = fmt.Sprintf("left out %d target(s) still holding a stale unclaimed job: %s", len(staleTargets), strings.Join(sortedKeys(staleTargets), ","))
+		if err = s.recordAuditTx(tx, note); err != nil {
+			return
 		}
 	}
 	if outcome == "enqueued" && len(jobs) == 0 {
@@ -709,6 +743,53 @@ func (s *Store) recordScheduleSkipTx(tx dbTx, v Schedule, now time.Time, outcome
 	return e
 }
 
+// OperatorCodeScheduleJobNotFound reports a cancel for a job that is not a
+// scheduled job.
+const OperatorCodeScheduleJobNotFound = "SCHEDULE_JOB_NOT_FOUND"
+
+// scheduleStaleTargetsTx returns the targets that hold an unclaimed
+// not_started job of this schedule created at or before staleBefore.
+func scheduleStaleTargetsTx(tx dbTx, scheduleID string, targets []string, staleBefore string) (map[string]bool, error) {
+	rows, err := tx.Query(`SELECT DISTINCT j.machine_id FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id WHERE sj.schedule_id=? AND j.state=? AND j.lease_token IS NULL AND j.created_at<=? AND j.machine_id IN (SELECT value FROM json_each(?))`, scheduleID, deploy.NotStarted, staleBefore, string(mustScriptJSON(targets)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// scheduleStaleGrace absorbs scheduler tick jitter: a slot runs up to a minute
+// after it is due, so a job made by the previous slot can be slightly older
+// than one interval when the next slot is evaluated. The grace keeps that job
+// counting as overlap for exactly one more slot.
+const scheduleStaleGrace = 2 * time.Minute
+
+// scheduleStaleNotStartedCutoff returns the creation time at or before which a
+// never-claimed job of v no longer counts as overlap: more than one cron
+// interval (measured from the upcoming slot) plus scheduleStaleGrace before
+// now. The job still blocks the slot right after its own, as overlap always
+// did, and stops blocking from the slot after that.
+func scheduleStaleNotStartedCutoff(v Schedule, now time.Time) time.Time {
+	c, err := schedulecron.Parse(v.Cron)
+	if err != nil {
+		return time.Time{}
+	}
+	first := scheduleNext(c, now, v.TZ)
+	interval := scheduleNext(c, first, v.TZ).Sub(first)
+	if interval <= 0 {
+		return time.Time{}
+	}
+	return now.Add(-interval - scheduleStaleGrace)
+}
+
 func scheduleNext(c *schedulecron.Cron, after time.Time, tz string) time.Time {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
@@ -733,4 +814,107 @@ func (s *Store) ScheduleJobIDs(id string) ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// ScheduleJobCancelRequest names an unclaimed scheduled job to cancel.
+type ScheduleJobCancelRequest struct {
+	Reason string `json:"reason"`
+}
+
+// ScheduleJobCancelResponse is the durable receipt of a cancellation.
+type ScheduleJobCancelResponse struct {
+	JobID      string `json:"job_id"`
+	ScheduleID string `json:"schedule_id"`
+	MachineID  string `json:"machine_id"`
+	State      string `json:"state"`
+	Replayed   bool   `json:"replayed"`
+}
+
+// ScheduleJobCancel ends a scheduled job that no machine has claimed. Only a
+// not_started job with no lease is eligible: once an agent holds a lease the
+// job may be executing, and the Hub must not invent a terminal state for it.
+// The job becomes rejected, which also stops it counting as overlap.
+func (s *Store) ScheduleJobCancel(jobID, key string, req ScheduleJobCancelRequest, a AuditEntry) (out ScheduleJobCancelResponse, err error) {
+	a.Action = AuditScheduleJobCancel
+	a.Subject = jobID
+	a.Reason = req.Reason
+	a.IdempotencyKey = key
+	defer func() {
+		if err != nil {
+			a.OK = false
+			a.Detail = "schedule job cancel rejected"
+			_ = s.RecordAudit(a)
+		}
+	}()
+	if key == "" || len(key) > 200 {
+		return out, scriptBad("idempotency key required")
+	}
+	reason, reasonErr := boundedtext.Reason(req.Reason)
+	if reasonErr != nil {
+		return out, scriptBad(reasonErr.Error())
+	}
+	tx, err := s.beginWrite(context.Background(), "schedule_job_cancel")
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+	now := s.now().UTC()
+	a.At = now
+	requestDigest := "sha256:" + scriptcatalog.Digest(mustScriptJSON(struct{ JobID, Reason, Principal string }{jobID, reason, a.AuthSubject}))
+	a.RequestDigest = requestDigest
+	var op, digest, raw string
+	e := tx.QueryRow(`SELECT operation,request_digest,COALESCE(response_json,'') FROM operator_idempotency WHERE idempotency_key=?`, key).Scan(&op, &digest, &raw)
+	if e == nil {
+		if op != string(AuditScheduleJobCancel) || digest != requestDigest {
+			return out, scriptBad("idempotency conflict")
+		}
+		if err = json.Unmarshal([]byte(raw), &out); err != nil {
+			return
+		}
+		out.Replayed = true
+		a.OK = true
+		a.Detail = OperatorIdempotencyReplayPrefix + "schedule job cancel receipt"
+		if err = s.recordAuditTx(tx, a); err != nil {
+			return
+		}
+		err = tx.Commit()
+		return
+	}
+	if !errors.Is(e, sql.ErrNoRows) {
+		return out, e
+	}
+	var scheduleID, scheduleName, machineID, state string
+	var lease sql.NullString
+	e = tx.QueryRow(`SELECT sj.schedule_id,sj.schedule_name,j.machine_id,j.state,j.lease_token FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id WHERE sj.job_id=?`, jobID).Scan(&scheduleID, &scheduleName, &machineID, &state, &lease)
+	if errors.Is(e, sql.ErrNoRows) {
+		return out, operatorError(OperatorCodeScheduleJobNotFound, "scheduled job not found")
+	}
+	if e != nil {
+		return out, e
+	}
+	if state != string(deploy.NotStarted) || (lease.Valid && lease.String != "") {
+		return out, operatorError("PRECONDITION_FAILED", "only an unclaimed not_started scheduled job can be cancelled; state is "+state)
+	}
+	res, e := tx.Exec(`UPDATE jobs SET state=?,terminal_at=?,lease_token=NULL,lease_expires_at=NULL WHERE job_id=? AND state=? AND lease_token IS NULL`, deploy.Rejected, fmtTime(now), jobID, deploy.NotStarted)
+	if e != nil {
+		return out, e
+	}
+	if n, e := res.RowsAffected(); e != nil {
+		return out, e
+	} else if n != 1 {
+		return out, operatorError("REVISION_CONFLICT", "scheduled job changed during cancel")
+	}
+	out = ScheduleJobCancelResponse{JobID: jobID, ScheduleID: scheduleID, MachineID: machineID, State: string(deploy.Rejected)}
+	if _, err = tx.Exec(`INSERT INTO operator_idempotency (idempotency_key,operation,request_digest,outcome,response_json,created_at) VALUES (?,?,?,'ok',?,?)`, key, string(AuditScheduleJobCancel), requestDigest, string(mustScriptJSON(out)), fmtTime(now)); err != nil {
+		return
+	}
+	a.OK = true
+	a.Subject = scheduleName
+	a.MachineID = machineID
+	a.Detail = "cancelled unclaimed scheduled job " + jobID + "; reason=" + reason
+	if err = s.recordAuditTx(tx, a); err != nil {
+		return
+	}
+	err = tx.Commit()
+	return
 }

@@ -22,7 +22,7 @@ func TestScheduleReadScopes(t *testing.T) {
 				t.Fatalf("read denied: %s %s", scope, route)
 			}
 		}
-		for _, route := range []string{"POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now"} {
+		for _, route := range []string{"POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now", "POST /v1/operator/schedule-jobs/{id}/cancel"} {
 			if ServiceScopeAllows(scope, "operate", route) != (scope == ServiceScopeOperatorAdmin) {
 				t.Fatalf("mutation scope: %s %s", scope, route)
 			}

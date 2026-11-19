@@ -27,7 +27,7 @@ func TestOperatorAdminScopeCentralAuthorization(t *testing.T) {
 			allowed = append(allowed, route)
 		}
 	}
-	if len(allowed) != 12 {
+	if len(allowed) != 13 {
 		t.Fatalf("operator-admin routes=%d", len(allowed))
 	}
 	forbidden := []string{
@@ -91,7 +91,7 @@ func TestOperatorAdminScheduleAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes := []string{"POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now"}
+	routes := []string{"POST /v1/operator/schedules/{operation}/{phase}", "POST /v1/operator/schedules/{id}/run-now", "POST /v1/operator/schedule-jobs/{id}/cancel"}
 	_, secret, err := f.store.CreateServiceToken(store.ServiceToken{Name: "scheduler", Scope: "operator-admin", ExpiresAt: time.Now().Add(time.Hour), Allowlist: routes}, actor.AccountID)
 	if err != nil {
 		t.Fatal(err)
@@ -145,5 +145,33 @@ func TestOperatorAdminScheduleAPI(t *testing.T) {
 	run := call("/v1/operator/schedules/"+v.ID+"/run-now", struct{}{}, "run")
 	if run.Code != 200 {
 		t.Fatalf("run %d %s", run.Code, run.Body.String())
+	}
+	var ran store.ScheduleRunNowResponse
+	if err := json.Unmarshal(run.Body.Bytes(), &ran); err != nil || len(ran.JobIDs) != 1 {
+		t.Fatalf("run receipt %s", run.Body.String())
+	}
+	if rec := call("/v1/operator/schedule-jobs/"+ran.JobIDs[0]+"/cancel", store.ScheduleJobCancelRequest{}, "cancel-empty"); rec.Code != 400 {
+		t.Fatalf("cancel without reason %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := call("/v1/operator/schedule-jobs/"+ran.JobIDs[0]+"/cancel", store.ScheduleJobCancelRequest{Reason: "machine offline"}, ""); rec.Code == 200 {
+		t.Fatal("cancel without idempotency key succeeded")
+	}
+	cancel := call("/v1/operator/schedule-jobs/"+ran.JobIDs[0]+"/cancel", store.ScheduleJobCancelRequest{Reason: "machine offline"}, "cancel")
+	if cancel.Code != 200 {
+		t.Fatalf("cancel %d %s", cancel.Code, cancel.Body.String())
+	}
+	var cancelled store.ScheduleJobCancelResponse
+	if err := json.Unmarshal(cancel.Body.Bytes(), &cancelled); err != nil || cancelled.State != "rejected" || cancelled.ScheduleID != v.ID || cancelled.Replayed {
+		t.Fatalf("cancel receipt %s", cancel.Body.String())
+	}
+	again := call("/v1/operator/schedule-jobs/"+ran.JobIDs[0]+"/cancel", store.ScheduleJobCancelRequest{Reason: "machine offline"}, "cancel")
+	if again.Code != 200 || again.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("cancel replay %d %s", again.Code, again.Body.String())
+	}
+	if rec := call("/v1/operator/schedule-jobs/"+ran.JobIDs[0]+"/cancel", store.ScheduleJobCancelRequest{Reason: "machine offline"}, "cancel-twice"); rec.Code != 412 || !strings.Contains(rec.Body.String(), "PRECONDITION_FAILED") {
+		t.Fatalf("cancel of a finished job %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := call("/v1/operator/schedule-jobs/no-such-job/cancel", store.ScheduleJobCancelRequest{Reason: "machine offline"}, "cancel-missing"); rec.Code != 404 {
+		t.Fatalf("cancel missing %d %s", rec.Code, rec.Body.String())
 	}
 }

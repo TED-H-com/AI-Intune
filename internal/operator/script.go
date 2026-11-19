@@ -13,6 +13,11 @@ func (s *Service) ScheduleRunNow(id, key string, actor Actor) (store.ScheduleRun
 	return s.store.ScheduleRunNow(id, key, auditFromActor(actor))
 }
 
+// ScheduleJobCancel cancels a scheduled job that no agent has claimed.
+func (s *Service) ScheduleJobCancel(jobID, key string, req store.ScheduleJobCancelRequest, actor Actor) (store.ScheduleJobCancelResponse, error) {
+	return s.store.ScheduleJobCancel(jobID, key, req, auditFromActor(actor))
+}
+
 func (s *Service) RejectScheduleRunNow(id, key string, actor Actor) error {
 	a := auditFromActor(actor)
 	a.Action = store.AuditScheduleRunNow

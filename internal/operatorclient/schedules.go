@@ -70,6 +70,31 @@ func (c *Client) ScheduleManage(ctx context.Context, body store.ScheduleRequest,
 	}
 	return out, e
 }
+func (c *Client) ScheduleJobCancel(ctx context.Context, jobID, reason, key string) (any, error) {
+	if !validSettingIdempotencyKey(key) {
+		return nil, errors.New("idempotency key required")
+	}
+	r, e := c.postSettingJSON(ctx, "/v1/operator/schedule-jobs/"+url.PathEscape(jobID)+"/cancel", key, store.ScheduleJobCancelRequest{Reason: reason})
+	if e != nil {
+		return nil, e
+	}
+	if r.status != 200 {
+		return nil, errors.New("schedule job cancel failed")
+	}
+	if e = validateJSONNoStoreResponse(r.header); e != nil {
+		return nil, e
+	}
+	replayed, e := responseReplayEvidenceFromHeader(r.header)
+	if e != nil {
+		return nil, e
+	}
+	var out store.ScheduleJobCancelResponse
+	e = decodeStrictJSONDocument(r.body, "schedule job cancel", &out)
+	if e == nil && out.Replayed != replayed {
+		e = errors.New("schedule job cancel replay receipt mismatch")
+	}
+	return out, e
+}
 func (c *Client) ScheduleRunNow(ctx context.Context, id, key string) (any, error) {
 	if !validSettingIdempotencyKey(key) {
 		return nil, errors.New("idempotency key required")

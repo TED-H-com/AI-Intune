@@ -150,6 +150,47 @@ func (h *hub) handleScheduleRunNow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
+// handleScheduleJobCancel cancels one scheduled job that is still not_started
+// and was never claimed, so a stale job on an offline machine can be cleared
+// without a raw database edit. Admin only; reason and Idempotency-Key required.
+func (h *hub) handleScheduleJobCancel(w http.ResponseWriter, r *http.Request) {
+	if !h.admitScheduleMutation(w, r) {
+		return
+	}
+	actor := operatorActor(r)
+	action := store.AuditScheduleJobCancel
+	if !h.requireAuditedJSON(w, r, actor, action) {
+		return
+	}
+	p, ok := operatorauth.PrincipalFromContext(r.Context())
+	if !ok || !p.Has(operatorauth.Admin) {
+		h.rejectOperatorPolicyTransport(w, r, actor, action, 403, "SCRIPT_SCOPE_REQUIRED", "cancelling a scheduled job requires admin")
+		return
+	}
+	if !h.requireDiskJSONFreshHuman(w, r, action) {
+		return
+	}
+	actor.AuthCapability = p.GrantedCapabilities.Admin
+	if p.ServiceScope == operatorauth.ServiceScopeOperatorAdmin {
+		actor.AuthCapability = operatorauth.ServiceScopeOperatorAdmin
+	}
+	var body store.ScheduleJobCancelRequest
+	if rejection := decodeOperatorBody(w, r, &body); rejection != nil {
+		h.rejectOperatorPolicyTransport(w, r, actor, action, rejection.Status, rejection.Code, rejection.Detail)
+		return
+	}
+	result, e := operator.New(h.store).ScheduleJobCancel(r.PathValue("id"), r.Header.Get("Idempotency-Key"), body, actor)
+	if e != nil {
+		writeSettingErr(w, "schedule job cancel", e)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if result.Replayed {
+		w.Header().Set("Idempotency-Replayed", "true")
+	}
+	writeJSON(w, 200, result)
+}
+
 // The registry and stored schedule select the boundary scope, never a caller mode.
 func scheduleRequestPermission(r *http.Request, st *store.Store) operatorauth.Permission {
 	var id, script string
