@@ -80,7 +80,7 @@ func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (a
 		return s.diskApprovalCall(ctx, name, raw)
 	case "disk_alerts_list", "disk_ownership_get", "disk_report_get", "disk_ops_status", "disk_policy_list", "disk_policy_get", "disk_policy_upsert_preview", "disk_policy_upsert_apply":
 		return s.diskPolicyCall(ctx, name, raw)
-	case "schedule_list", "schedule_get", "schedule_upsert_preview", "schedule_upsert_apply", "schedule_set_enabled_preview", "schedule_set_enabled_apply", "schedule_run_now":
+	case "schedule_list", "schedule_get", "schedule_upsert_preview", "schedule_upsert_apply", "schedule_set_enabled_preview", "schedule_set_enabled_apply", "schedule_run_now", "schedule_job_cancel":
 		return s.scheduleCall(ctx, name, raw)
 	case "script_catalog_list", "script_run_preview", "script_run_apply":
 		return s.scriptCall(ctx, name, raw)

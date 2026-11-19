@@ -11,11 +11,12 @@ type scheduleHub interface {
 	ScheduleRead(context.Context, string) (any, error)
 	ScheduleManage(context.Context, store.ScheduleRequest, string, bool, string) (store.ScheduleResult, error)
 	ScheduleRunNow(context.Context, string, string) (any, error)
+	ScheduleJobCancel(context.Context, string, string, string) (any, error)
 }
 
 func scheduleTools() []Tool {
 	props := map[string]any{"id": strField(1, 128, idPattern, "Schedule ID"), "name": strField(1, 63, "^[a-z0-9][a-z0-9-]*$", "Unique name"), "script_id": strField(1, 128, idPattern, "Catalog ID"), "script_sha256": strField(64, 64, "^[a-f0-9]{64}$", "Approved hash"), "args": map[string]any{"type": "object"}, "targets": map[string]any{"type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": strField(1, 128, idPattern, "")}, "cron": strField(1, 128, "", "Five numeric fields in tz (default UTC); minimum five minutes"), "tz": strField(1, 128, "", "IANA timezone; optional, default UTC"), "enabled": map[string]any{"type": "boolean"}, "catch_up": map[string]any{"type": "boolean", "enum": []bool{false}}, "expected_revision": intBound(0, 2147483647, "Current revision; zero for create"), "reason": strField(1, 500, "", "Reason without credentials")}
-	out := []Tool{{Name: "schedule_list", Description: "List schedules. Requires view.", InputSchema: obj(map[string]any{}), Annotations: readAnn("schedule_list")}, {Name: "schedule_get", Description: "Get a schedule. Requires view.", InputSchema: obj(map[string]any{"id": props["id"]}, "id"), Annotations: readAnn("schedule_get")}, {Name: "schedule_run_now", Description: "Run an approved schedule now, with overlap protection. Requires operate for read scripts, admin for write scripts.", InputSchema: obj(map[string]any{"id": props["id"], "idempotency_key": strField(1, 200, "", "Durable manual run key")}, "id", "idempotency_key"), Annotations: writeAnn("schedule_run_now", false)}}
+	out := []Tool{{Name: "schedule_list", Description: "List schedules. Requires view.", InputSchema: obj(map[string]any{}), Annotations: readAnn("schedule_list")}, {Name: "schedule_get", Description: "Get a schedule. Requires view.", InputSchema: obj(map[string]any{"id": props["id"]}, "id"), Annotations: readAnn("schedule_get")}, {Name: "schedule_run_now", Description: "Run an approved schedule now, with overlap protection. Requires operate for read scripts, admin for write scripts.", InputSchema: obj(map[string]any{"id": props["id"], "idempotency_key": strField(1, 200, "", "Durable manual run key")}, "id", "idempotency_key"), Annotations: writeAnn("schedule_run_now", false)}, {Name: "schedule_job_cancel", Description: "Cancel one scheduled job that is still not_started and was never claimed by its agent, such as a stale job on an offline machine. Requires admin.", InputSchema: obj(map[string]any{"job_id": strField(1, 128, idPattern, "Scheduled job ID"), "reason": props["reason"], "idempotency_key": strField(1, 200, "", "Idempotency key")}, "job_id", "reason", "idempotency_key"), Annotations: writeAnn("schedule_job_cancel", false)}}
 	for _, op := range []string{"upsert", "set_enabled"} {
 		for _, phase := range []string{"preview", "apply"} {
 			p := map[string]any{}
@@ -53,6 +54,24 @@ func (s *Service) scheduleCall(ctx context.Context, name string, raw json.RawMes
 			return nil, e
 		}
 		v, e := h.ScheduleRead(ctx, "")
+		return v, hubErr(e)
+	}
+	if name == "schedule_job_cancel" {
+		var req struct {
+			JobID          string `json:"job_id"`
+			Reason         string `json:"reason"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if e := decodeArgs(raw, &req); e != nil {
+			return nil, e
+		}
+		if req.JobID == "" || strings.TrimSpace(req.Reason) == "" {
+			return nil, &CallError{Code: "invalid_arguments", Message: "job_id and reason required"}
+		}
+		if e := requireIdempotency(req.IdempotencyKey); e != nil {
+			return nil, e
+		}
+		v, e := h.ScheduleJobCancel(ctx, req.JobID, req.Reason, req.IdempotencyKey)
 		return v, hubErr(e)
 	}
 	if name == "schedule_get" || name == "schedule_run_now" {

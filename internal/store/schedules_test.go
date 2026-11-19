@@ -777,3 +777,203 @@ func TestScheduleOverlapIgnoresDroppedTarget(t *testing.T) {
 		t.Fatalf("%s %v", outcome, e)
 	}
 }
+
+// A never-claimed job on a live target stops counting as overlap once it is
+// older than one cron interval, and its machine is left out of that run, so
+// one offline machine cannot stall the rest of the fleet.
+func TestScheduleOverlapIgnoresStaleNotStartedJob(t *testing.T) {
+	s, r, a, now := scriptFixture(t)
+	offline := mustEnroll(t, s, "offline-node", now)
+	c := healthyCheckin(now)
+	c.ScriptV1 = true
+	if err := s.RecordCheckin(offline, c, now); err != nil {
+		t.Fatal(err)
+	}
+	online := r.Targets[0]
+	req := ScheduleRequest{Name: "probe-check", ScriptID: r.ScriptID, ScriptSHA256: r.ScriptSHA256, Args: r.Args, Targets: []string{online, offline}, Cron: "*/5 * * * *", Enabled: true, Reason: r.Reason}
+	p, e := s.ScheduleManage(req, "upsert", false, "", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.PreviewDigest = p.PreviewDigest
+	out, e := s.ScheduleManage(req, "upsert", true, "schedule-stale", a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	v := out.Schedule
+	if e = s.TickSchedules(v.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := s.ScheduleGet(v.ID)
+	if len(got.LastJobIDs) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	var stuck string
+	for _, id := range got.LastJobIDs {
+		j, _ := s.Job(id)
+		if j.MachineID == online {
+			s.DB().Exec(`UPDATE jobs SET state='succeeded',terminal_at=? WHERE job_id=?`, fmtTime(now), id)
+		} else {
+			stuck = id
+		}
+	}
+	var created string
+	s.rdb.QueryRow(`SELECT created_at FROM jobs WHERE job_id=?`, stuck).Scan(&created)
+	createdAt, _ := time.Parse(time.RFC3339, created)
+	outcomeAt := func(slot time.Time) string {
+		t.Helper()
+		if _, e := s.DB().Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(slot), v.ID); e != nil {
+			t.Fatal(e)
+		}
+		if e := s.TickSchedules(slot); e != nil {
+			t.Fatal(e)
+		}
+		var o string
+		if e := s.rdb.QueryRow(`SELECT outcome FROM schedule_slots WHERE schedule_id=? AND slot=?`, v.ID, fmtTime(slot)).Scan(&o); e != nil {
+			t.Fatal(e)
+		}
+		return o
+	}
+	// Unclaimed for one interval: the next slot is still overlap, as before.
+	if o := outcomeAt(createdAt.Add(5 * time.Minute).Truncate(time.Minute)); o != "skipped_overlap" {
+		t.Fatalf("one-interval job outcome %s", o)
+	}
+	// A leased job never goes stale, however old.
+	s.DB().Exec(`UPDATE jobs SET lease_token='lease' WHERE job_id=?`, stuck)
+	if o := outcomeAt(createdAt.Add(10 * time.Minute).Truncate(time.Minute)); o != "skipped_overlap" {
+		t.Fatalf("leased job outcome %s", o)
+	}
+	s.DB().Exec(`UPDATE jobs SET lease_token=NULL WHERE job_id=?`, stuck)
+	// Older than one interval plus grace: the run goes ahead without the offline machine.
+	if o := outcomeAt(createdAt.Add(15 * time.Minute).Truncate(time.Minute)); o != "enqueued" {
+		var d string
+		s.rdb.QueryRow(`SELECT detail FROM audit_log WHERE subject=? ORDER BY rowid DESC LIMIT 1`, v.Name).Scan(&d)
+		t.Fatalf("stale job outcome %s (%s)", o, d)
+	}
+	after, _ := s.ScheduleGet(v.ID)
+	if len(after.LastJobIDs) != 1 {
+		t.Fatalf("want one new job, got %v", after.LastJobIDs)
+	}
+	if j, _ := s.Job(after.LastJobIDs[0]); j.MachineID != online {
+		t.Fatalf("new job on %s", j.MachineID)
+	}
+	var notes int
+	s.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE subject=? AND detail LIKE 'left out 1 target(s)%'`, v.Name).Scan(&notes)
+	if notes != 1 {
+		t.Fatalf("left-out audit rows %d", notes)
+	}
+}
+
+// When every target holds a stale job the run is skipped as unavailable.
+func TestScheduleAllTargetsStaleIsUnavailable(t *testing.T) {
+	s, v, _, _ := createTestSchedule(t)
+	if e := s.TickSchedules(v.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := s.ScheduleGet(v.ID)
+	var created string
+	s.rdb.QueryRow(`SELECT created_at FROM jobs WHERE job_id=?`, got.LastJobIDs[0]).Scan(&created)
+	createdAt, _ := time.Parse(time.RFC3339, created)
+	slot := createdAt.Add(15 * time.Minute).Truncate(time.Minute)
+	s.DB().Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(slot), v.ID)
+	if e := s.TickSchedules(slot); e != nil {
+		t.Fatal(e)
+	}
+	var o string
+	s.rdb.QueryRow(`SELECT outcome FROM schedule_slots WHERE schedule_id=? AND slot=?`, v.ID, fmtTime(slot)).Scan(&o)
+	if o != "skipped_unavailable" {
+		t.Fatalf("outcome %s", o)
+	}
+}
+
+func TestScheduleStaleCutoffTracksInterval(t *testing.T) {
+	now := time.Date(2026, 11, 20, 17, 0, 30, 0, time.UTC)
+	daily := scheduleStaleNotStartedCutoff(Schedule{Cron: "0 12 * * *", TZ: "America/New_York"}, now)
+	if want := now.Add(-24*time.Hour - scheduleStaleGrace); !daily.Equal(want) {
+		t.Fatalf("daily cutoff %s want %s", daily, want)
+	}
+	// A job made by yesterday's slot still blocks today's slot...
+	if made := time.Date(2026, 11, 19, 17, 0, 12, 0, time.UTC); !made.After(daily) {
+		t.Fatalf("yesterday's job %s already stale at cutoff %s", made, daily)
+	}
+	// ...and a job made two slots ago no longer does.
+	if made := time.Date(2026, 11, 18, 17, 0, 12, 0, time.UTC); made.After(daily) {
+		t.Fatalf("two-day-old job %s not stale at cutoff %s", made, daily)
+	}
+	if bad := scheduleStaleNotStartedCutoff(Schedule{Cron: "nonsense"}, now); !bad.IsZero() {
+		t.Fatal("invalid cron must disable staleness")
+	}
+}
+
+func TestScheduleJobCancel(t *testing.T) {
+	s, v, a, _ := createTestSchedule(t)
+	if e := s.TickSchedules(v.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := s.ScheduleGet(v.ID)
+	job := got.LastJobIDs[0]
+	a.AuthCapability = "admin"
+	if _, e := s.ScheduleJobCancel(job, "", ScheduleJobCancelRequest{Reason: "machine offline"}, a); e == nil {
+		t.Fatal("missing idempotency key accepted")
+	}
+	if _, e := s.ScheduleJobCancel(job, "k0", ScheduleJobCancelRequest{Reason: " "}, a); e == nil {
+		t.Fatal("empty reason accepted")
+	}
+	if _, e := s.ScheduleJobCancel("nope", "k1", ScheduleJobCancelRequest{Reason: "machine offline"}, a); e == nil {
+		t.Fatal("unknown job accepted")
+	}
+	out, e := s.ScheduleJobCancel(job, "k2", ScheduleJobCancelRequest{Reason: "machine offline"}, a)
+	if e != nil || out.State != "rejected" || out.ScheduleID != v.ID || out.Replayed {
+		t.Fatalf("%+v %v", out, e)
+	}
+	j, _ := s.Job(job)
+	if j.State != "rejected" || j.TerminalAt == nil {
+		t.Fatalf("job not terminal: %+v", j)
+	}
+	again, e := s.ScheduleJobCancel(job, "k2", ScheduleJobCancelRequest{Reason: "machine offline"}, a)
+	if e != nil || !again.Replayed || again.JobID != job {
+		t.Fatalf("replay %+v %v", again, e)
+	}
+	if _, e := s.ScheduleJobCancel(job, "k2", ScheduleJobCancelRequest{Reason: "different"}, a); e == nil {
+		t.Fatal("idempotency conflict accepted")
+	}
+	if _, e := s.ScheduleJobCancel(job, "k3", ScheduleJobCancelRequest{Reason: "machine offline"}, a); e == nil {
+		t.Fatal("cancelled a terminal job twice")
+	}
+	var n int
+	s.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action=? AND outcome='ok'`, string(AuditScheduleJobCancel)).Scan(&n)
+	if n < 1 {
+		t.Fatal("no audit row")
+	}
+	// After cancel, the next slot is free.
+	next, _ := s.ScheduleGet(v.ID)
+	if e = s.TickSchedules(next.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	var o string
+	s.rdb.QueryRow(`SELECT outcome FROM schedule_slots WHERE schedule_id=? AND slot=?`, v.ID, fmtTime(next.NextRunAt)).Scan(&o)
+	if o != "enqueued" {
+		t.Fatalf("after cancel outcome %s", o)
+	}
+}
+
+func TestScheduleJobCancelRefusesClaimedJob(t *testing.T) {
+	s, v, a, _ := createTestSchedule(t)
+	if e := s.TickSchedules(v.NextRunAt); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := s.ScheduleGet(v.ID)
+	job := got.LastJobIDs[0]
+	if _, e := s.DB().Exec(`UPDATE jobs SET state='claimed',lease_token='lease' WHERE job_id=?`, job); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.ScheduleJobCancel(job, "k", ScheduleJobCancelRequest{Reason: "machine offline"}, a); e == nil {
+		t.Fatal("claimed job cancelled")
+	}
+	if _, e := s.DB().Exec(`UPDATE jobs SET state='not_started' WHERE job_id=?`, job); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.ScheduleJobCancel(job, "k4", ScheduleJobCancelRequest{Reason: "machine offline"}, a); e == nil {
+		t.Fatal("leased not_started job cancelled")
+	}
+}

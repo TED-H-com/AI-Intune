@@ -350,7 +350,13 @@ GET /v1/operator/schedules
 GET /v1/operator/schedules/{id}
 POST /v1/operator/schedules/{operation}/{phase}
 POST /v1/operator/schedules/{id}/run-now
+POST /v1/operator/schedule-jobs/{id}/cancel
 ```
+
+`schedule_job_cancel` (`job_id`, `reason`, `idempotency_key`) cancels one
+scheduled job that is still `not_started` and was never claimed, for example a
+stale job left on an offline machine. It needs admin or an `operator-admin`
+token and is refused for a claimed or finished job.
 
 Use the registered route patterns literally in the allowlist; substitute IDs and
 operations in actual requests. Supply a normal audit reason such as

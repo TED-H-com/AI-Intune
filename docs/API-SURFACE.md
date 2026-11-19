@@ -3,7 +3,7 @@
 > 這是控制面 parity 的帳本，不是行銷功能表。只要正常操作仍只有 CLI，
 > 就留在「缺口」欄；高風險不是把入口藏起來，而是補 RBAC、preview、確認、
 > 冪等與 audit。共同成功語意見 [CONTROL-PLANE-CONTRACT.md](CONTROL-PLANE-CONTRACT.md)。
-> 逐一對照 364 個 HTTP operations（39 non-operator＋325 operator；159 條 operator JSON）、
+> 逐一對照 365 個 HTTP operations（39 non-operator＋326 operator；160 條 operator JSON）、
 > native Store、UI／CLI 與 Intune-style submenu 的完整清單，
 > 見 [FEATURE-INVENTORY.md](FEATURE-INVENTORY.md)。
 
@@ -12,7 +12,7 @@ is off by default and uses its own signature/secret boundary. See [CHANNELS.md](
 
 ## Public local-account routes (Autopilot)
 
-These six operations are included in the 364-operation tally above (39 non-operator + 325 operator). The inventory/contract excludes these six public account operations and totals 358. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
+These six operations are included in the 365-operation tally above (39 non-operator + 326 operator). The inventory/contract excludes these six public account operations and totals 359. Account routes return 404 in `tailscale` mode. In `local` / `both`, they pin Host to `CLAWCTL_PUBLIC_URL`, use locked security headers and Go CrossOriginProtection, and do not require an existing operator session.
 
 | Method | Route | Authority / behavior |
 |---|---|---|
@@ -599,6 +599,16 @@ Both require view.
 `targets`, `cron`, and `enabled`. `catch_up` must be false.
 Preview and apply return a `ScheduleResult` object with `schedule`,
 `preview_digest`, and `replayed`.
+`POST /v1/operator/schedule-jobs/{id}/cancel` requires admin (or an allowlisted
+`operator-admin` service token), `Idempotency-Key`, and `{"reason":"..."}`. It
+cancels one scheduled job only while it is `not_started` and has never been
+claimed (no lease); the job becomes `rejected` with an audit row
+(`schedule-job-cancel`). It returns `{"job_id","schedule_id","machine_id","state","replayed"}`;
+an unknown job is `404 SCHEDULE_JOB_NOT_FOUND`, a claimed or finished job is
+`412 PRECONDITION_FAILED`. The scheduler also stops counting such a job as an
+overlap once it is older than one cron interval of its schedule (plus a
+two-minute grace); that target is left out of the run, recorded in audit, and
+the other targets still run.
 `POST /v1/operator/schedules/{id}/run-now` requires `Idempotency-Key`, accepts `{}`,
 and returns `{"job_ids":[...],"replayed":false}` (an empty array when no jobs are enqueued). Replays return the saved job IDs,
 `replayed:true`, and `Idempotency-Replayed: true`, without enqueueing. Manual
@@ -828,7 +838,8 @@ that service identity. Existing bounded rate-limit denial auditing still applies
 Schedule list/get accepts explicitly allowlisted `view`, `operate`, and
 `operator-admin` tokens. Schedule upsert and set-enabled preview/apply
 (`POST /v1/operator/schedules/{operation}/{phase}`), and run-now
-(`POST /v1/operator/schedules/{id}/run-now`) accept explicitly allowlisted
+(`POST /v1/operator/schedules/{id}/run-now`), and scheduled-job cancel
+(`POST /v1/operator/schedule-jobs/{id}/cancel`) accept explicitly allowlisted
 `operator-admin` tokens. `view` and `operate` tokens cannot manage schedules.
 Catalog approval, revision, preview digest, idempotency and rate-limit checks
 still apply to delegated actions.
