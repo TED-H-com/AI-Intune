@@ -1,0 +1,35 @@
+# Alerts of the Hub probe. ops/prometheus/install-hub-probe.sh installs this
+# file as /etc/prometheus/rules/clawctl-hub-healthz.yml.
+#
+# Both alerts carry machine="hub": Alertmanager groups by machine and the
+# message title names it.
+
+groups:
+  - name: clawctl-hub-healthz
+    interval: 60s
+    rules:
+      - alert: HubNotAnswering
+        expr: probe_success{job="clawctl-hub-healthz"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          source: prometheus
+          machine: hub
+        annotations:
+          summary: 'Hub 沒有回應'
+          description: >-
+            {{ $labels.instance }} 連續 5 分鐘沒有回 200。主控台打不開，
+            經這個網址報到的機器也報不到。下一步：到 Hub 主機查 Hub 服務的狀態。
+
+      - alert: HubProbeNotRunning
+        expr: up{job="clawctl-hub-healthz"} == 0 or absent(up{job="clawctl-hub-healthz"})
+        for: 10m
+        labels:
+          severity: warning
+          source: prometheus
+          machine: hub
+        annotations:
+          summary: 'Hub 探測沒有在跑'
+          description: >-
+            Prometheus 連續 10 分鐘拿不到 Hub 探測的結果，這段時間沒有人在看 Hub 有沒有回應。
+            下一步：在觀測主機上跑 systemctl status prometheus-blackbox-exporter。

@@ -45,24 +45,30 @@ echo "== 1/5 install (apt, so the distro maintains the binaries)"
 DEBIAN_FRONTEND=noninteractive apt-get install -y prometheus prometheus-node-exporter
 
 echo "== 2/5 config"
-install -d -m 0755 /etc/prometheus/targets /etc/prometheus/rules
+install -d -m 0755 /etc/prometheus/targets /etc/prometheus/rules /etc/prometheus/scrape.d
 if [ -f /etc/prometheus/prometheus.yml ] && ! cmp -s "$PROM_YML" /etc/prometheus/prometheus.yml; then
 	cp -a /etc/prometheus/prometheus.yml "/etc/prometheus/prometheus.yml.bak-$STAMP"
 	echo "   previous config backed up to prometheus.yml.bak-$STAMP"
 fi
 install -m 0644 "$PROM_YML" /etc/prometheus/prometheus.yml
 install -m 0644 "$FLEET_JSON" /etc/prometheus/targets/fleet.json
-install -m 0644 "$RULES"/*.yml /etc/prometheus/rules/
-
-# rule_files is a glob. A glob that matches nothing is not an error: Prometheus
-# starts, loads zero rules, and never alerts. Count explicitly.
-want=$(find "$RULES" -name '*.yml' | wc -l)
-got=$(find /etc/prometheus/rules -name '*.yml' | wc -l)
-if [ "$want" -eq 0 ] || [ "$got" -ne "$want" ]; then
-	echo "rule files incomplete: repo has $want, /etc/prometheus/rules has $got" >&2
+rule_files=("$RULES"/*.yml)
+if [ ! -f "${rule_files[0]}" ]; then
+	printf 'rule file not installed: %s\n' "${rule_files[0]##*/}" >&2
 	exit 1
 fi
-echo "   $got rule files"
+install -m 0644 "${rule_files[@]}" /etc/prometheus/rules/
+
+# Each repository rule file must be installed with identical content.
+count=0
+for rule in "$RULES"/*.yml; do
+	if [ ! -f "$rule" ] || ! cmp -s "$rule" "/etc/prometheus/rules/${rule##*/}"; then
+		printf 'rule file not installed: %s\n' "${rule##*/}" >&2
+		exit 1
+	fi
+	count=$((count + 1))
+done
+echo "   $count rule files"
 
 echo "== 3/5 listen addresses and node_exporter textfile collector"
 # node_exporter exports the metrics of the *.prom files in this directory.

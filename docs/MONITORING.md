@@ -107,6 +107,50 @@ read -rsp 'Grafana admin password: ' GF_PASS && export GF_PASS
 sudo --preserve-env=GF_ADMIN,GF_PASS ./ops/prometheus/install-grafana.sh
 ```
 
+## Hub probe
+
+Prometheus asks the Hub's `/healthz` through a blackbox exporter on
+`127.0.0.1:9115`. `/healthz` answers HTTP 200 with `alive` while the Hub process
+serves requests.
+
+```bash
+CLAWCTL_HUB_URL=https://hub.example.com ./ops/prometheus/install-hub-probe.sh --check
+sudo CLAWCTL_HUB_URL=https://hub.example.com ./ops/prometheus/install-hub-probe.sh
+sudo ./ops/prometheus/install-hub-probe.sh --remove
+```
+
+Set `CLAWCTL_HUB_URL` to an `http://` or `https://` address with a host and
+optional port, without a path, credentials, query or fragment. One trailing
+slash is accepted. `--check` prints the plan without changing configuration.
+Install requires root and a Hub that answers HTTP 200 with exactly `alive`
+or `alive` followed by one newline.
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `HubNotAnswering` | The Hub probe gets no answer for 5 minutes | critical |
+| `HubProbeNotRunning` | Prometheus gets no probe result for 10 minutes | warning |
+
+For a first installation, the exporter stays masked until its loopback
+listener and module file are configured. A failed installation can be retried
+or cleaned up with `--remove`, including failures before the scrape job exists.
+An exporter masked by the operator remains masked.
+
+The installer installs `prometheus-blackbox-exporter` and these files:
+
+| File | Effect |
+|---|---|
+| `/etc/prometheus/clawctl-blackbox.yml` | Defines the `/healthz` probe |
+| `/etc/default/prometheus-blackbox-exporter` | Sets the module file and listener |
+| `/etc/prometheus/scrape.d/clawctl-hub-healthz.yml` | Adds the Hub scrape job |
+| `/etc/prometheus/rules/clawctl-hub-healthz.yml` | Adds both alerts |
+| `/etc/prometheus/prometheus.yml` | Adds the scrape directory when absent |
+
+Telegram delivery uses the Alertmanager of step 2 and its 5 minute grouping
+delay. `--remove` deletes the scrape job and alert rules, reloads Prometheus,
+and stops and disables the exporter. The package, module file, exporter
+settings and `prometheus.yml` stay installed. If removal fails, repeat the
+`--remove` command to complete the reload and exporter shutdown.
+
 ## Grafana without root
 
 `ops/prometheus/install-grafana-docker.sh` runs Grafana in Docker
@@ -129,6 +173,7 @@ Grafana data, including the admin password, stays in the Docker volume
 |---|---|
 | Prometheus | `127.0.0.1:9090` |
 | Alertmanager | `127.0.0.1:9093`, cluster listener off |
+| Hub blackbox exporter | `127.0.0.1:9115` |
 | node_exporter | `<address>:9100` |
 | Grafana (APT, `install-grafana.sh`) | `<address>:3000` |
 | Grafana (Docker) | `$CLAWCTL_GRAFANA_ADDR:$CLAWCTL_GRAFANA_PORT` |
@@ -160,3 +205,8 @@ if the whole metric is empty, the query or the scrape is wrong.
 `CLAWCTL_REQUIRE_PROMTOOL=1` to fail when `promtool` is missing), that
 `install.sh` calls existing stage scripts, the installers' refusals and
 Grafana login checks, and the functions of `ops/prometheus/listen.sh`.
+
+```bash
+bash ops/prometheus/test-install-hub-probe.sh
+promtool test rules ops/prometheus/hub-probe/rules_test.yml
+```

@@ -2486,6 +2486,19 @@ else
 	echo "skip: promtool not in PATH, skipping ops/prometheus/rules/*.yml. Must fail in CI when CLAWCTL_REQUIRE_PROMTOOL=1."
 fi
 
+# Hub probe installer and alert rules.
+run bash "$ROOT/ops/prometheus/test-install-hub-probe.sh"
+expect 'Hub probe installer cases pass' 0 has 'failed: 0'
+if command -v promtool >/dev/null 2>&1; then
+	run promtool test rules "$ROOT/ops/prometheus/hub-probe/rules_test.yml"
+	expect 'promtool tests Hub probe alerts' 0 has 'SUCCESS'
+elif [ "${CLAWCTL_REQUIRE_PROMTOOL:-}" = "1" ]; then
+	rc=127; output='promtool not in PATH'
+	fail 'promtool tests Hub probe alerts (CLAWCTL_REQUIRE_PROMTOOL=1)'
+else
+	echo 'skip: promtool not in PATH, skipping Hub probe alert tests.'
+fi
+
 # --- ops/prometheus/install.sh only calls stage scripts that exist.
 # It once called an install script that was never in this tree, so the first
 # stage could not run at all.
@@ -2810,6 +2823,15 @@ expect 'listen.sh: install-prometheus.sh sets the listen addresses' 0 \
 	'set_args_flag /etc/default/prometheus --web.listen-address 127.0.0.1:9090' \
 	'set_args_flag /etc/default/prometheus-node-exporter --web.listen-address "$ADDR:9100"' \
 	'retry_until_bound prometheus-node-exporter'
+prometheus_rules_installed() {
+	local file=$ROOT/ops/prometheus/install-prometheus.sh
+	grep -Fq 'for rule in "$RULES"/*.yml; do' "$file" &&
+		grep -Fq '[ ! -f "$rule" ] || ! cmp -s "$rule" "/etc/prometheus/rules/${rule##*/}"' "$file" &&
+		grep -Fq 'rule file not installed: %s' "$file" &&
+		grep -Fq 'count=$((count + 1))' "$file" &&
+		! grep -Fq -- '-ne "$want"' "$file"
+}
+expect 'listen.sh: install-prometheus.sh verifies each repository rule file' 0 prometheus_rules_installed
 expect 'listen.sh: install-alertmanager.sh sets the listen addresses' 0 \
 	listen_exact_lines "$ROOT/ops/prometheus/install-alertmanager.sh" \
 	'set_args_flag /etc/default/prometheus-alertmanager --web.listen-address 127.0.0.1:9093' \
@@ -2821,7 +2843,7 @@ expect 'listen.sh: install-grafana.sh sets the listen address' 0 \
 
 listen_no_old_urls() {
 	local f needle hit=""
-	for f in install.sh install-prometheus.sh install-alertmanager.sh install-grafana.sh; do
+	for f in install.sh install-prometheus.sh install-alertmanager.sh install-grafana.sh install-hub-probe.sh; do
 		for needle in 'localhost:3000' 'localhost:9090/-/healthy' 'localhost:9100' 'localhost:9093/api'; do
 			if grep -qF -- "$needle" "$ROOT/ops/prometheus/$f"; then
 				hit="$hit ${f}:${needle}"
