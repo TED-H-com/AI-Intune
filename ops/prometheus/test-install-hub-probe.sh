@@ -61,8 +61,25 @@ STATE=$(cd "$(dirname "${BASH_SOURCE[0]}")/../state" && pwd)
 CMD=${0##*/}
 printf '%s %s\n' "$CMD" "$*" >>"$STATE/calls"
 case $CMD in
-apt-get) [ ! -e "$STATE/fail-apt" ] ;;
+apt-get)
+	# A first install starts the service from postinst unless it is masked.
+	if [ ! -e "$STATE/installed" ] && [ ! -e "$STATE/masked" ]; then touch "$STATE/wildcard-start"; fi
+	[ ! -e "$STATE/fail-apt" ]
+	touch "$STATE/installed"
+	;;
 systemctl)
+	case $1 in
+	is-enabled) if [ -e "$STATE/masked" ]; then echo masked; else echo disabled; fi ;;
+	mask) touch "$STATE/masked" ;;
+	unmask)
+		if [ -e "$STATE/installed" ] && [ ! -e "$STATE/../etc/prometheus/.clawctl-hub-probe-remove-pending" ] &&
+			! grep -q -- '--web.listen-address=127.0.0.1:9115' "$STATE/../etc/default/prometheus-blackbox-exporter"; then
+			touch "$STATE/premature-unmask"
+		fi
+		rm -f "$STATE/masked"
+		;;
+	show) if [ -e "$STATE/unit-absent" ]; then echo not-found; else echo loaded; fi ;;
+	esac
 	if [ "$1" = reload ] && [ -e "$STATE/fail-reload" ]; then exit 1; fi
 	if [ "$1" = disable ] && [ -e "$STATE/fail-disable" ]; then exit 1; fi
 	if [ "$1" = reload ] && [ -e "$STATE/fail-second-reload" ] &&
@@ -290,7 +307,8 @@ install_order() {
 	need_rc 0
 	need_out '== 4/4 reload Prometheus and check'
 	grep -E '^(apt-get|systemctl|promtool) ' "$CASE/state/calls" >"$CASE/state/order"
-	printf '%s\n' 'apt-get install -y prometheus-blackbox-exporter' \
+	printf '%s\n' 'systemctl is-enabled prometheus-blackbox-exporter' 'systemctl mask prometheus-blackbox-exporter' \
+		'apt-get install -y prometheus-blackbox-exporter' 'systemctl unmask prometheus-blackbox-exporter' \
 		'systemctl enable prometheus-blackbox-exporter' 'systemctl restart prometheus-blackbox-exporter' \
 		"promtool check config $PROM" 'systemctl reload prometheus' >"$CASE/state/expected"
 	cmp -s "$CASE/state/expected" "$CASE/state/order"
@@ -341,11 +359,15 @@ apt_failure() {
 	touch "$CASE/state/fail-apt"
 	installer
 	need_rc 1
-	need_err 'apt-get could not install prometheus-blackbox-exporter. Nothing else was changed.'
+	need_err 'Package installation failed. Retry this install, or remove the probe:'
 	no_prom_changes
 	[ ! -e "$MODULES" ]
 	cmp -s "$DEFAULTS" "$CASE/state/original-defaults"
-	no_call systemctl
+	need_call 'systemctl mask prometheus-blackbox-exporter'
+	no_call 'systemctl unmask'
+	no_call 'systemctl enable'
+	no_call 'systemctl restart'
+	[ -e "$ETC/prometheus/.clawctl-hub-probe-mask-pending" ]
 	no_call promtool
 }
 exporter_failure() {
@@ -494,7 +516,7 @@ remove_probe() {
 	cmp -s "$PROM" "$CASE/state/installed-prometheus"
 	cmp -s "$DEFAULTS" "$CASE/state/installed-defaults"
 	cmp -s "$MODULES" "$HERE/hub-probe/blackbox.yml"
-	printf '%s\n' 'systemctl reload prometheus' 'systemctl disable --now prometheus-blackbox-exporter' >"$CASE/state/expected"
+	printf '%s\n' 'systemctl reload prometheus' 'systemctl show prometheus-blackbox-exporter -p LoadState --value' 'systemctl disable --now prometheus-blackbox-exporter' >"$CASE/state/expected"
 	cmp -s "$CASE/state/expected" "$CASE/state/calls"
 }
 remove_absent() {
@@ -504,6 +526,92 @@ remove_absent() {
 	need_out 'The Hub probe is not installed.'
 	no_changes
 	[ ! -s "$CASE/state/calls" ]
+}
+package_startup() {
+	setup
+	installer
+	need_rc 0
+	[ ! -e "$CASE/state/wildcard-start" ]
+	[ ! -e "$CASE/state/premature-unmask" ]
+	[ ! -e "$CASE/state/masked" ]
+	[ ! -e "$ETC/prometheus/.clawctl-hub-probe-mask-pending" ]
+	[ -e "$ETC/prometheus/.clawctl-hub-probe-managed" ]
+}
+foreign_mask() {
+	local base=$CASE state
+	for state in absent installed; do
+		CASE=$base/$state
+		setup
+		if [ "$state" = installed ]; then touch "$CASE/state/installed"; fi
+		touch "$CASE/state/masked"
+		installer
+		need_rc 1
+		need_err 'prometheus-blackbox-exporter is masked.'
+		[ -e "$CASE/state/masked" ]
+		no_call 'apt-get'
+		no_call 'systemctl unmask'
+		no_prom_changes
+	done
+}
+installed_package() {
+	setup
+	touch "$CASE/state/installed"
+	installer
+	need_rc 0
+	no_call 'systemctl mask'
+	no_call 'systemctl unmask'
+	need_call 'systemctl restart prometheus-blackbox-exporter'
+}
+
+package_retry() {
+	setup
+	touch "$CASE/state/fail-apt"
+	installer
+	need_rc 1
+	[ -e "$CASE/state/masked" ]
+	rm "$CASE/state/fail-apt"
+	installer
+	need_rc 0
+	[ ! -e "$CASE/state/masked" ]
+	[ ! -e "$CASE/state/wildcard-start" ]
+}
+remove_package_failure() {
+	setup
+	touch "$CASE/state/fail-apt" "$CASE/state/unit-absent"
+	installer
+	need_rc 1
+	installer --remove
+	need_rc 0
+	need_call 'systemctl unmask prometheus-blackbox-exporter'
+	[ ! -e "$CASE/state/masked" ]
+	[ ! -e "$ETC/prometheus/.clawctl-hub-probe-managed" ]
+	no_call 'systemctl disable'
+}
+remove_failed_install() {
+	local base=$CASE stage
+	for stage in exporter probe config; do
+		CASE=$base/$stage
+		setup
+		case $stage in
+		exporter) printf 503 >"$CASE/state/healthy" ;;
+		probe) printf 'probe_success 0\n' >"$CASE/state/probe" ;;
+		config) touch "$CASE/state/fail-promtool" ;;
+		esac
+		installer
+		need_rc 1
+		[ ! -e "$SCRAPE" ]
+		[ ! -e "$RULE" ]
+		: >"$CASE/state/calls"
+		installer --remove
+		need_rc 0
+		need_call 'systemctl disable --now prometheus-blackbox-exporter'
+		need_out 'Removed the Hub probe.'
+		: >"$CASE/state/calls"
+		installer --remove
+		need_rc 0
+		need_out 'The Hub probe is not installed.'
+		[ ! -s "$CASE/state/calls" ]
+	done
 }
 remove_retry() {
 	local kind base=$CASE
@@ -627,6 +735,12 @@ run_case 'a restore step that fails is listed under Not restored' restore_failur
 run_case 'remove deletes the scrape job and the rules, reloads and disables the exporter' remove_probe
 run_case 'remove without a probe changes nothing' remove_absent
 run_case 'remove reports a reload that fails' remove_reload_failure
+run_case 'package startup waits for the loopback flags' package_startup
+run_case 'an installed package keeps its current mask state' installed_package
+run_case 'an operator mask is preserved' foreign_mask
+run_case 'package installation can resume after failure' package_retry
+run_case 'remove cleans up after a package installation failure' remove_package_failure
+run_case 'remove cleans up an exporter after failed installation' remove_failed_install
 run_case 'removal can resume after reload or disable fails' remove_retry
 run_case 'a missing listener stops the exporter' missing_listener
 run_case 'a failed write restores previously written files' write_failure

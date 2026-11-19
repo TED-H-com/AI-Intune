@@ -17,6 +17,8 @@ SCRAPE_DIR=$ETC/prometheus/scrape.d
 SCRAPE=$SCRAPE_DIR/clawctl-hub-healthz.yml
 RULE=$ETC/prometheus/rules/clawctl-hub-healthz.yml
 REMOVE_PENDING=$ETC/prometheus/.clawctl-hub-probe-remove-pending
+MANAGED=$ETC/prometheus/.clawctl-hub-probe-managed
+MASK_PENDING=$ETC/prometheus/.clawctl-hub-probe-mask-pending
 PROM_API=${CLAWCTL_HUB_PROBE_PROMETHEUS:-http://127.0.0.1:9090}
 EXPORTER=${CLAWCTL_HUB_PROBE_EXPORTER:-127.0.0.1:9115}
 TRIES=${CLAWCTL_HUB_PROBE_TRIES:-36}
@@ -51,9 +53,16 @@ root_required() {
 	fi
 }
 
+unmask_owned() {
+	if [ -e "$MASK_PENDING" ]; then
+		systemctl unmask prometheus-blackbox-exporter
+		rm -f -- "$MASK_PENDING"
+	fi
+}
+
 if [ "$MODE" = --remove ]; then
 	root_required
-	if [ ! -e "$SCRAPE" ] && [ ! -e "$RULE" ] && [ ! -e "$REMOVE_PENDING" ]; then
+	if [ ! -e "$SCRAPE" ] && [ ! -e "$RULE" ] && [ ! -e "$REMOVE_PENDING" ] && [ ! -e "$MANAGED" ] && [ ! -e "$MASK_PENDING" ]; then
 		echo 'The Hub probe is not installed.'
 		exit 0
 	fi
@@ -63,11 +72,13 @@ if [ "$MODE" = --remove ]; then
 		printf 'Prometheus reload failed. Retry removal: sudo %s --remove\n' "$SCRIPT_PATH" >&2
 		exit 1
 	fi
-	if ! systemctl disable --now prometheus-blackbox-exporter; then
+	unmask_owned
+	LOAD_STATE=$(systemctl show prometheus-blackbox-exporter -p LoadState --value)
+	if [ "$LOAD_STATE" != not-found ] && ! systemctl disable --now prometheus-blackbox-exporter; then
 		echo 'prometheus-blackbox-exporter was not stopped. Run: systemctl disable --now prometheus-blackbox-exporter' >&2
 		exit 1
 	fi
-	rm -f -- "$REMOVE_PENDING"
+	rm -f -- "$REMOVE_PENDING" "$MANAGED"
 	echo 'Removed the Hub probe. Prometheus is reloaded; prometheus-blackbox-exporter is stopped and disabled.'
 	exit 0
 fi
@@ -111,7 +122,7 @@ if ! cmp -s "$WORK/body" "$WORK/alive" && ! cmp -s "$WORK/body" "$WORK/alive-new
 fi
 if [ "$MODE" = --check ]; then
 	PACKAGE='to install'
-	if STATUS=$(dpkg-query -W -f='${Status}' prometheus-blackbox-exporter) && [ "$STATUS" = 'install ok installed' ]; then PACKAGE=installed; fi
+	if STATUS=$(dpkg-query -W -f='${Status}' prometheus-blackbox-exporter 2>/dev/null) && [ "$STATUS" = 'install ok installed' ]; then PACKAGE=installed; fi
 	CHANGE='no change'
 	if [ "$ADD_SCRAPE" -eq 1 ]; then CHANGE='adds scrape_config_files'; fi
 	printf 'Hub: %s answers 200.\nPackage: prometheus-blackbox-exporter, %s\nExporter: %s, modules %s\nScrape job: %s\nAlert rules: %s\nprometheus.yml: %s\nPrometheus: reload\nInstall: sudo CLAWCTL_HUB_URL=%s %s\n' \
@@ -121,8 +132,26 @@ fi
 root_required
 
 echo '== 1/4 package'
+# Block the package's automatic service start until the loopback flags exist.
+if STATUS=$(dpkg-query -W -f='${Status}' prometheus-blackbox-exporter 2>/dev/null) && [ "$STATUS" = 'install ok installed' ]; then
+	PACKAGE_INSTALLED=1
+else
+	PACKAGE_INSTALLED=0
+fi
+if [ ! -e "$MASK_PENDING" ]; then
+	UNIT_STATE=$(systemctl is-enabled prometheus-blackbox-exporter 2>/dev/null || :)
+	case $UNIT_STATE in
+	masked*) echo 'prometheus-blackbox-exporter is masked. Unmask it before installing the Hub probe.' >&2; exit 1 ;;
+	esac
+fi
+if [ "$PACKAGE_INSTALLED" -eq 0 ] && [ ! -e "$MASK_PENDING" ]; then
+	if [ ! -e "$MANAGED" ]; then install -m 0644 /dev/null "$MANAGED"; fi
+	: >"$MASK_PENDING"
+	systemctl mask prometheus-blackbox-exporter
+fi
+if [ ! -e "$MANAGED" ]; then install -m 0644 /dev/null "$MANAGED"; fi
 if ! DEBIAN_FRONTEND=noninteractive apt-get install -y prometheus-blackbox-exporter; then
-	echo 'apt-get could not install prometheus-blackbox-exporter. Nothing else was changed.' >&2
+	printf 'Package installation failed. Retry this install, or remove the probe: sudo %s --remove\n' "$SCRIPT_PATH" >&2
 	exit 1
 fi
 printf '== 2/4 exporter on %s\n' "$EXPORTER"
@@ -146,6 +175,7 @@ fi
 if ! flag_is_set --web.listen-address "$EXPORTER"; then
 	set_args_flag "$DEFAULTS" --web.listen-address "$EXPORTER"
 fi
+unmask_owned
 systemctl enable prometheus-blackbox-exporter
 systemctl restart prometheus-blackbox-exporter
 HEALTHY=0

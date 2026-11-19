@@ -130,6 +130,11 @@ or `alive` followed by one newline.
 | `HubNotAnswering` | The Hub probe gets no answer for 5 minutes | critical |
 | `HubProbeNotRunning` | Prometheus gets no probe result for 10 minutes | warning |
 
+For a first installation, the exporter stays masked until its loopback
+listener and module file are configured. A failed installation can be retried
+or cleaned up with `--remove`, including failures before the scrape job exists.
+An exporter masked by the operator remains masked.
+
 The installer installs `prometheus-blackbox-exporter` and these files:
 
 | File | Effect |
