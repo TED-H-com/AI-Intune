@@ -33,7 +33,7 @@ func TestScheduleWebPreviewApplyAndRunNow(t *testing.T) {
 	}
 	p := scheduleWebPrincipal()
 	w := diskWebRequest(t, s, "POST", schedulesBack+"/preview", scheduleTestForm(machine), p, false)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "</html>") || !strings.Contains(w.Body.String(), "Next 3 runs") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "</html>") || !strings.Contains(w.Body.String(), "Upcoming runs") {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	apply := diskWebHidden(t, w.Body.String(), "request", "operation", "preview_digest", "idempotency_key", "expected_revision", "confirm")
@@ -246,5 +246,28 @@ func TestScheduleWebSwitchFleetProbeV2(t *testing.T) {
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `value="fleet-probe-v2"`) {
 			t.Fatal(w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestSchedulePreviewPageListsTheStoresUpcomingRuns(t *testing.T) {
+	s, st := newServer(t)
+	machine := onlineMachine(t, st, "Probe machine")
+	enabled := true
+	now := time.Now().UTC()
+	if err := st.RecordCheckin(machine, model.Checkin{SchemaVersion: model.SchemaVersion, SentAt: now, JobsEnabled: &enabled, ScriptV1: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	p := scheduleWebPrincipal()
+	w := diskWebRequest(t, s, "POST", schedulesBack+"/preview", scheduleTestForm(machine), p, false)
+	body := w.Body.String()
+	if w.Code != 200 || strings.Count(body, "EST · ")+strings.Count(body, "EDT · ") != store.ScheduleUpcomingRuns || strings.Contains(body, "Disabled · 不會執行") {
+		t.Fatal(w.Code, body)
+	}
+	form := scheduleTestForm(machine)
+	form.Set("enabled", "false")
+	w = diskWebRequest(t, s, "POST", schedulesBack+"/preview", form, p, false)
+	body = w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, "Disabled · 不會執行") || strings.Contains(body, "EST · ") || strings.Contains(body, "EDT · ") {
+		t.Fatal(w.Code, body)
 	}
 }

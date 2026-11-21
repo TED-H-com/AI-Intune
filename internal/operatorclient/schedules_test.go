@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -52,13 +53,13 @@ func testScheduleClient(t *testing.T, makeClient func(http.HandlerFunc) *Client)
 			if r.Header.Get("Idempotency-Key") != "" {
 				t.Error("preview idempotency")
 			}
-			json.NewEncoder(w).Encode(store.ScheduleResult{PreviewDigest: digest, Schedule: schedule})
+			json.NewEncoder(w).Encode(store.ScheduleResult{PreviewDigest: digest, Schedule: schedule, UpcomingRuns: []time.Time{}})
 		case strings.HasSuffix(r.URL.Path, "/apply"):
 			if r.Header.Get("Idempotency-Key") != "schedule-key" {
 				t.Error("apply key")
 			}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(store.ScheduleResult{PreviewDigest: digest, Schedule: schedule})
+			json.NewEncoder(w).Encode(store.ScheduleResult{PreviewDigest: digest, Schedule: schedule, UpcomingRuns: []time.Time{}})
 		case r.URL.Path == "/v1/operator/schedules/s-1/run-now":
 			key := r.Header.Get("Idempotency-Key")
 			if key == "" {
@@ -126,6 +127,30 @@ func TestScheduleListEnvelopeIsStrict(t *testing.T) {
 		var out store.ScheduleListResponse
 		if e := decodeStrictJSONDocument([]byte(raw), "schedules", &out); e == nil {
 			t.Errorf("accepted %s", raw)
+		}
+	}
+}
+
+func TestScheduleClientRejectsInconsistentUpcomingRuns(t *testing.T) {
+	next := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	enabled := store.Schedule{Enabled: true, NextRunAt: next}
+	taipei := time.FixedZone("Asia/Taipei", 8*60*60)
+	for _, test := range []struct {
+		name string
+		out  store.ScheduleResult
+		ok   bool
+	}{
+		{"enabled", store.ScheduleResult{Schedule: enabled, UpcomingRuns: []time.Time{next, next.AddDate(0, 0, 1)}}, true},
+		{"disabled none", store.ScheduleResult{UpcomingRuns: []time.Time{}}, true},
+		{"null", store.ScheduleResult{Schedule: enabled}, false},
+		{"disabled with runs", store.ScheduleResult{UpcomingRuns: []time.Time{next}}, false},
+		{"not next_run_at", store.ScheduleResult{Schedule: enabled, UpcomingRuns: []time.Time{next.Add(time.Hour)}}, false},
+		{"not increasing", store.ScheduleResult{Schedule: enabled, UpcomingRuns: []time.Time{next, next}}, false},
+		{"not utc", store.ScheduleResult{Schedule: enabled, UpcomingRuns: []time.Time{next.In(taipei)}}, false},
+		{"too many", store.ScheduleResult{Schedule: enabled, UpcomingRuns: []time.Time{next, next.Add(1), next.Add(2), next.Add(3), next.Add(4), next.Add(5)}}, false},
+	} {
+		if got := validScheduleUpcomingRuns(test.out); got != test.ok {
+			t.Errorf("%s: valid=%t want %t", test.name, got, test.ok)
 		}
 	}
 }
