@@ -354,9 +354,10 @@ POST /v1/operator/schedule-jobs/{id}/cancel
 ```
 
 `schedule_job_cancel` (`job_id`, `reason`, `idempotency_key`) cancels one
-scheduled job that is still `not_started` and was never claimed, for example a
-stale job left on an offline machine. It needs admin or an `operator-admin`
-token and is refused for a claimed or finished job.
+scheduled job that is still `not_started` and was never claimed. It needs admin
+or an `operator-admin` token and is refused for a claimed or finished job. The
+scheduler rejects such jobs by itself once they pass their claim deadline (one
+cron interval plus two minutes), so this is only for clearing one sooner.
 
 Use the registered route patterns literally in the allowlist; substitute IDs and
 operations in actual requests. Supply a normal audit reason such as

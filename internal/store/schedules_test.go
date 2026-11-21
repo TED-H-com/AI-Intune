@@ -778,10 +778,10 @@ func TestScheduleOverlapIgnoresDroppedTarget(t *testing.T) {
 	}
 }
 
-// A never-claimed job on a live target stops counting as overlap once it is
-// older than one cron interval, and its machine is left out of that run, so
-// one offline machine cannot stall the rest of the fleet.
-func TestScheduleOverlapIgnoresStaleNotStartedJob(t *testing.T) {
+// A never-claimed scheduled job is rejected once it passes its claim deadline
+// (one interval plus grace), with an audit row, so one offline machine cannot
+// stall the rest of the fleet. Leased jobs and non-schedule jobs are untouched.
+func TestScheduleJobClaimDeadline(t *testing.T) {
 	s, r, a, now := scriptFixture(t)
 	offline := mustEnroll(t, s, "offline-node", now)
 	c := healthyCheckin(now)
@@ -817,6 +817,17 @@ func TestScheduleOverlapIgnoresStaleNotStartedJob(t *testing.T) {
 			stuck = id
 		}
 	}
+	// A job outside any schedule (e.g. a profile assignment) is never swept.
+	other := mustEnroll(t, s, "profile-node", now)
+	desiredID, revision, err := s.CreateDesiredState("machine", other, "maintenance", "proof", `{"kind":"noop"}`, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileJob, err := s.CreateJob(other, desiredID, revision, NewJob{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.DB().Exec(`UPDATE jobs SET created_at=? WHERE job_id=?`, fmtTime(now.Add(-48*time.Hour)), profileJob)
 	var created string
 	s.rdb.QueryRow(`SELECT created_at FROM jobs WHERE job_id=?`, stuck).Scan(&created)
 	createdAt, _ := time.Parse(time.RFC3339, created)
@@ -834,55 +845,62 @@ func TestScheduleOverlapIgnoresStaleNotStartedJob(t *testing.T) {
 		}
 		return o
 	}
-	// Unclaimed for one interval: the next slot is still overlap, as before.
-	if o := outcomeAt(createdAt.Add(5 * time.Minute).Truncate(time.Minute)); o != "skipped_overlap" {
-		t.Fatalf("one-interval job outcome %s", o)
+	state := func(id string) string {
+		j, _ := s.Job(id)
+		return string(j.State)
 	}
-	// A leased job never goes stale, however old.
+	// Unclaimed for one interval: still before its deadline, the next slot is overlap.
+	if o := outcomeAt(createdAt.Add(5 * time.Minute).Truncate(time.Minute)); o != "skipped_overlap" || state(stuck) != "not_started" {
+		t.Fatalf("one-interval job outcome %s state %s", o, state(stuck))
+	}
+	// A leased job never expires, however old.
 	s.DB().Exec(`UPDATE jobs SET lease_token='lease' WHERE job_id=?`, stuck)
-	if o := outcomeAt(createdAt.Add(10 * time.Minute).Truncate(time.Minute)); o != "skipped_overlap" {
-		t.Fatalf("leased job outcome %s", o)
+	if o := outcomeAt(createdAt.Add(10 * time.Minute).Truncate(time.Minute)); o != "skipped_overlap" || state(stuck) != "not_started" {
+		t.Fatalf("leased job outcome %s state %s", o, state(stuck))
 	}
 	s.DB().Exec(`UPDATE jobs SET lease_token=NULL WHERE job_id=?`, stuck)
-	// Older than one interval plus grace: the run goes ahead without the offline machine.
+	// Past the deadline: the job is rejected and the run goes ahead on both targets.
 	if o := outcomeAt(createdAt.Add(15 * time.Minute).Truncate(time.Minute)); o != "enqueued" {
-		var d string
-		s.rdb.QueryRow(`SELECT detail FROM audit_log WHERE subject=? ORDER BY rowid DESC LIMIT 1`, v.Name).Scan(&d)
-		t.Fatalf("stale job outcome %s (%s)", o, d)
+		t.Fatalf("expired job outcome %s", o)
 	}
-	after, _ := s.ScheduleGet(v.ID)
-	if len(after.LastJobIDs) != 1 {
-		t.Fatalf("want one new job, got %v", after.LastJobIDs)
+	if state(stuck) != "rejected" {
+		t.Fatalf("stuck job state %s", state(stuck))
 	}
-	if j, _ := s.Job(after.LastJobIDs[0]); j.MachineID != online {
-		t.Fatalf("new job on %s", j.MachineID)
+	if state(profileJob) != "not_started" {
+		t.Fatalf("profile job swept: %s", state(profileJob))
 	}
-	var notes int
-	s.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE subject=? AND detail LIKE 'left out 1 target(s)%'`, v.Name).Scan(&notes)
-	if notes != 1 {
-		t.Fatalf("left-out audit rows %d", notes)
+	if after, _ := s.ScheduleGet(v.ID); len(after.LastJobIDs) != 2 {
+		t.Fatalf("want two new jobs, got %v", after.LastJobIDs)
+	}
+	var n int
+	s.rdb.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action=? AND outcome='ok' AND machine_id=? AND reason=? AND detail LIKE ?`, string(AuditScheduleJobCancel), offline, ScheduleClaimDeadlineReason, "%"+stuck+"%").Scan(&n)
+	if n != 1 {
+		t.Fatalf("expiry audit rows %d", n)
 	}
 }
 
-// When every target holds a stale job the run is skipped as unavailable.
-func TestScheduleAllTargetsStaleIsUnavailable(t *testing.T) {
+// Jobs already stuck on a machine that was later dropped from the schedule
+// (and of a disabled schedule) are cleared on the first sweep.
+func TestScheduleJobClaimDeadlineClearsExistingStuckJobs(t *testing.T) {
 	s, v, _, _ := createTestSchedule(t)
 	if e := s.TickSchedules(v.NextRunAt); e != nil {
 		t.Fatal(e)
 	}
 	got, _ := s.ScheduleGet(v.ID)
+	job := got.LastJobIDs[0]
+	s.DB().Exec(`UPDATE schedules SET enabled=0,targets='[]' WHERE id=?`, v.ID)
 	var created string
-	s.rdb.QueryRow(`SELECT created_at FROM jobs WHERE job_id=?`, got.LastJobIDs[0]).Scan(&created)
+	s.rdb.QueryRow(`SELECT created_at FROM jobs WHERE job_id=?`, job).Scan(&created)
 	createdAt, _ := time.Parse(time.RFC3339, created)
-	slot := createdAt.Add(15 * time.Minute).Truncate(time.Minute)
-	s.DB().Exec(`UPDATE schedules SET next_run_at=? WHERE id=?`, fmtTime(slot), v.ID)
-	if e := s.TickSchedules(slot); e != nil {
+	if e := s.ExpireScheduleJobs(createdAt.Add(3 * 24 * time.Hour)); e != nil {
 		t.Fatal(e)
 	}
-	var o string
-	s.rdb.QueryRow(`SELECT outcome FROM schedule_slots WHERE schedule_id=? AND slot=?`, v.ID, fmtTime(slot)).Scan(&o)
-	if o != "skipped_unavailable" {
-		t.Fatalf("outcome %s", o)
+	if j, _ := s.Job(job); j.State != "rejected" || j.TerminalAt == nil {
+		t.Fatalf("stuck job not expired: %+v", j)
+	}
+	// A second sweep is a no-op.
+	if e := s.ExpireScheduleJobs(createdAt.Add(4 * 24 * time.Hour)); e != nil {
+		t.Fatal(e)
 	}
 }
 

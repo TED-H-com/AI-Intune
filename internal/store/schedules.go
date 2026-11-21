@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/teddashh/AI-Intune/internal/boundedtext"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"regexp"
@@ -379,6 +378,9 @@ func (s *Store) ResumeSchedules(now time.Time) error {
 	return tx.Commit()
 }
 func (s *Store) TickSchedules(now time.Time) error {
+	if e := s.ExpireScheduleJobs(now); e != nil {
+		return e
+	}
 	all, e := s.ScheduleList()
 	if e != nil {
 		return e
@@ -555,36 +557,15 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	// must still be a target of this schedule and must not be retired. A job
 	// left on a machine that was dropped from the schedule or retired is never
 	// claimed again, and counting it would skip every later slot forever.
-	//
-	// A job that was never claimed and is older than one cron interval is
-	// stale too: its machine has already missed the next run as well, and
-	// holding further slots for it only turns one offline machine into a
-	// fleet-wide gap.
+	// Unclaimed jobs past their claim deadline are already rejected by
+	// ExpireScheduleJobs, so they never reach this count.
 	var active int
-	staleBefore := fmtTime(scheduleStaleNotStartedCutoff(v, now))
-	err = tx.QueryRow(`SELECT COUNT(*) FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id JOIN machine_registry m ON m.machine_id=j.machine_id WHERE sj.schedule_id=? AND j.state NOT IN (?,?,?,?,?) AND m.retired_at IS NULL AND j.machine_id IN (SELECT value FROM json_each(?)) AND NOT (j.state=? AND j.lease_token IS NULL AND j.created_at<=?)`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, string(mustScriptJSON(v.Targets)), deploy.NotStarted, staleBefore).Scan(&active)
+	err = tx.QueryRow(`SELECT COUNT(*) FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id JOIN machine_registry m ON m.machine_id=j.machine_id WHERE sj.schedule_id=? AND j.state NOT IN (?,?,?,?,?) AND m.retired_at IS NULL AND j.machine_id IN (SELECT value FROM json_each(?))`, id, deploy.Succeeded, deploy.Failed, deploy.Rejected, deploy.LeaseExpired, deploy.ManualIntervention, string(mustScriptJSON(v.Targets))).Scan(&active)
 	if err != nil {
 		return
 	}
 	outcome := "enqueued"
-	// A target still holding a stale unclaimed job of this schedule would fail
-	// target validation (it has an active job) and skip the run for everyone.
-	// Leave that target out of this run instead; its old job stays visible
-	// and can be cancelled by an operator.
-	runTargets := v.Targets
-	staleTargets, err := scheduleStaleTargetsTx(tx, id, v.Targets, staleBefore)
-	if err != nil {
-		return
-	}
-	if len(staleTargets) > 0 {
-		runTargets = make([]string, 0, len(v.Targets))
-		for _, target := range v.Targets {
-			if !staleTargets[target] {
-				runTargets = append(runTargets, target)
-			}
-		}
-	}
-	req := ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: runTargets, TimeoutSeconds: entry.DefaultTimeout, Reason: "scheduled catalog run"}
+	req := ScriptRunRequest{ScriptID: v.ScriptID, ScriptSHA256: v.ScriptSHA256, Args: v.Args, Targets: v.Targets, TimeoutSeconds: entry.DefaultTimeout, Reason: "scheduled catalog run"}
 	if entry.ID == "disk-deep-report-v1" {
 		for _, target := range v.Targets {
 			available, e := deepAvailableTx(tx, target, now)
@@ -601,9 +582,6 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 	}
 	if active > 0 {
 		outcome = "skipped_overlap"
-	} else if len(req.Targets) == 0 {
-		outcome = "skipped_unavailable"
-		a.Detail = "every target still holds a stale unclaimed job"
 	} else if err = s.diskSafeGateTx(tx, req, entry); err != nil {
 		if manual {
 			return nil, err
@@ -660,13 +638,6 @@ func (s *Store) runSchedule(id string, now time.Time, manual bool, a AuditEntry,
 			if e = s.recordAuditTx(tx, row); e != nil {
 				return nil, e
 			}
-		}
-	}
-	if outcome == "enqueued" && len(staleTargets) > 0 {
-		note := a
-		note.Detail = fmt.Sprintf("left out %d target(s) still holding a stale unclaimed job: %s", len(staleTargets), strings.Join(sortedKeys(staleTargets), ","))
-		if err = s.recordAuditTx(tx, note); err != nil {
-			return
 		}
 	}
 	if outcome == "enqueued" && len(jobs) == 0 {
@@ -747,23 +718,52 @@ func (s *Store) recordScheduleSkipTx(tx dbTx, v Schedule, now time.Time, outcome
 // scheduled job.
 const OperatorCodeScheduleJobNotFound = "SCHEDULE_JOB_NOT_FOUND"
 
-// scheduleStaleTargetsTx returns the targets that hold an unclaimed
-// not_started job of this schedule created at or before staleBefore.
-func scheduleStaleTargetsTx(tx dbTx, scheduleID string, targets []string, staleBefore string) (map[string]bool, error) {
-	rows, err := tx.Query(`SELECT DISTINCT j.machine_id FROM schedule_jobs sj JOIN jobs j ON j.job_id=sj.job_id WHERE sj.schedule_id=? AND j.state=? AND j.lease_token IS NULL AND j.created_at<=? AND j.machine_id IN (SELECT value FROM json_each(?))`, scheduleID, deploy.NotStarted, staleBefore, string(mustScriptJSON(targets)))
+// ScheduleClaimDeadlineReason is the audit reason of an expired scheduled job.
+const ScheduleClaimDeadlineReason = "claim_deadline_expired"
+
+// ExpireScheduleJobs rejects scheduled jobs that no agent claimed before their
+// claim deadline (see scheduleStaleNotStartedCutoff). By then the machine has
+// missed the next slot too, so the job could only hold later slots hostage.
+// Claimed or leased jobs are never touched: the agent may be executing them.
+// Only schedule_jobs rows are swept; profile-assignment jobs are not.
+func (s *Store) ExpireScheduleJobs(now time.Time) error {
+	rows, err := s.rdb.Query(`SELECT j.job_id,j.machine_id,j.created_at,sc.name,sc.cron,sc.tz FROM jobs j JOIN schedule_jobs sj ON sj.job_id=j.job_id JOIN schedules sc ON sc.id=sj.schedule_id WHERE j.state=? AND j.lease_token IS NULL`, deploy.NotStarted)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rows.Close()
-	out := map[string]bool{}
+	var due [][3]string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		var job, machine, created, name, cron, tz string
+		if err = rows.Scan(&job, &machine, &created, &name, &cron, &tz); err != nil {
+			rows.Close()
+			return err
 		}
-		out[id] = true
+		if cutoff := scheduleStaleNotStartedCutoff(Schedule{Cron: cron, TZ: tz}, now); !cutoff.IsZero() && !parseTime(created).After(cutoff) {
+			due = append(due, [3]string{job, machine, name})
+		}
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err = rows.Err(); err != nil || len(due) == 0 {
+		return err
+	}
+	tx, err := s.beginWrite(context.Background(), "schedule_job_expire")
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, d := range due {
+		res, e := tx.Exec(`UPDATE jobs SET state=?,terminal_at=? WHERE job_id=? AND state=? AND lease_token IS NULL`, deploy.Rejected, fmtTime(now), d[0], deploy.NotStarted)
+		if e != nil {
+			return e
+		}
+		if n, e := res.RowsAffected(); e != nil || n != 1 {
+			continue
+		}
+		if e = s.recordAuditTx(tx, AuditEntry{At: now, Action: AuditScheduleJobCancel, Subject: d[2], AuthSubject: "scheduler:" + d[2], MachineID: d[1], Reason: ScheduleClaimDeadlineReason, OK: true, Detail: "expired unclaimed scheduled job " + d[0] + "; reason=" + ScheduleClaimDeadlineReason}); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
 }
 
 // scheduleStaleGrace absorbs scheduler tick jitter: a slot runs up to a minute
@@ -773,10 +773,10 @@ func scheduleStaleTargetsTx(tx dbTx, scheduleID string, targets []string, staleB
 const scheduleStaleGrace = 2 * time.Minute
 
 // scheduleStaleNotStartedCutoff returns the creation time at or before which a
-// never-claimed job of v no longer counts as overlap: more than one cron
+// never-claimed job of v is past its claim deadline: more than one cron
 // interval (measured from the upcoming slot) plus scheduleStaleGrace before
 // now. The job still blocks the slot right after its own, as overlap always
-// did, and stops blocking from the slot after that.
+// did, and expires before the slot after that.
 func scheduleStaleNotStartedCutoff(v Schedule, now time.Time) time.Time {
 	c, err := schedulecron.Parse(v.Cron)
 	if err != nil {
