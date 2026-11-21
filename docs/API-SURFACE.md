@@ -605,10 +605,12 @@ cancels one scheduled job only while it is `not_started` and has never been
 claimed (no lease); the job becomes `rejected` with an audit row
 (`schedule-job-cancel`). It returns `{"job_id","schedule_id","machine_id","state","replayed"}`;
 an unknown job is `404 SCHEDULE_JOB_NOT_FOUND`, a claimed or finished job is
-`412 PRECONDITION_FAILED`. The scheduler also stops counting such a job as an
-overlap once it is older than one cron interval of its schedule (plus a
-two-minute grace); that target is left out of the run, recorded in audit, and
-the other targets still run.
+`412 PRECONDITION_FAILED`. Every scheduled job also has a claim deadline: one
+cron interval of its schedule plus a two-minute grace after creation. The
+scheduler rejects an unclaimed `not_started` job past that deadline on its next
+tick, with a `schedule-job-cancel` audit row whose reason is
+`claim_deadline_expired`, so it blocks at most the slot right after its own.
+Manual cancel stays available for doing that sooner.
 `POST /v1/operator/schedules/{id}/run-now` requires `Idempotency-Key`, accepts `{}`,
 and returns `{"job_ids":[...],"replayed":false}` (an empty array when no jobs are enqueued). Replays return the saved job IDs,
 `replayed:true`, and `Idempotency-Replayed: true`, without enqueueing. Manual
