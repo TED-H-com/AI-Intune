@@ -540,3 +540,33 @@ func TestDeploymentDetailCLIStatesIndependentEvidenceAsEvidence(t *testing.T) {
 		t.Errorf("unopened target line carries a verdict: %q", line)
 	}
 }
+
+func TestDeploymentPreviewTextShowsEachTargetsCurrentVersion(t *testing.T) {
+	current := "2026.9.1"
+	var out bytes.Buffer
+	if err := writeDeploymentPreview(&out, operator.DeploymentCreatePreviewResult{
+		Artifact: operator.DeploymentArtifactPreview{Version: "2026.9.3"},
+		Targets: []operator.DeploymentPlanTargetPreview{
+			{MachineID: "machine-a", DisplayName: "alpha", BatchNo: 1, Reachable: true, CurrentVersion: &current},
+			{MachineID: "machine-b", DisplayName: "beta", BatchNo: 2, Reachable: true},
+		},
+	}, false, "Hub"); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out.String(), "\n")
+	var header, alpha, beta string
+	for _, line := range lines {
+		switch fields := strings.Fields(line); {
+		case len(fields) > 0 && fields[0] == "MACHINE":
+			header = strings.Join(fields, " ")
+		case len(fields) > 0 && fields[0] == `"alpha"`:
+			alpha = strings.Join(fields, " ")
+		case len(fields) > 0 && fields[0] == `"beta"`:
+			beta = strings.Join(fields, " ")
+		}
+	}
+	if header != "MACHINE PLAN CURRENT NODE REACHABLE" || alpha != `"alpha" "batch 1" "2026.9.1" "unknown" true` ||
+		beta != `"beta" "batch 2" "unknown" "unknown" true` {
+		t.Fatalf("preview text:\n%s", out.String())
+	}
+}

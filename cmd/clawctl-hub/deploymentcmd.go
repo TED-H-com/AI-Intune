@@ -546,7 +546,7 @@ func writeDeploymentPreview(out io.Writer, result operator.DeploymentCreatePrevi
 		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "MACHINE\tPLAN\tNODE\tREACHABLE"); err != nil {
+	if _, err := fmt.Fprintln(tw, "MACHINE\tPLAN\tCURRENT\tNODE\tREACHABLE"); err != nil {
 		return err
 	}
 	for _, target := range result.Targets {
@@ -556,12 +556,15 @@ func writeDeploymentPreview(out io.Writer, result operator.DeploymentCreatePrevi
 		} else {
 			plan = fmt.Sprintf("batch %d", target.BatchNo)
 		}
-		node := "unknown"
+		node, current := "unknown", "unknown"
 		if target.NodeVersion != nil {
 			node = *target.NodeVersion
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%t\n", terminalSafe(target.DisplayName),
-			terminalSafe(plan), terminalSafe(node), target.Reachable); err != nil {
+		if target.CurrentVersion != nil {
+			current = *target.CurrentVersion
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%t\n", terminalSafe(target.DisplayName),
+			terminalSafe(plan), terminalSafe(current), terminalSafe(node), target.Reachable); err != nil {
 			return err
 		}
 	}

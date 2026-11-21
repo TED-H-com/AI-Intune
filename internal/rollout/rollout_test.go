@@ -38,7 +38,7 @@ func TestPlanSeparatesExclusionsAndBatches(t *testing.T) {
 	members := []MachineFacts{
 		{MachineID: "u", DisplayName: "unreachable", Reachable: false, NodeVersion: "24.15.0"},
 		{MachineID: "b", DisplayName: "beta", Reachable: true, NodeVersion: "22.22.2"},
-		{MachineID: "a", DisplayName: "alpha", Reachable: true, NodeVersion: "24.15.0"},
+		{MachineID: "a", DisplayName: "alpha", Reachable: true, NodeVersion: "24.15.0", CurrentVersion: "2026.9.1"},
 		{MachineID: "x", DisplayName: "conflict", Reachable: true, NodeVersion: "24.15.0", Conflict: true},
 		{MachineID: "n", DisplayName: "node-unknown", Reachable: true},
 	}
@@ -50,7 +50,7 @@ func TestPlanSeparatesExclusionsAndBatches(t *testing.T) {
 		t.Fatalf("預覽句子不符：%q", got.Summary())
 	}
 	want := []Target{
-		{MachineID: "a", DisplayName: "alpha", NodeVersion: "24.15.0", Reachable: true, BatchNo: 1},
+		{MachineID: "a", DisplayName: "alpha", NodeVersion: "24.15.0", CurrentVersion: "2026.9.1", Reachable: true, BatchNo: 1},
 		{MachineID: "b", DisplayName: "beta", NodeVersion: "22.22.2", Reachable: true, ExcludedReason: ExcludedMissingPackage},
 		{MachineID: "x", DisplayName: "conflict", NodeVersion: "24.15.0", Reachable: true, ExcludedReason: ExcludedConflict},
 		{MachineID: "n", DisplayName: "node-unknown", Reachable: true, ExcludedReason: ExcludedUnknownNode},

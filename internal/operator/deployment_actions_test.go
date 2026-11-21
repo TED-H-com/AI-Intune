@@ -206,6 +206,51 @@ func TestApplyDeploymentCreateStaleAndConfirmationRejectionsReplay(t *testing.T)
 	}
 }
 
+// A machine whose running version changes after the preview no longer matches
+// what the operator reviewed, so the create must be previewed again.
+func TestApplyDeploymentCreateRefusesWhenATargetVersionChangedAfterPreview(t *testing.T) {
+	st := newDeploymentOperatorStore(t)
+	now := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Second)
+	if err := prepareDeploymentObservationPolicy(st, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	observeDeploymentMachine(t, st, "machine-a", "alpha", "canary", "24.15.0", "2026.9.1", now)
+	observeDeploymentMachine(t, st, "machine-b", "beta", "canary", "24.15.0", "", now)
+	artifactDir := t.TempDir()
+	record := writeDeploymentArtifact(t, artifactDir, deploymentTestVersion, ">=24.15.0 <25", now.Add(-time.Hour))
+	svc := NewWithArtifacts(st, artifactDir)
+	plan := DeploymentCreatePreviewRequest{
+		Channel: "canary", Version: deploymentTestVersion, ArtifactSHA256: record.SHA256,
+		BatchSize: 1, ExecutionTimeoutSeconds: 600,
+	}
+	preview, err := svc.PreviewDeploymentCreate(plan, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Targets) != 2 || preview.Targets[0].CurrentVersion == nil ||
+		*preview.Targets[0].CurrentVersion != "2026.9.1" || preview.Targets[1].CurrentVersion != nil {
+		t.Fatalf("targets=%+v", preview.Targets)
+	}
+	observeDeploymentMachine(t, st, "machine-a", "alpha", "canary", "24.15.0", "2026.9.3", now.Add(time.Second))
+	request := DeploymentCreateApplyRequest{
+		DeploymentCreatePreviewRequest: plan, PreviewDigest: preview.PreviewDigest,
+		ConfirmChannel: "canary", ConfirmVersion: deploymentTestVersion,
+		Reason: "target changed after preview", IdempotencyKey: "deployment-create-target-changed",
+		Actor: verifiedDeploymentActor(),
+	}
+	_, err = svc.ApplyDeploymentCreate(request)
+	assertDeploymentOperatorCode(t, err, store.OperatorCodeDeploymentPreviewStale, false)
+
+	fresh, err := svc.PreviewDeploymentCreate(plan, time.Now().UTC())
+	if err != nil || fresh.PreviewDigest == preview.PreviewDigest || *fresh.Targets[0].CurrentVersion != "2026.9.3" {
+		t.Fatalf("fresh preview=%+v err=%v", fresh, err)
+	}
+	request.PreviewDigest, request.IdempotencyKey = fresh.PreviewDigest, "deployment-create-after-repreview"
+	if _, err := svc.ApplyDeploymentCreate(request); err != nil {
+		t.Fatalf("apply after a fresh preview: %v", err)
+	}
+}
+
 func TestDeploymentContinuePreviewApplyAndReplayDoNotReopenBatch(t *testing.T) {
 	svc, st, artifactDir, record, parent, jobs := deploymentActionFixture(t, 2, 1)
 	markDeploymentJobTerminal(t, st, jobs[0].JobID, deploy.Succeeded)

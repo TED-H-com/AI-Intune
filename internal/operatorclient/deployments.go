@@ -596,6 +596,12 @@ func validateDeploymentCreatePreviewResult(result operator.DeploymentCreatePrevi
 				return errors.New("operator client: invalid preview node version")
 			}
 		}
+		if target.CurrentVersion != nil {
+			if *target.CurrentVersion == "" ||
+				validateDeploymentClientText("preview current_version", *target.CurrentVersion, 128, true) != nil {
+				return errors.New("operator client: invalid preview current version")
+			}
+		}
 		if target.ExcludedReason != nil {
 			if target.BatchNo != 0 {
 				return errors.New("operator client: excluded preview target has a batch")

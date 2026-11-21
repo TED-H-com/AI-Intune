@@ -659,3 +659,27 @@ func TestDeploymentApplyFormFailsClosedWithoutPersistingRawBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestDeploymentCreateReviewShowsCurrentToTargetVersion(t *testing.T) {
+	s, _ := newServer(t)
+	current := "2026.9.1"
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/deployments?view=new", nil)
+	s.render(rec, req, "deployment_create_review.html", page{
+		Title: "確認建立 deployment", DeploymentCreateReview: &deploymentCreateReview{
+			Preview: operator.DeploymentCreatePreviewResult{
+				Artifact: operator.DeploymentArtifactPreview{Version: "2026.9.3"},
+				Targets: []operator.DeploymentPlanTargetPreview{
+					{MachineID: "machine-a", DisplayName: "alpha", BatchNo: 1, CurrentVersion: &current},
+					{MachineID: "machine-b", DisplayName: "beta", BatchNo: 2},
+				},
+			},
+		},
+	})
+	body := rec.Body.String()
+	for _, want := range []string{"<th>目前版本</th>", "2026.9.1 → 2026.9.3", `<td class="mono">未知</td>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("create review 缺少 %q: %s", want, body)
+		}
+	}
+}

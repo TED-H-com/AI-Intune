@@ -110,7 +110,7 @@ func TestProjectDeploymentPromotionKeepsCanaryNotSucceededOutOfThePassedCount(t 
 // action preview that may finish a stable deployment, and Updates. Old strict
 // clients reject unknown fields, so all three schema versions move together.
 func TestIndependentPromotionFieldsComeWithNewSchemaVersions(t *testing.T) {
-	if DeploymentReadSchemaVersion != 3 || DeploymentPreviewSchemaVersion != 4 ||
+	if DeploymentReadSchemaVersion != 3 || DeploymentPreviewSchemaVersion != 5 ||
 		DeploymentActionSchemaVersion != 4 || UpdateReadSchemaVersion != 5 {
 		t.Fatalf("schema versions read=%d preview=%d action=%d updates=%d",
 			DeploymentReadSchemaVersion, DeploymentPreviewSchemaVersion,
