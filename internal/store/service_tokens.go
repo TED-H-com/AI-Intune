@@ -19,6 +19,10 @@ import (
 )
 
 var ErrServiceToken = errors.New("service token rejected")
+
+// ErrServiceRouteNotAllowed means the token is valid (scope, expiry, source)
+// but its route allowlist does not include this route.
+var ErrServiceRouteNotAllowed = errors.New("service token route not allowlisted")
 var serviceName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type ServiceToken struct {
@@ -227,16 +231,9 @@ func (s *Store) AuthenticateServiceToken(secret, route, peer string, required st
 			return t, ErrServiceToken
 		}
 	}
-	if len(t.Allowlist) > 0 && route != "GET /v1/operator/service-tokens/self" && route != "POST /v1/operator/service-tokens/rotate" {
-		found := false
-		for _, v := range t.Allowlist {
-			if v == route {
-				found = true
-			}
-		}
-		if !found {
-			return t, ErrServiceToken
-		}
+	routeAllowed := route == "GET /v1/operator/service-tokens/self" || route == "POST /v1/operator/service-tokens/rotate"
+	for _, v := range t.Allowlist {
+		routeAllowed = routeAllowed || v == route
 	}
 	if len(t.SourceCIDRs) > 0 {
 		ip, err := netip.ParseAddr(peer)
@@ -253,6 +250,9 @@ func (s *Store) AuthenticateServiceToken(secret, route, peer string, required st
 		if !found {
 			return t, ErrServiceToken
 		}
+	}
+	if !routeAllowed {
+		return t, ErrServiceRouteNotAllowed
 	}
 	res, err := (boundExec{s: s, name: "use_service_token"}).Exec(`UPDATE service_tokens SET last_used_at=? WHERE id=? AND revoked_at IS NULL AND (overlap_deadline IS NULL OR julianday(overlap_deadline)>julianday(?)) AND scope=? AND julianday(expires_at)>julianday(?)`, s.now().UTC().Format(time.RFC3339Nano), id, s.now().UTC().Format(time.RFC3339Nano), t.Scope, s.now().UTC().Format(time.RFC3339Nano))
 	if err != nil {

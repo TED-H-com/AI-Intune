@@ -57,9 +57,12 @@ func (e *CallError) Error() string {
 
 // Service calls Hub. A nil Hub fails closed on every call.
 // Version is the build version reported by MCP initialize. Empty means dev.
+// Allowlist, when non-nil, is the service token's route allowlist and limits
+// tools/list to the tools that token can call.
 type Service struct {
-	Hub     Hub
-	Version string
+	Hub       Hub
+	Version   string
+	Allowlist []string
 }
 
 func (s *Service) Call(ctx context.Context, name string, raw json.RawMessage) (any, error) {

@@ -843,13 +843,17 @@ Schedule list/get accepts explicitly allowlisted `view`, `operate`, and
 `operator-admin` tokens. `view` and `operate` tokens cannot manage schedules.
 Catalog approval, revision, preview digest, idempotency and rate-limit checks
 still apply to delegated actions.
+A valid token (scope, expiry, revocation and source CIDR all pass) calling an
+eligible route that is not in its allowlist gets 403 `ROUTE_NOT_ALLOWLISTED`
+and does not consume the failed-attempt rate-limit budget. Unknown, revoked or
+expired tokens and source-CIDR mismatches keep the generic 401 `UNAUTHENTICATED`.
 GET self remains service-token-only. POST rotate is retained as a compatibility route but all service-token scopes are forbidden from using it.
 
 ### Service token self and rotation
 
 | Method | Route | Authentication | Response |
 | --- | --- | --- | --- |
-| GET | `/v1/operator/service-tokens/self` | Current service token only, CIDRs enforced | `id/name/scope/expires_at/max_expiry` (null max means unlimited) |
+| GET | `/v1/operator/service-tokens/self` | Current service token only, CIDRs enforced | `id/name/scope/expires_at/max_expiry/allowlist` (null max means unlimited) |
 | POST | `/v1/operator/service-tokens/rotate` | Forbidden for all service scopes | 403 `SERVICE_TOKEN_ACTION_FORBIDDEN` |
 
 GET self needs no allowlist entry. POST rotate is a compatibility route and

@@ -104,7 +104,7 @@ func handleMCP(ctx context.Context, svc *Service, payload []byte) (mcpResponse, 
 	case "ping":
 		return mcpResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}, true
 	case "tools/list":
-		return mcpResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": Tools()}}, true
+		return mcpResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": svc.tools()}}, true
 	case "tools/call":
 		return callTool(ctx, svc, req), true
 	default:
@@ -231,4 +231,11 @@ func readMCPMessage(r *bufio.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return body, nil
+}
+
+func (s *Service) tools() []Tool {
+	if s == nil {
+		return Tools()
+	}
+	return ToolsFor(s.Allowlist)
 }

@@ -106,6 +106,12 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 			fmt.Fprintln(errOut, "mcp does not take arguments")
 			return errUsage
 		}
+		if tokenFile != "" {
+			// Best effort: on failure tools/list stays complete and Hub still enforces.
+			if self, selfErr := client.ServiceTokenSelf(context.Background()); selfErr == nil && self.Allowlist != nil {
+				svc.Allowlist = self.Allowlist
+			}
+		}
 		if err := operatoragent.Serve(context.Background(), in, out, svc); err != nil {
 			fmt.Fprintln(errOut, err.Error())
 			return err
