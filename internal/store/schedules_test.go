@@ -995,3 +995,52 @@ func TestScheduleJobCancelRefusesClaimedJob(t *testing.T) {
 		t.Fatal("leased not_started job cancelled")
 	}
 }
+
+// A cron that fires every five minutes of one hour and one that fires once at
+// the top of that hour share the same next run; only the following runs tell
+// them apart.
+func TestSchedulePreviewListsUpcomingRunsInTheScheduleTimezone(t *testing.T) {
+	s, r, a, _ := scriptFixture(t)
+	at := time.Date(2026, 11, 20, 23, 30, 0, 0, time.UTC) // 2026-11-21 07:30 Asia/Taipei, Saturday
+	s.nowFn = func() time.Time { return at }
+	req := ScheduleRequest{Name: "morning-check", ScriptID: r.ScriptID, ScriptSHA256: r.ScriptSHA256, Args: r.Args,
+		Targets: r.Targets, Cron: "*/5 8 * * *", TZ: "Asia/Taipei", Enabled: true, Reason: r.Reason}
+	everyFive, err := s.ScheduleManage(req, "upsert", false, "", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	want := []time.Time{first, first.Add(5 * time.Minute), first.Add(10 * time.Minute), first.Add(15 * time.Minute), first.Add(20 * time.Minute)}
+	if fmt.Sprint(everyFive.UpcomingRuns) != fmt.Sprint(want) || !everyFive.Schedule.NextRunAt.Equal(first) {
+		t.Fatalf("every five minutes: next=%s runs=%v", everyFive.Schedule.NextRunAt, everyFive.UpcomingRuns)
+	}
+
+	req.Cron = "0 8 * * 1-5"
+	weekdays, err := s.ScheduleManage(req, "upsert", false, "", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monday := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	want = []time.Time{monday, monday.AddDate(0, 0, 1), monday.AddDate(0, 0, 2), monday.AddDate(0, 0, 3), monday.AddDate(0, 0, 4)}
+	if fmt.Sprint(weekdays.UpcomingRuns) != fmt.Sprint(want) || !weekdays.Schedule.NextRunAt.Equal(monday) {
+		t.Fatalf("weekdays: next=%s runs=%v", weekdays.Schedule.NextRunAt, weekdays.UpcomingRuns)
+	}
+
+	req.PreviewDigest = weekdays.PreviewDigest
+	applied, err := s.ScheduleManage(req, "upsert", true, "upcoming-apply", a)
+	if err != nil || fmt.Sprint(applied.UpcomingRuns) != fmt.Sprint(want) {
+		t.Fatalf("apply runs=%v err=%v", applied.UpcomingRuns, err)
+	}
+	if _, err = s.DB().Exec(`UPDATE operator_idempotency SET response_json=json_remove(response_json,'$.upcoming_runs') WHERE idempotency_key=?`, "upcoming-apply"); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.ScheduleManage(req, "upsert", true, "upcoming-apply", a)
+	if err != nil || !legacy.Replayed || legacy.UpcomingRuns == nil || len(legacy.UpcomingRuns) != 0 {
+		t.Fatalf("legacy receipt replay runs=%v replayed=%t err=%v", legacy.UpcomingRuns, legacy.Replayed, err)
+	}
+	disable := ScheduleRequest{ID: applied.Schedule.ID, ExpectedRevision: applied.Schedule.Revision, Enabled: false, Reason: "pause"}
+	disabled, err := s.ScheduleManage(disable, "set-enabled", false, "", a)
+	if err != nil || disabled.UpcomingRuns == nil || len(disabled.UpcomingRuns) != 0 {
+		t.Fatalf("disabled runs=%v err=%v", disabled.UpcomingRuns, err)
+	}
+}

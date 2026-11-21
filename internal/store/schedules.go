@@ -65,9 +65,15 @@ type ScheduleRequest struct {
 type ScheduleResult struct {
 	Schedule      Schedule `json:"schedule"`
 	PreviewDigest string   `json:"preview_digest"`
-	JobIDs        []string `json:"job_ids,omitempty"`
-	Replayed      bool     `json:"replayed"`
+	// UpcomingRuns are the next ScheduleUpcomingRuns slots, in UTC, computed at
+	// the Hub evaluation time. Empty when the schedule is disabled.
+	UpcomingRuns []time.Time `json:"upcoming_runs"`
+	JobIDs       []string    `json:"job_ids,omitempty"`
+	Replayed     bool        `json:"replayed"`
 }
+
+// ScheduleUpcomingRuns is how many future slots a schedule preview lists.
+const ScheduleUpcomingRuns = 5
 
 const scheduleColumns = `id,name,script_id,script_sha256,args,targets,cron,enabled,catch_up,created_by,created_at,updated_at,revision,last_run_at,last_job_ids,next_run_at,paused_reason,execution_mode,tz`
 
@@ -164,6 +170,9 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 			}
 			if err = json.Unmarshal([]byte(response), &out); err != nil {
 				return
+			}
+			if out.UpcomingRuns == nil {
+				out.UpcomingRuns = []time.Time{} // receipt recorded before upcoming runs existed
 			}
 			if entry, ok := scriptcatalog.Lookup(out.Schedule.ScriptID); !ok {
 				return out, scriptBad("unknown script")
@@ -302,13 +311,17 @@ func (s *Store) ScheduleManage(req ScheduleRequest, operation string, apply bool
 	if v.LastJobIDs == nil {
 		v.LastJobIDs = []string{}
 	}
+	cron, cronErr := schedulecron.Parse(v.Cron)
+	if cronErr != nil {
+		return out, scriptBad(cronErr.Error())
+	}
+	v.NextRunAt = scheduleNext(cron, a.At, v.TZ)
+	out.UpcomingRuns = scheduleUpcoming(cron, a.At, v.TZ, v.Enabled)
 	out.Schedule = v
 	if apply {
 		if req.PreviewDigest != out.PreviewDigest {
 			return out, scriptBad("preview digest mismatch")
 		}
-		cron, _ := schedulecron.Parse(v.Cron)
-		v.NextRunAt = scheduleNext(cron, a.At, v.TZ)
 		v.UpdatedAt = a.At
 		v.Revision++
 		if v.ID == "" {
@@ -788,6 +801,19 @@ func scheduleStaleNotStartedCutoff(v Schedule, now time.Time) time.Time {
 		return time.Time{}
 	}
 	return now.Add(-interval - scheduleStaleGrace)
+}
+
+// scheduleUpcoming lists the next ScheduleUpcomingRuns slots after the given
+// time. A disabled schedule has none.
+func scheduleUpcoming(c *schedulecron.Cron, after time.Time, tz string, enabled bool) []time.Time {
+	runs := make([]time.Time, 0, ScheduleUpcomingRuns)
+	for next := after; enabled && len(runs) < ScheduleUpcomingRuns; {
+		if next = scheduleNext(c, next, tz); next.IsZero() {
+			break
+		}
+		runs = append(runs, next)
+	}
+	return runs
 }
 
 func scheduleNext(c *schedulecron.Cron, after time.Time, tz string) time.Time {

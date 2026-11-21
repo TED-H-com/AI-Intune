@@ -6,6 +6,7 @@ import (
 	"github.com/teddashh/AI-Intune/internal/store"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 func (c *Client) ScheduleRead(ctx context.Context, id string) (any, error) {
@@ -68,6 +69,9 @@ func (c *Client) ScheduleManage(ctx context.Context, body store.ScheduleRequest,
 	if e == nil && (!validSHA256Digest(out.PreviewDigest) || out.Replayed != replayed || (apply && out.PreviewDigest != body.PreviewDigest)) {
 		e = errors.New("schedule receipt mismatch")
 	}
+	if e == nil && !validScheduleUpcomingRuns(out) {
+		e = errors.New("schedule upcoming runs mismatch")
+	}
 	return out, e
 }
 func (c *Client) ScheduleJobCancel(ctx context.Context, jobID, reason, key string) (any, error) {
@@ -119,4 +123,21 @@ func (c *Client) ScheduleRunNow(ctx context.Context, id, key string) (any, error
 		e = errors.New("schedule replay receipt mismatch")
 	}
 	return out, e
+}
+
+// validScheduleUpcomingRuns accepts runs only when they are UTC, strictly
+// increasing, bounded, and start at next_run_at. A disabled schedule lists
+// none. An empty list is also what a receipt recorded before this field
+// replays as.
+func validScheduleUpcomingRuns(out store.ScheduleResult) bool {
+	runs := out.UpcomingRuns
+	if runs == nil || len(runs) > store.ScheduleUpcomingRuns || (!out.Schedule.Enabled && len(runs) != 0) {
+		return false
+	}
+	for i, run := range runs {
+		if run.IsZero() || run.Location() != time.UTC || (i > 0 && !run.After(runs[i-1])) {
+			return false
+		}
+	}
+	return len(runs) == 0 || runs[0].Equal(out.Schedule.NextRunAt)
 }

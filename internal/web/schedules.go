@@ -14,7 +14,6 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/operator"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
-	"github.com/teddashh/AI-Intune/internal/schedulecron"
 	"github.com/teddashh/AI-Intune/internal/scriptcatalog"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -342,11 +341,11 @@ func (s *Server) schedulePreview(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(req)
 	canonical, _ := json.MarshalIndent(out.Schedule, "", "  ")
 	v := &schedulePage{Confirm: true, Body: string(raw), Canonical: string(canonical), Operation: op, Digest: out.PreviewDigest, Key: key, Edit: req}
-	cron, _ := schedulecron.Parse(out.Schedule.Cron)
-	loc, _ := time.LoadLocation(out.Schedule.TZ)
-	next := time.Now().UTC()
-	for i := 0; i < 3; i++ {
-		next = cron.NextIn(next, loc)
+	loc, err := time.LoadLocation(out.Schedule.TZ)
+	if err != nil {
+		loc = time.UTC
+	}
+	for _, next := range out.UpcomingRuns {
 		v.Times = append(v.Times, next.In(loc).Format("2006-01-02 15:04 MST")+" · "+next.Format(time.RFC3339))
 	}
 	s.scheduleRender(w, r, "schedule_preview.html", v)

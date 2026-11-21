@@ -598,7 +598,9 @@ Both require view.
 `reason`; upsert includes `name`, `script_id`, `script_sha256`, `args`, explicit
 `targets`, `cron`, and `enabled`. `catch_up` must be false.
 Preview and apply return a `ScheduleResult` object with `schedule`,
-`preview_digest`, and `replayed`.
+`preview_digest`, `replayed`, and `upcoming_runs`: the next five run times in UTC,
+computed in the schedule's `tz`, starting at `schedule.next_run_at`. A disabled
+schedule returns `[]`. A replayed apply returns the runs recorded with the receipt.
 `POST /v1/operator/schedule-jobs/{id}/cancel` requires admin (or an allowlisted
 `operator-admin` service token), `Idempotency-Key`, and `{"reason":"..."}`. It
 cancels one scheduled job only while it is `not_started` and has never been
