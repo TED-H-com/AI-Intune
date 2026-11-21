@@ -111,7 +111,7 @@ func (s *Store) scheduledTarget(v Schedule, machine string, due, since, now time
 				if result.Reason == "" {
 					switch jobState {
 					case deploy.Rejected:
-						result.Reason = "The machine rejected the check."
+						result.Reason = "The machine rejected the check or never picked it up."
 					case deploy.LeaseExpired:
 						result.Reason = "The check did not finish before its time limit."
 					default:
