@@ -53,6 +53,7 @@ type deploymentActionEligibility struct {
 
 type deploymentPage struct {
 	Summary          operator.DeploymentSummary
+	PreviousRelease  *operator.DeploymentPreviousRelease
 	Version          string
 	Status           string
 	JobCounts        []deploymentJobCount
@@ -269,7 +270,7 @@ func (s *Server) deployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dp := &deploymentPage{
-		Summary: detail.Item, Version: deploymentMaterialVersion(detail.Item.Material),
+		Summary: detail.Item, PreviousRelease: detail.PreviousRelease, Version: deploymentMaterialVersion(detail.Item.Material),
 		Status:    deploymentStatus(detail.Item),
 		JobCounts: deploymentSafeJobCounts(detail.Item.DeploymentID, detail.Item.JobStateCounts),
 		JobsURL:   deploymentJobsURL(detail.Item.DeploymentID), RestartCount: hubRestartCount(events),

@@ -110,7 +110,7 @@ func TestProjectDeploymentPromotionKeepsCanaryNotSucceededOutOfThePassedCount(t 
 // action preview that may finish a stable deployment, and Updates. Old strict
 // clients reject unknown fields, so all three schema versions move together.
 func TestIndependentPromotionFieldsComeWithNewSchemaVersions(t *testing.T) {
-	if DeploymentReadSchemaVersion != 3 || DeploymentPreviewSchemaVersion != 5 ||
+	if DeploymentReadSchemaVersion != 4 || DeploymentPreviewSchemaVersion != 5 ||
 		DeploymentActionSchemaVersion != 4 || UpdateReadSchemaVersion != 5 {
 		t.Fatalf("schema versions read=%d preview=%d action=%d updates=%d",
 			DeploymentReadSchemaVersion, DeploymentPreviewSchemaVersion,
@@ -291,9 +291,13 @@ func TestDeploymentActionEligibilityCountsOnlyTerminalFailuresForRetry(t *testin
 		{MachineID: "failed", JobID: "failed-job", JobState: deploy.Failed, TerminalAt: &terminal, StuckKind: "terminal_failure"},
 		{MachineID: "silent", JobID: "silent-job", JobState: deploy.Running, StuckKind: "no_event"},
 	}}
+	views, err := st.ListDeployments(now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	actions, err := New(st).deploymentActionEligibility(view, DeploymentMaterialSummary{
 		Status: DeploymentMaterialRecorded, Version: &version, ArtifactDigest: &artifactDigest,
-	}, now)
+	}, views, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,9 +333,13 @@ func TestDeploymentActionEligibilityBlocksExhaustedControlRevision(t *testing.T)
 		OpenedBatch: 2, TotalBatches: 3,
 	}
 	version, digest := "2026.9.2", "sha256:"+strings.Repeat("a", 64)
+	views, err := st.ListDeployments(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
 	actions, err := New(st).deploymentActionEligibility(view, DeploymentMaterialSummary{
 		Status: DeploymentMaterialRecorded, Version: &version, ArtifactDigest: &digest,
-	}, time.Now().UTC())
+	}, views, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}

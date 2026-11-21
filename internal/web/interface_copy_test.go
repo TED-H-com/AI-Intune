@@ -17,6 +17,7 @@ import (
 )
 
 var forbiddenInterfaceCopy = []string{
+	"There is no automatic fleet rollback",
 	"They do not prove that a provider will accept the next request",
 	"An administrator can start a sign-in",
 	"Human admin required",

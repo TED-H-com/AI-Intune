@@ -580,7 +580,11 @@ func (s *Service) deploymentActionSnapshot(ctx context.Context, action, deployme
 	if err != nil {
 		return deploymentActionSnapshot{}, err
 	}
-	actions, err := s.deploymentActionEligibility(view, summary.Material, evaluatedAt)
+	views, err := s.store.ListDeployments(evaluatedAt)
+	if err != nil {
+		return deploymentActionSnapshot{}, err
+	}
+	actions, err := s.deploymentActionEligibility(view, summary.Material, views, evaluatedAt)
 	if err != nil {
 		return deploymentActionSnapshot{}, err
 	}

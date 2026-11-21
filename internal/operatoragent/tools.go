@@ -859,6 +859,7 @@ func rolloutView(detail operator.DeploymentDetailResult) map[string]any {
 		"opened_batch":     detail.Item.OpenedBatch,
 		"total_batches":    detail.Item.TotalBatches,
 		"canary":           rollout.AssessCanary(canaryFromDetail(detail)),
+		"previous_release": detail.PreviousRelease,
 	}
 }
 

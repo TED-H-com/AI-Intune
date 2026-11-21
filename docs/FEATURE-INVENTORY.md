@@ -119,7 +119,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 42 | `GET /apps/artifacts/{id}` | HTML | 讀取／完整驗證 | Artifact safe detail；完整重算 SHA-256 後才可顯示 `ready` |
 | 43 | `GET /apps/artifact-fetches/{id}` | HTML | 讀取 | Durable fetch operation safe detail |
 | 44 | `GET /deployments` | HTML | 讀取 | Deployment list |
-| 45 | `GET /deployments/{id}` | HTML | 讀取 | Deployment detail；targets 表加一欄跨故障域證據（每個已開單 target 的 verdict、rows、distinct 可用 producer），表頭一行數出「已開單的 N 台中有幾台被第二個 producer 回報通過」。沒開單的 target 留空，不給 verdict |
+| 45 | `GET /deployments/{id}` | HTML | 讀取 | Deployment detail；Previous release 區塊把上一版帶進 create preview（admin）；targets 表加一欄跨故障域證據（每個已開單 target 的 verdict、rows、distinct 可用 producer），表頭一行數出「已開單的 N 台中有幾台被第二個 producer 回報通過」。沒開單的 target 留空，不給 verdict |
 | 46 | `GET /updates` | HTML | 讀取／preview | 共用 native Updates model 的 artifacts、channel 成員、最近部署與 rollout gate |
 | 47 | `GET /reports/tickets` | HTML | 讀取 | Ticket ledger |
 | 48 | `GET /reports/tickets.csv` | CSV | 讀取／下載 | Browser export，不是 stable JSON API |
@@ -161,7 +161,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 84 | `GET /v1/operator/artifact-fetches/{id}` | JSON | 讀取 | Operation phase/progress/result 或 bounded failure code/detail |
 | 85 | `GET /v1/operator/updates` | JSON | 讀取／preview | `schema_version=5`；Artifacts、channel members、latest deployment、rollout plan，以及逐 canary target 顯示十一種獨立證據狀態與下一步的 stable promotion gate |
 | 86 | `GET /v1/operator/deployments` | JSON | 讀取 | canonical safe list；channel/state/stuck filters、live keyset cursor |
-| 87 | `GET /v1/operator/deployments/{id}` | JSON | 讀取 | canonical safe detail（`schema_version=3`）；targets、material summary、action eligibility；每個已開單 target 帶 `independent`（八種 verdict 之一／rows／distinct live_producers），未開單 target 為 `null`；另有 deployment 層 rollup（opened/passed targets、逐 target live producers 加總、八種 verdict 的 target 計數），由 targets 推導而非另一份真相；不回 raw spec/created_by |
+| 87 | `GET /v1/operator/deployments/{id}` | JSON | 讀取 | canonical safe detail（`schema_version=4`）；另帶 `previous_release`：同 channel、同資源、比這張早、至少一張 Hub succeeded 工作單、且版號不同的最新 deployment（`deployment_id`、`version`、`artifact_sha256`、`artifact_available`）；沒有就是 `null`。回到上一版就是用這三個值走一般的 create preview，同樣經過 canary 與驗證。targets、material summary、action eligibility；每個已開單 target 帶 `independent`（八種 verdict 之一／rows／distinct live_producers），未開單 target 為 `null`；另有 deployment 層 rollup（opened/passed targets、逐 target live producers 加總、八種 verdict 的 target 計數），由 targets 推導而非另一份真相；不回 raw spec/created_by |
 | 88 | `POST /v1/operator/deployments/preview` | JSON | 是，preview | `schema_version=5`；create preview；重新驗 artifact bytes，固定 targets（含每台 `current_version`，計入 digest）與 promote verdict；stable 逐台要求 active fleet peer 在最新派工後送齊三條必要規則，且 `current_release` 的結構化版號等於 canary exact version |
 | 89 | `POST /v1/operator/deployments` | JSON | 是 | create apply；fresh `201`、成功 replay `200`；拒絕 replay 保留原錯誤 status/code |
 | 90 | `POST /v1/operator/deployments/{id}/continuation-preview` | JSON | 是，preview | continue/finish preview |
