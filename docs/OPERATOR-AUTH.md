@@ -708,7 +708,9 @@ factor failures and internal post-factor failures share the same generic 400 res
 only in the creation response; all token responses use `Cache-Control: no-store`.
 
 `GET /v1/operator/service-tokens/self` accepts the current bearer token with
-source CIDR checks and returns metadata. The legacy POST rotate route is now
+source CIDR checks and returns metadata, including the route allowlist.
+`clawctl-operator --token-file … mcp` uses that allowlist to list only the
+tools whose Hub routes the token holds. The legacy POST rotate route is now
 forbidden for all service scopes (`SERVICE_TOKEN_ACTION_FORBIDDEN`), including
 self-rotation. Rotation-chain fields remain for stored-token compatibility.
 Humans replace tokens through the MFA-protected creation page, install the new

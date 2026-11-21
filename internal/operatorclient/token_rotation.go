@@ -19,6 +19,7 @@ type ServiceTokenSelf struct {
 	Scope     string     `json:"scope"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	MaxExpiry *time.Time `json:"max_expiry"`
+	Allowlist []string   `json:"allowlist"`
 }
 
 func (c *Client) ServiceTokenSelf(ctx context.Context) (ServiceTokenSelf, error) {

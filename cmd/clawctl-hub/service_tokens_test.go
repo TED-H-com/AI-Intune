@@ -78,7 +78,7 @@ func TestServiceTokenBoundary(t *testing.T) {
 	for _, c := range []struct {
 		method, path, peer, origin string
 		status                     int
-	}{{"GET", "/v1/operator/machines", "192.0.2.1:1234", "", 204}, {"GET", "/v1/operator/jobs", "192.0.2.1:1234", "", 401}, {"GET", "/v1/operator/machines", "198.51.100.1:1234", "", 401}, {"POST", "/v1/operator/admin", "192.0.2.1:1234", "", 401}, {"POST", "/v1/operator/test", "192.0.2.1:1234", "https://other.example.com", 403}, {"GET", "/account/service-tokens", "192.0.2.1:1234", "", 401}} {
+	}{{"GET", "/v1/operator/machines", "192.0.2.1:1234", "", 204}, {"GET", "/v1/operator/jobs", "192.0.2.1:1234", "", 403}, {"GET", "/v1/operator/machines", "198.51.100.1:1234", "", 401}, {"POST", "/v1/operator/admin", "192.0.2.1:1234", "", 401}, {"POST", "/v1/operator/test", "192.0.2.1:1234", "https://other.example.com", 403}, {"GET", "/account/service-tokens", "192.0.2.1:1234", "", 401}} {
 		if got := request(c.method, c.path, c.peer, c.origin); got != c.status {
 			t.Fatalf("%s %s: %d", c.method, c.path, got)
 		}

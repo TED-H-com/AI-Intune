@@ -481,6 +481,11 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 		writeOperatorBoundaryError(response, operatorJSON, 403, "SERVICE_TOKEN_SCOPE_REQUIRED", "This action requires operator-admin scope")
 		return
 	}
+	if errors.Is(err, store.ErrServiceRouteNotAllowed) {
+		// A valid credential is not a guessing attempt: name the denying layer.
+		writeOperatorBoundaryError(response, operatorJSON, 403, "ROUTE_NOT_ALLOWLISTED", "This route is not in the service token's allowlist")
+		return
+	}
 	if err != nil || !policy.ServiceTokenEligible.eligible() || (policy.Permission == operatorauth.Admin && policy.ServiceTokenEligible != serviceEligibleOperatorAdmin) {
 		b.serviceAttempts.allow(source)
 		writeOperatorBoundaryError(response, operatorJSON, 401, "UNAUTHENTICATED", "Authentication required")
@@ -502,7 +507,7 @@ func (b *operatorBoundary) serveServiceToken(w http.ResponseWriter, r *http.Requ
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "application/json")
 		if r.Method == "GET" {
-			_ = json.NewEncoder(response).Encode(map[string]any{"id": token.ID, "name": token.Name, "scope": token.Scope, "expires_at": token.ExpiresAt, "max_expiry": token.MaxExpiry()})
+			_ = json.NewEncoder(response).Encode(map[string]any{"id": token.ID, "name": token.Name, "scope": token.Scope, "expires_at": token.ExpiresAt, "max_expiry": token.MaxExpiry(), "allowlist": token.Allowlist})
 			return
 		}
 		r.Body = http.MaxBytesReader(response, r.Body, 1024)
