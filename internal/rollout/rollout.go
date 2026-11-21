@@ -21,7 +21,10 @@ type MachineFacts struct {
 	DisplayName string
 	Reachable   bool
 	NodeVersion string
-	Conflict    bool
+	// CurrentVersion is the OpenClaw version the machine last reported running.
+	// Empty means the Hub has no such observation.
+	CurrentVersion string
+	Conflict       bool
 	// Noncompliant reports that a compliance action is currently withholding
 	// work from this machine.
 	Noncompliant bool
@@ -32,6 +35,7 @@ type Target struct {
 	DisplayName    string
 	Reachable      bool
 	NodeVersion    string
+	CurrentVersion string
 	BatchNo        int
 	ExcludedReason string
 }
@@ -61,7 +65,7 @@ func Plan(members []MachineFacts, engines string, batchSize int) DeploymentPlan 
 	})
 	var p DeploymentPlan
 	for _, m := range sorted {
-		t := Target{MachineID: m.MachineID, DisplayName: m.DisplayName, Reachable: m.Reachable, NodeVersion: m.NodeVersion}
+		t := Target{MachineID: m.MachineID, DisplayName: m.DisplayName, Reachable: m.Reachable, NodeVersion: m.NodeVersion, CurrentVersion: m.CurrentVersion}
 		switch {
 		case m.Noncompliant:
 			// 先問這一條：一台領不到工作單的機器，講成「跟別的單衝突」或

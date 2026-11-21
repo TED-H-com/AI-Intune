@@ -47,7 +47,7 @@ func TerminalJobOutcome(state deploy.JobState) string {
 
 const (
 	DeploymentReadSchemaVersion    = 3
-	DeploymentPreviewSchemaVersion = 4
+	DeploymentPreviewSchemaVersion = 5
 	DefaultDeploymentReadLimit     = 50
 	MaxDeploymentReadLimit         = 100
 	// DefaultDeploymentBatchSize is the later-batch size when a caller omits
@@ -322,6 +322,7 @@ type DeploymentPlanTargetPreview struct {
 	DisplayName    string  `json:"display_name"`
 	Reachable      bool    `json:"reachable"`
 	NodeVersion    *string `json:"node_version"`
+	CurrentVersion *string `json:"current_version"`
 	BatchNo        int     `json:"batch_no"`
 	ExcludedReason *string `json:"excluded_reason"`
 }
@@ -1010,7 +1011,8 @@ func projectDeploymentPlan(plan rollout.DeploymentPlan, batchSize int) ([]Deploy
 	for i, target := range plan.Targets {
 		if !validDeploymentIdentifier(target.MachineID, 256) ||
 			!validDeploymentText(target.DisplayName, 256, false) ||
-			!validDeploymentText(target.NodeVersion, 128, true) || seen[target.MachineID] || target.BatchNo < 0 {
+			!validDeploymentText(target.NodeVersion, 128, true) ||
+			!validDeploymentText(target.CurrentVersion, 128, true) || seen[target.MachineID] || target.BatchNo < 0 {
 			return nil, fmt.Errorf("%w: deployment plan target is invalid", ErrInvalidDeploymentPreview)
 		}
 		if i > 0 && (target.DisplayName < previousName ||
@@ -1026,6 +1028,10 @@ func projectDeploymentPlan(plan rollout.DeploymentPlan, batchSize int) ([]Deploy
 		if target.NodeVersion != "" {
 			value := target.NodeVersion
 			item.NodeVersion = &value
+		}
+		if target.CurrentVersion != "" {
+			value := target.CurrentVersion
+			item.CurrentVersion = &value
 		}
 		if target.ExcludedReason != "" {
 			if !isDeploymentExclusion(target.ExcludedReason) || target.BatchNo != 0 {

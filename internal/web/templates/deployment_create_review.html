@@ -23,8 +23,8 @@
 <div class="panel">
   <h2 style="margin-top:0">Target snapshot（impact {{$p.Impact}}）</h2>
   <p>{{$p.TotalBatches}} 批；{{$p.Conflicts}} conflict、{{$p.MissingPackages}} Node 不相容、{{$p.UnknownNodes}} Node 未知、{{$p.Unreachable}} unreachable。</p>
-  <table><thead><tr><th>機器</th><th>批次</th><th>Reachable</th><th>排除</th></tr></thead><tbody>
-  {{range $p.Targets}}<tr><td>{{.DisplayName}}<br><span class="mono small">{{.MachineID}}</span></td><td>{{if .BatchNo}}{{.BatchNo}}{{else}}—{{end}}</td><td>{{.Reachable}}</td><td>{{with .ExcludedReason}}{{.}}{{else}}—{{end}}</td></tr>{{end}}
+  <table><thead><tr><th>機器</th><th>目前版本</th><th>批次</th><th>Reachable</th><th>排除</th></tr></thead><tbody>
+  {{range $p.Targets}}<tr><td>{{.DisplayName}}<br><span class="mono small">{{.MachineID}}</span></td><td class="mono">{{with .CurrentVersion}}{{.}} → {{$p.Artifact.Version}}{{else}}未知{{end}}</td><td>{{if .BatchNo}}{{.BatchNo}}{{else}}—{{end}}</td><td>{{.Reachable}}</td><td>{{with .ExcludedReason}}{{.}}{{else}}—{{end}}</td></tr>{{end}}
   </tbody></table>
   {{with $p.Promotion}}<p><b>Stable promotion：</b>{{if .Allowed}}允許{{else}}阻擋（{{range .Blockers}}{{deploymentBlockerLabel .}} {{end}}）{{end}}；跨故障域 verifier {{.IndependentPassedTargets}} / {{len .IndependentTargets}} 台通過。</p>
   {{if .IndependentTargets}}<table><thead><tr><th>Canary 機器</th><th>工作單</th><th>獨立證據</th><th>下一步</th></tr></thead><tbody>

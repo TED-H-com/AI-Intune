@@ -319,16 +319,17 @@ func (s *Store) DeploymentFacts(members []Machine, now time.Time) ([]rollout.Mac
 	}
 	facts := make([]rollout.MachineFacts, 0, len(members))
 	for _, m := range members {
-		node := ""
+		node, current := "", ""
 		if observation, ok := installs[m.MachineID]; ok && observation.Install != nil {
 			node = observation.Install.NodeVersion
+			current = observation.Install.RunningDirVersion
 		}
 		// ⚠ 這裡拿的是總覽同一條 state.Derive 的判決，不是另外算「多久沒回報」：
 		// 兩條算法遲早會對同一台講出不同的話。IdentityConflict 仍算 reachable ——
 		// 單是以 bearer 對應的 machine_id 開的，名字撞了不影響它領得到哪一張。
 		judgement := judged[m.MachineID]
 		facts = append(facts, rollout.MachineFacts{
-			MachineID: m.MachineID, DisplayName: m.DisplayName, NodeVersion: node,
+			MachineID: m.MachineID, DisplayName: m.DisplayName, NodeVersion: node, CurrentVersion: current,
 			Reachable:    judgement != state.Unreachable && judgement != state.NeverReported,
 			Conflict:     conflicts[m.MachineID],
 			Noncompliant: blocked[m.MachineID],

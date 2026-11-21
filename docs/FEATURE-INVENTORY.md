@@ -162,7 +162,7 @@ resolver 在 `cmd/clawctl-hub/verifier_api.go`。
 | 85 | `GET /v1/operator/updates` | JSON | 讀取／preview | `schema_version=5`；Artifacts、channel members、latest deployment、rollout plan，以及逐 canary target 顯示十一種獨立證據狀態與下一步的 stable promotion gate |
 | 86 | `GET /v1/operator/deployments` | JSON | 讀取 | canonical safe list；channel/state/stuck filters、live keyset cursor |
 | 87 | `GET /v1/operator/deployments/{id}` | JSON | 讀取 | canonical safe detail（`schema_version=3`）；targets、material summary、action eligibility；每個已開單 target 帶 `independent`（八種 verdict 之一／rows／distinct live_producers），未開單 target 為 `null`；另有 deployment 層 rollup（opened/passed targets、逐 target live producers 加總、八種 verdict 的 target 計數），由 targets 推導而非另一份真相；不回 raw spec/created_by |
-| 88 | `POST /v1/operator/deployments/preview` | JSON | 是，preview | `schema_version=4`；create preview；重新驗 artifact bytes，固定 targets 與 promote verdict；stable 逐台要求 active fleet peer 在最新派工後送齊三條必要規則，且 `current_release` 的結構化版號等於 canary exact version |
+| 88 | `POST /v1/operator/deployments/preview` | JSON | 是，preview | `schema_version=5`；create preview；重新驗 artifact bytes，固定 targets（含每台 `current_version`，計入 digest）與 promote verdict；stable 逐台要求 active fleet peer 在最新派工後送齊三條必要規則，且 `current_release` 的結構化版號等於 canary exact version |
 | 89 | `POST /v1/operator/deployments` | JSON | 是 | create apply；fresh `201`、成功 replay `200`；拒絕 replay 保留原錯誤 status/code |
 | 90 | `POST /v1/operator/deployments/{id}/continuation-preview` | JSON | 是，preview | continue/finish preview |
 | 91 | `POST /v1/operator/deployments/{id}/continuations` | JSON | 是 | optimistic precondition + idempotent apply |
