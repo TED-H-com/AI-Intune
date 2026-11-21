@@ -570,3 +570,34 @@ func TestDeploymentPreviewTextShowsEachTargetsCurrentVersion(t *testing.T) {
 		t.Fatalf("preview text:\n%s", out.String())
 	}
 }
+
+func TestDeploymentDetailTextGivesThePreviousReleaseNextStep(t *testing.T) {
+	sha := strings.Repeat("a", 64)
+	previous := &operator.DeploymentPreviousRelease{DeploymentID: "deployment-previous", Version: "2026.9.1",
+		ArtifactSHA256: sha, ArtifactAvailable: true}
+	for _, test := range []struct {
+		name     string
+		previous *operator.DeploymentPreviousRelease
+		want     []string
+	}{
+		{"available", previous, []string{
+			`previous release: "2026.9.1" (deployment "deployment-previous", artifact "` + sha + `")`,
+			`deploy it: clawctl-hub deployment preview --channel "canary" --version "2026.9.1" --artifact "` + sha + `"`,
+		}},
+		{"artifact missing", &operator.DeploymentPreviousRelease{DeploymentID: "deployment-previous", Version: "2026.9.1", ArtifactSHA256: sha},
+			[]string{`artifact missing on Hub; fetch it first: clawctl-hub artifact fetch openclaw@"2026.9.1" --confirm-version "2026.9.1"`}},
+		{"none", nil, []string{"previous release: none"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := writeDeploymentPreviousRelease(&out, "canary", test.previous); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("missing %q in:\n%s", want, out.String())
+				}
+			}
+		})
+	}
+}

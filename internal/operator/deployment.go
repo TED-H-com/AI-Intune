@@ -46,7 +46,7 @@ func TerminalJobOutcome(state deploy.JobState) string {
 }
 
 const (
-	DeploymentReadSchemaVersion    = 3
+	DeploymentReadSchemaVersion    = 4
 	DeploymentPreviewSchemaVersion = 5
 	DefaultDeploymentReadLimit     = 50
 	MaxDeploymentReadLimit         = 100
@@ -294,6 +294,19 @@ type DeploymentDetailResult struct {
 	Targets       []DeploymentTargetSummary      `json:"targets"`
 	Independent   DeploymentIndependentSummary   `json:"independent"`
 	Actions       DeploymentActionEligibilitySet `json:"actions"`
+	// PreviousRelease is the release this deployment replaced on its channel.
+	// Nil means the channel has no earlier succeeded release of another version.
+	PreviousRelease *DeploymentPreviousRelease `json:"previous_release"`
+}
+
+// DeploymentPreviousRelease names the latest earlier deployment on the same
+// channel and resource that has a Hub-succeeded job and a different version.
+// Deploying it again is an ordinary create preview with these inputs.
+type DeploymentPreviousRelease struct {
+	DeploymentID      string `json:"deployment_id"`
+	Version           string `json:"version"`
+	ArtifactSHA256    string `json:"artifact_sha256"`
+	ArtifactAvailable bool   `json:"artifact_available"`
 }
 
 type DeploymentCreatePreviewRequest struct {
@@ -472,7 +485,11 @@ func (s *Service) DeploymentDetail(deploymentID string, evaluatedAt time.Time) (
 	if err != nil {
 		return DeploymentDetailResult{}, err
 	}
-	actions, err := s.deploymentActionEligibility(view, summary.Material, evaluatedAt)
+	views, err := s.store.ListDeployments(evaluatedAt)
+	if err != nil {
+		return DeploymentDetailResult{}, err
+	}
+	actions, err := s.deploymentActionEligibility(view, summary.Material, views, evaluatedAt)
 	if err != nil {
 		return DeploymentDetailResult{}, err
 	}
@@ -484,7 +501,52 @@ func (s *Service) DeploymentDetail(deploymentID string, evaluatedAt time.Time) (
 	return DeploymentDetailResult{
 		SchemaVersion: DeploymentReadSchemaVersion, Consistency: DeploymentReadConsistencyLive, EvaluatedAt: evaluatedAt,
 		Item: summary, Targets: targets, Independent: independent, Actions: actions,
+		PreviousRelease: s.deploymentPreviousRelease(view, summary.Material, views),
 	}, nil
+}
+
+func (s *Service) deploymentPreviousRelease(view store.DeploymentView, material DeploymentMaterialSummary,
+	views []store.DeploymentView,
+) *DeploymentPreviousRelease {
+	if material.Status != DeploymentMaterialRecorded || material.Version == nil {
+		return nil
+	}
+	var found *store.DeploymentView
+	var foundMaterial DeploymentMaterialSummary
+	for i := range views {
+		candidate := &views[i]
+		if candidate.DeploymentID == view.DeploymentID || candidate.Channel != view.Channel ||
+			candidate.ResourceKind != view.ResourceKind || candidate.ResourceID != view.ResourceID ||
+			candidate.Counts[deploy.Succeeded] == 0 || !deploymentCreatedBefore(*candidate, view) ||
+			(found != nil && !deploymentCreatedBefore(*found, *candidate)) {
+			continue
+		}
+		candidateMaterial := projectDeploymentMaterial(candidate.ResourceKind, candidate.ResourceID, candidate.Spec)
+		if candidateMaterial.Status != DeploymentMaterialRecorded || candidateMaterial.Version == nil ||
+			candidateMaterial.ArtifactDigest == nil || *candidateMaterial.Version == *material.Version {
+			continue
+		}
+		found, foundMaterial = candidate, candidateMaterial
+	}
+	if found == nil {
+		return nil
+	}
+	release := &DeploymentPreviousRelease{
+		DeploymentID: found.DeploymentID, Version: *foundMaterial.Version,
+		ArtifactSHA256: strings.TrimPrefix(*foundMaterial.ArtifactDigest, "sha256:"),
+	}
+	if strings.TrimSpace(s.artifactsDir) != "" {
+		_, err := artifact.SelectOpenClawArtifact(s.artifactsDir, release.Version, release.ArtifactSHA256)
+		release.ArtifactAvailable = err == nil
+	}
+	return release
+}
+
+func deploymentCreatedBefore(a, b store.DeploymentView) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.DeploymentID < b.DeploymentID
 }
 
 // attachDeploymentIndependentVerdicts gives every opened target a verdict and
@@ -867,7 +929,9 @@ func projectDeploymentTargets(view store.DeploymentView) ([]DeploymentTargetSumm
 	return result, nil
 }
 
-func (s *Service) deploymentActionEligibility(view store.DeploymentView, material DeploymentMaterialSummary, now time.Time) (DeploymentActionEligibilitySet, error) {
+func (s *Service) deploymentActionEligibility(view store.DeploymentView, material DeploymentMaterialSummary,
+	views []store.DeploymentView, now time.Time,
+) (DeploymentActionEligibilitySet, error) {
 	set := DeploymentActionEligibilitySet{
 		Continue:        DeploymentActionEligibility{Outcome: "open_next_batch", Blockers: []string{}},
 		SkipFailedBatch: DeploymentActionEligibility{Outcome: "open_next_batch", Blockers: []string{}},
@@ -950,10 +1014,6 @@ func (s *Service) deploymentActionEligibility(view store.DeploymentView, materia
 			}
 			set.Retry.Blockers = append(set.Retry.Blockers, "stable_promotion_locked")
 		}
-	}
-	views, err := s.store.ListDeployments(now)
-	if err != nil {
-		return DeploymentActionEligibilitySet{}, err
 	}
 	for _, candidate := range views {
 		if candidate.DeploymentID != view.DeploymentID &&

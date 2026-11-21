@@ -427,6 +427,14 @@ func validateDeploymentDetailResult(result operator.DeploymentDetailResult, depl
 		retryTargets, continueAffected, openedFailed); err != nil {
 		return err
 	}
+	if previous := result.PreviousRelease; previous != nil {
+		if validateDeploymentClientIdentifier("previous_release.deployment_id", previous.DeploymentID, 256) != nil ||
+			validateDeploymentClientIdentifier("previous_release.version", previous.Version, 128) != nil ||
+			!artifact.ValidSHA256Hex(previous.ArtifactSHA256) || previous.DeploymentID == result.Item.DeploymentID ||
+			(result.Item.Material.Version != nil && previous.Version == *result.Item.Material.Version) {
+			return errors.New("operator client: invalid deployment previous_release")
+		}
+	}
 	return nil
 }
 

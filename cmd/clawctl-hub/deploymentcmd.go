@@ -524,11 +524,32 @@ func writeDeploymentDetail(out io.Writer, result operator.DeploymentDetailResult
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(out,
+	if _, err := fmt.Fprintf(out,
 		"actions: continue=%s (%d) retry=%s (%d) abandon=%s (%d)\n",
 		deploymentEligibilityLabel(result.Actions.Continue), result.Actions.Continue.AffectedTargets,
 		deploymentEligibilityLabel(result.Actions.Retry), result.Actions.Retry.AffectedTargets,
-		deploymentEligibilityLabel(result.Actions.Abandon), result.Actions.Abandon.AffectedTargets)
+		deploymentEligibilityLabel(result.Actions.Abandon), result.Actions.Abandon.AffectedTargets); err != nil {
+		return err
+	}
+	return writeDeploymentPreviousRelease(out, item.Channel, result.PreviousRelease)
+}
+
+func writeDeploymentPreviousRelease(out io.Writer, channel string, previous *operator.DeploymentPreviousRelease) error {
+	if previous == nil {
+		_, err := fmt.Fprintln(out, "previous release: none")
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "previous release: %s (deployment %s, artifact %s)\n",
+		terminalSafe(previous.Version), terminalSafe(previous.DeploymentID), terminalSafe(previous.ArtifactSHA256)); err != nil {
+		return err
+	}
+	if !previous.ArtifactAvailable {
+		_, err := fmt.Fprintf(out, "  artifact missing on Hub; fetch it first: clawctl-hub artifact fetch openclaw@%s --confirm-version %s --reason REASON --idempotency-key KEY\n",
+			terminalSafe(previous.Version), terminalSafe(previous.Version))
+		return err
+	}
+	_, err := fmt.Fprintf(out, "  deploy it: clawctl-hub deployment preview --channel %s --version %s --artifact %s\n",
+		terminalSafe(channel), terminalSafe(previous.Version), terminalSafe(previous.ArtifactSHA256))
 	return err
 }
 

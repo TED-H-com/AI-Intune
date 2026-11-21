@@ -123,6 +123,29 @@
     {{end}}
   {{end}}
 
+  <h3 id="previous-release">Previous release</h3>
+  {{with $d.PreviousRelease}}
+    <p class="small">上一版 <span class="mono">{{.Version}}</span>（<a class="mono" href="/deployments/{{.DeploymentID}}">{{short .DeploymentID 8}}</a>）。</p>
+    {{if .ArtifactAvailable}}
+      {{if $.Access.CanAdmin}}
+      <form class="action-form" method="post" action="/deployments/preview">
+        <input type="hidden" name="channel" value="{{$v.Channel}}">
+        <input type="hidden" name="version" value="{{.Version}}">
+        <input type="hidden" name="artifact_sha256" value="{{.ArtifactSHA256}}">
+        <input type="hidden" name="batch_size" value="1">
+        <input type="hidden" name="execution_timeout_seconds" value="600">
+        <input type="hidden" name="irreversible" value="false">
+        <label><span class="field-label">變更理由</span><input type="text" name="reason" maxlength="500" autocomplete="off"></label>
+        <button type="submit">Preview {{.Version}}</button>
+      </form>
+      {{end}}
+    {{else}}
+      <p class="small">Artifact 不在 Hub。先<a href="/apps?view=fetch">取得 OpenClaw {{.Version}}</a>，再回到這裡預覽。</p>
+    {{end}}
+  {{else}}
+    <p class="small dim">這個 channel 沒有更早的成功版本。</p>
+  {{end}}
+
   <h3>Abandon</h3>
   <p class="small {{if not $d.Abandon.Eligible}}dim{{end}}">{{$d.Abandon.Reason}}</p>
   {{if $d.Abandon.Eligible}}

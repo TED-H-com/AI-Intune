@@ -648,6 +648,18 @@ func TestDeploymentClientRejectsPoisonedDetailTargetsAndActions(t *testing.T) {
 		{"null verdict rollup", func(result *operator.DeploymentDetailResult) {
 			result.Independent.Verdicts = nil
 		}},
+		{"previous release is this deployment", func(result *operator.DeploymentDetailResult) {
+			result.PreviousRelease = &operator.DeploymentPreviousRelease{DeploymentID: result.Item.DeploymentID,
+				Version: "2026.1.1", ArtifactSHA256: strings.Repeat("a", 64)}
+		}},
+		{"previous release artifact is not a sha256", func(result *operator.DeploymentDetailResult) {
+			result.PreviousRelease = &operator.DeploymentPreviousRelease{DeploymentID: "deployment-0",
+				Version: "2026.1.1", ArtifactSHA256: "not-a-digest"}
+		}},
+		{"previous release has the same version", func(result *operator.DeploymentDetailResult) {
+			result.PreviousRelease = &operator.DeploymentPreviousRelease{DeploymentID: "deployment-0",
+				Version: *result.Item.Material.Version, ArtifactSHA256: strings.Repeat("a", 64)}
+		}},
 		{"noncanonical exhausted blocker order", func(result *operator.DeploymentDetailResult) {
 			deploymentClientMakeRunning(result, result.EvaluatedAt.Add(-time.Minute), false)
 			deploymentClientMarkExhausted(result)
@@ -663,6 +675,15 @@ func TestDeploymentClientRejectsPoisonedDetailTargetsAndActions(t *testing.T) {
 				t.Fatalf("poisoned result accepted: %+v", result)
 			}
 		})
+	}
+}
+
+func TestDeploymentClientAcceptsAPreviousRelease(t *testing.T) {
+	result := deploymentClientTestDetail()
+	result.PreviousRelease = &operator.DeploymentPreviousRelease{DeploymentID: "deployment-0",
+		Version: "2026.1.1", ArtifactSHA256: strings.Repeat("a", 64), ArtifactAvailable: true}
+	if err := validateDeploymentDetailResult(result, result.Item.DeploymentID); err != nil {
+		t.Fatalf("previous release rejected: %v", err)
 	}
 }
 

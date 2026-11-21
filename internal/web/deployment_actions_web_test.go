@@ -13,6 +13,7 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/deploy"
 	"github.com/teddashh/AI-Intune/internal/operator"
+	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
 
@@ -681,5 +682,50 @@ func TestDeploymentCreateReviewShowsCurrentToTargetVersion(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("create review 缺少 %q: %s", want, body)
 		}
+	}
+}
+
+func TestDeploymentDetailOffersThePreviousReleaseThroughTheCreatePreview(t *testing.T) {
+	s, _ := newServer(t)
+	names, err := operatorauth.NamesForPrefix("example.com/cap/clawctl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.Repeat("a", 64)
+	render := func(previous *operator.DeploymentPreviousRelease, granted operatorauth.CapabilityNames) string {
+		rec := httptest.NewRecorder()
+		req := requestWithCapabilities(http.MethodGet, "/deployments/deployment-current", granted)
+		s.render(rec, req, "deployment.html", page{
+			Title: "deployment", Deployment: &deploymentPage{
+				Summary:         operator.DeploymentSummary{DeploymentID: "deployment-current", Channel: "canary"},
+				PreviousRelease: previous,
+			},
+		})
+		return rec.Body.String()
+	}
+	available := &operator.DeploymentPreviousRelease{DeploymentID: "deployment-previous", Version: "2026.9.1",
+		ArtifactSHA256: sha, ArtifactAvailable: true}
+	body := render(available, names)
+	for _, want := range []string{
+		`<form class="action-form" method="post" action="/deployments/preview">`,
+		`name="channel" value="canary"`, `name="version" value="2026.9.1"`, `name="artifact_sha256" value="` + sha + `"`,
+		`name="batch_size" value="1"`, `name="execution_timeout_seconds" value="600"`, `name="irreversible" value="false"`,
+		"Preview 2026.9.1", `href="/deployments/deployment-previous"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("previous release missing %q", want)
+		}
+	}
+	if body := render(available, operatorauth.CapabilityNames{Operate: names.Operate}); strings.Contains(body, `action="/deployments/preview"`) {
+		t.Error("operator without admin sees the create form")
+	}
+	missing := *available
+	missing.ArtifactAvailable = false
+	if body := render(&missing, names); strings.Contains(body, `action="/deployments/preview"`) ||
+		!strings.Contains(body, `<a href="/apps?view=fetch">取得 OpenClaw 2026.9.1</a>`) {
+		t.Errorf("missing artifact view: %s", body)
+	}
+	if body := render(nil, names); !strings.Contains(body, "這個 channel 沒有更早的成功版本。") {
+		t.Errorf("no previous release view: %s", body)
 	}
 }

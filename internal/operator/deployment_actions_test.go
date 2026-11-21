@@ -13,6 +13,7 @@ import (
 
 	"github.com/teddashh/AI-Intune/internal/artifact"
 	"github.com/teddashh/AI-Intune/internal/deploy"
+	"github.com/teddashh/AI-Intune/internal/model"
 	"github.com/teddashh/AI-Intune/internal/operatorauth"
 	"github.com/teddashh/AI-Intune/internal/store"
 )
@@ -837,5 +838,59 @@ func TestCreateApplyWithAnUnsupportedChannelSaysBadChannelNotStalePreview(t *tes
 			t.Errorf("channel=%q HTTPError status=%d code=%q; expected status=%d code=%q: the status is the only signal automation reads, so 400 must stop retries and require a corrected channel; 412 would tell it to re-preview an unchanged snapshot and retry the same bad body forever",
 				tt.channel, status, code, http.StatusBadRequest, store.OperatorCodeBadChannel)
 		}
+	}
+}
+
+func TestDeploymentPreviousReleaseIsTheLatestEarlierSucceededOtherVersionOnTheChannel(t *testing.T) {
+	svc, st, _, record, created, jobs := deploymentActionFixture(t, 1, 1)
+	markDeploymentJobTerminal(t, st, jobs[0].JobID, deploy.Succeeded)
+	base, err := st.DeploymentView(created.DeploymentID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := base.CreatedAt
+	variant := func(id, channel, version, sha string, at time.Time, succeeded int) store.DeploymentView {
+		v := base
+		v.DeploymentID, v.Channel, v.CreatedAt = id, channel, at
+		v.Counts = map[deploy.JobState]int{deploy.Succeeded: succeeded, deploy.Failed: 1}
+		spec, err := json.Marshal(model.OpenClawSpec{Kind: "openclaw", Version: version,
+			Artifact: &model.ArtifactRef{SHA256: sha, Size: record.Size}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v.Spec = string(spec)
+		return v
+	}
+	other := strings.Repeat("b", 64)
+	current := variant("deployment-current", "canary", "2026.10.1", other, t0.Add(10*time.Minute), 0)
+	views := []store.DeploymentView{
+		current,
+		variant("deployment-oldest", "canary", "2026.8.1", other, t0, 1),
+		variant("deployment-previous", "canary", deploymentTestVersion, record.SHA256, t0.Add(time.Minute), 1),
+		variant("deployment-never-succeeded", "canary", "2026.9.9", other, t0.Add(2*time.Minute), 0),
+		variant("deployment-same-version", "canary", "2026.10.1", other, t0.Add(3*time.Minute), 1),
+		variant("deployment-other-channel", "stable", "2026.9.7", other, t0.Add(4*time.Minute), 1),
+		variant("deployment-later", "canary", "2026.11.1", other, t0.Add(20*time.Minute), 1),
+	}
+	material := projectDeploymentMaterial(current.ResourceKind, current.ResourceID, current.Spec)
+	got := svc.deploymentPreviousRelease(current, material, views)
+	want := &DeploymentPreviousRelease{DeploymentID: "deployment-previous", Version: deploymentTestVersion,
+		ArtifactSHA256: record.SHA256, ArtifactAvailable: true}
+	if got == nil || *got != *want {
+		t.Fatalf("previous=%+v want %+v", got, want)
+	}
+
+	views[2] = variant("deployment-previous", "canary", deploymentTestVersion, other, t0.Add(time.Minute), 1)
+	if got := svc.deploymentPreviousRelease(current, material, views); got == nil || got.ArtifactAvailable {
+		t.Fatalf("missing artifact reported available: %+v", got)
+	}
+	oldest := views[1]
+	if got := svc.deploymentPreviousRelease(oldest, projectDeploymentMaterial(oldest.ResourceKind, oldest.ResourceID, oldest.Spec), views); got != nil {
+		t.Fatalf("earliest release has a previous release: %+v", got)
+	}
+
+	detail, err := svc.DeploymentDetail(created.DeploymentID, time.Now().UTC())
+	if err != nil || detail.SchemaVersion != 4 || detail.PreviousRelease != nil {
+		t.Fatalf("single deployment detail=%+v err=%v", detail.PreviousRelease, err)
 	}
 }

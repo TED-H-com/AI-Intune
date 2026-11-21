@@ -24,7 +24,7 @@ const (
 // RollbackSentences is the honest rollback contract for a canary rollout.
 // Nothing in this package rolls a fleet back. Callers show this text as-is.
 var RollbackSentences = []string{
-	"There is no automatic fleet rollback to the previous artifact.",
+	"Previous release deploys the version this channel ran before as a new deployment, with the same preview, canary, and verification.",
 	"Abandon stops opening further jobs. Machines whose jobs already succeeded keep that result.",
 	"failed means Hub closed a reversible job as returned to the previous version. manual_intervention has no rollback evidence. rejected means the machine did not apply the job. lease_expired means the agent stopped reporting and the machine contents are unknown.",
 	"A new deployment pauses after its canary batch is succeeded. Expansion is an explicit Continue from the UI, CLI, or rollout_expand. Deployments created before that hold still let the driver open the next batch. Plain Continue refuses a failed batch. skip failed batch is a separate labelled action with its own preview digest and a recorded reason. MCP tools do not send that skip.",

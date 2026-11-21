@@ -140,7 +140,7 @@ func TestAssessCanaryRollbackTextIsStable(t *testing.T) {
 		}
 	}
 	joined := strings.Join(got.Rollback, "\n")
-	for _, want := range []string{"no automatic fleet rollback", "manual_intervention", "lease_expired", "rollout_expand", "promotion gate", "finish_work"} {
+	for _, want := range []string{"Previous release deploys the version this channel ran before", "manual_intervention", "lease_expired", "rollout_expand", "promotion gate", "finish_work"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("rollback missing %q: %s", want, joined)
 		}
